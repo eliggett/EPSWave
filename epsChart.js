@@ -35,12 +35,42 @@ class EPSChart {
                 let reader = new FileReader();
                 reader.onload = function() {
                     let arrayBuffer = this.result;
-                    self.setWavesample(self.eps.parseWavFile(arrayBuffer))
+                    self.importWav(self.eps.parseWavFile(arrayBuffer))
                 }
                 reader.readAsArrayBuffer(this.files[0]);
 
             }, false);
         }
+    }
+
+    /***
+     * Takes a parsed WAV file, picks the closest EPS rate for it and loads it.
+     *
+     * Hardly any file will land exactly on an EPS rate, so a mismatch is
+     * reported as a plain note with the pitch offset rather than as a problem.
+     * The synth tunes the wavesample to key anyway, and the offset is the number
+     * you would tune by.
+     */
+    importWav(wav){
+        if(!wav) return
+        const nearest = WaveGen.nearestSampleRate(wav.sampleRate)
+        this.sampleRate = nearest
+        const rateEl = document.getElementById(`${this.elementId}_genRate`)
+        if(rateEl) rateEl.value = nearest
+
+        this.setWavesample(wav.audio)
+
+        let note = wav.truncated
+            ? `Note: WAV holds ${wav.available} samples, over the ${EPS16.MAX_IMPORT_SAMPLES} limit.`
+                + ` Imported the first ${wav.audio.length}`
+            : `Success: Imported ${wav.audio.length} samples`
+        note += `. File is ${(wav.sampleRate / 1000).toFixed(1)} kHz, set to nearest EPS rate `
+            + `${(nearest / 1000).toFixed(1)} kHz`
+        const cents = Math.round(WaveGen.centsBetween(wav.sampleRate, nearest))
+        note += cents == 0
+            ? ' (exact)'
+            : ` (${cents > 0 ? '+' : ''}${cents} cents, tune to key on the synth)`
+        this.eps.successCallback(note)
     }
 
     /***

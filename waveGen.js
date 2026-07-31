@@ -65,6 +65,32 @@ class WaveGen {
         return Math.ceil((4 * 1731) / cents)
     }
 
+    /***
+     * Pitch distance between two sample rates. Playing material recorded at one
+     * rate back at another shifts it by exactly this much.
+     */
+    static centsBetween(fromRate, toRate) {
+        if (fromRate <= 0 || toRate <= 0) return 0
+        return 1200 * Math.log2(toRate / fromRate)
+    }
+
+    /***
+     * Closest EPS rate to an arbitrary one, measured in pitch rather than in Hz
+     * so the choice matches what will be heard.
+     */
+    static nearestSampleRate(rate) {
+        let best = WaveGen.DEFAULT_SAMPLE_RATE
+        let bestDistance = Infinity
+        for (const candidate of WaveGen.SAMPLE_RATES) {
+            const distance = Math.abs(WaveGen.centsBetween(rate, candidate))
+            if (distance < bestDistance) {
+                bestDistance = distance
+                best = candidate
+            }
+        }
+        return best
+    }
+
     static noteToFrequency(midiNote) {
         return 440 * Math.pow(2, (midiNote - 69) / 12)
     }

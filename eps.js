@@ -1,4 +1,10 @@
 class EPS16 {
+    /***
+     * Most samples accepted from a WAV file, matching the EPS16+'s standard
+     * memory. Longer files are truncated to this on import.
+     */
+    static MAX_IMPORT_SAMPLES = 512900
+
     inputs = []
     outputs = []
     constructor(setUpCallback, errorCallback, successCallback){
@@ -369,27 +375,81 @@ class EPS16 {
         link.innerHTML="Download"
         link.click();
     }
+    readTag(view, offset){
+        return String.fromCharCode(
+            view.getUint8(offset), view.getUint8(offset + 1),
+            view.getUint8(offset + 2), view.getUint8(offset + 3))
+    }
+    /***
+     * Reads a mono 16 bit WAV file.
+     *
+     * Returns {audio, sampleRate, available, truncated} or null if the file
+     * cannot be used. Oversized files are truncated rather than refused, so a
+     * long recording can be brought in and trimmed down in the editor.
+     */
     parseWavFile(buffer){
-        let view = new DataView(buffer)
-        let length = (view.getUint32(4,true) - 36)/2
-        if(view.getUint16(34, true) != 16){
-            alert("Only 16 bit files allowed")
-            return;
+        const reject = (message, popup) => {
+            this.errorCallback(`Error: ${message}`)
+            alert(popup || message)
+            return null
         }
-        if(view.getUint16(22, true) != 1){
-            alert("Only Mono Files allowed")
-            return;
+        const view = new DataView(buffer)
+        if(buffer.byteLength < 12 || this.readTag(view, 0) != "RIFF" || this.readTag(view, 8) != "WAVE"){
+            return reject("Not a RIFF/WAVE file", "Not a WAV file")
         }
-        if(length > 512900){
-            alert("file too big")
-            return
+
+        // Walk the chunk list rather than assuming audio starts at byte 44.
+        // Files carrying LIST/INFO metadata put other chunks ahead of the data,
+        // and reading from a fixed offset turns those bytes into a burst of
+        // noise at the start and shifts everything after it.
+        let format = null
+        let dataStart = -1
+        let dataBytes = 0
+        let offset = 12
+        while(offset + 8 <= buffer.byteLength){
+            const tag = this.readTag(view, offset)
+            const size = view.getUint32(offset + 4, true)
+            const body = offset + 8
+            if(tag == "fmt " && size >= 16 && body + 16 <= buffer.byteLength){
+                format = {
+                    encoding: view.getUint16(body, true),
+                    channels: view.getUint16(body + 2, true),
+                    sampleRate: view.getUint32(body + 4, true),
+                    bits: view.getUint16(body + 14, true)
+                }
+            }else if(tag == "data"){
+                dataStart = body
+                // Trust the file's real length over the header, so a truncated
+                // file cannot make us read past the end of the buffer.
+                dataBytes = Math.max(0, Math.min(size, buffer.byteLength - body))
+            }
+            // Chunks are padded to an even length. This always advances by at
+            // least 8, so a corrupt size cannot spin the loop.
+            offset = body + size + (size % 2)
         }
-        let audio = []
-        let offset=44
-        for(let i=0; i<length; i++, offset +=2){
-            audio.push(view.getInt16(offset, true))
+
+        if(!format) return reject("WAV file has no fmt chunk", "Not a valid WAV file")
+        if(dataStart < 0) return reject("WAV file has no data chunk", "Not a valid WAV file")
+        // 1 is PCM, 0xFFFE is extensible, which is still PCM for our purposes.
+        if(format.encoding != 1 && format.encoding != 0xFFFE){
+            return reject("Only uncompressed PCM WAV files are supported", "Only PCM files allowed")
         }
-        return audio
+        if(format.bits != 16) return reject("Only 16 bit WAV files are supported", "Only 16 bit files allowed")
+        if(format.channels != 1) return reject("Only mono WAV files are supported", "Only Mono Files allowed")
+
+        const available = Math.floor(dataBytes / 2)
+        const length = Math.min(available, EPS16.MAX_IMPORT_SAMPLES)
+        const audio = []
+        let position = dataStart
+        for(let i=0; i<length; i++, position += 2){
+            audio.push(view.getInt16(position, true))
+        }
+        return {
+            audio: audio,
+            sampleRate: format.sampleRate,
+            available: available,
+            truncated: available > length
+        }
     }
     writeString(view, offset, string) {
         for (let i = 0; i < string.length; i++) {
