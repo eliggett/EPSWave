@@ -13,6 +13,35 @@
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.2.1/dist/css/bootstrap.min.css"
         integrity="sha384-GJzZqFGwb1QTTN6wy59ffF1BuGJpLSa9DkKMp0DgiMDm4iYMj70gZWKYbI706tWS" crossorigin="anonymous">
+    <style>
+        /* Bootstrap 4 has no dark theme, so the components in use are overridden
+           explicitly. Everything is scoped to body.dark. */
+        body.dark { background-color: #12151a; color: #c8ced6; }
+        body.dark h2, body.dark b, body.dark strong { color: #e6ebf1; }
+        body.dark .card { background-color: #1b1f26; border-color: #2b323c; }
+        body.dark .card-header { background-color: #232830; border-color: #2b323c; color: #e6ebf1; }
+        body.dark .form-control,
+        body.dark .custom-select,
+        body.dark textarea.form-control { background-color: #0f1319; color: #d5dbe3; border-color: #333b47; }
+        body.dark .form-control:focus,
+        body.dark .custom-select:focus { background-color: #0f1319; color: #eef2f6; border-color: #4a5568; }
+        body.dark .form-control::placeholder { color: #6b7482; }
+        body.dark .input-group-text { background-color: #232830; color: #c8ced6; border-color: #333b47; }
+        body.dark .custom-file-label { background-color: #0f1319; color: #a9b2bd; border-color: #333b47; }
+        body.dark .custom-file-label::after { background-color: #232830; color: #d5dbe3; border-color: #333b47; }
+        body.dark .dropdown-menu { background-color: #1b1f26; border-color: #333b47; }
+        body.dark .dropdown-item { color: #c8ced6; }
+        body.dark .dropdown-item:hover, body.dark .dropdown-item:focus { background-color: #2a303a; color: #ffffff; }
+        body.dark .dropdown-item.disabled { color: #5d6673; }
+        body.dark .dropdown-divider { border-top-color: #333b47; }
+        body.dark .btn-outline-secondary { color: #aeb6c0; border-color: #3c4553; }
+        body.dark .btn-outline-secondary:hover { background-color: #2f3640; color: #ffffff; border-color: #4a5568; }
+        body.dark .btn-secondary { background-color: #4a5568; border-color: #4a5568; }
+        body.dark .alert-warning { background-color: #3a3320; color: #f0d9a0; border-color: #5c4f2c; }
+        body.dark .text-muted { color: #8b95a1 !important; }
+        body.dark .custom-control-label { color: #c8ced6; }
+        body.dark a { color: #6fb8ff; }
+    </style>
     <script src="./eps.js"></script>
     <script src="./waveGen.js"></script>
     <script src="./wavePreview.js"></script>
@@ -33,9 +62,15 @@
               Hello, world! This is a toast message.
             </div>
           </div>
-        <div class="row">
+        <div class="row align-items-center">
             <div class="col-sm">
                 <h2>Enable Sysex: <i>Edit -> System-Midi->Sysex-MIDI</i> and set to ON</h2>
+            </div>
+            <div class="col-sm-auto">
+                <div class="custom-control custom-switch">
+                    <input type="checkbox" class="custom-control-input" id="darkMode">
+                    <label class="custom-control-label" for="darkMode">Dark mode</label>
+                </div>
             </div>
         </div>
         <div class="row" id="midiUnsupported" style="display:none">
@@ -208,6 +243,7 @@
                                                 class="fa-solid fa-upload"></i> Upload Edits Back to EPS16+
                                             <span id="uploadEpsSpinner" class="spinner-border spinner-border-sm"
                                                 role="status" aria-hidden="true" style="display:none"></span>
+                                            <span id="uploadEpsPercent" style="display:none">0%</span>
                                         </button>
                                     </div>
                                     <div class="col-12 mt-2">
@@ -252,6 +288,7 @@
                                                 class="fa-solid fa-upload"></i> Upload to EPS16+
                                             <span id="uploadSpinner" class="spinner-border spinner-border-sm"
                                                 role="status" aria-hidden="true" style="display:none"></span>
+                                            <span id="uploadPercent" style="display:none">0%</span>
                                         </button>
                                     </div>
                                     <div class="col-7"></div>
@@ -530,8 +567,12 @@
             })
             $("#upload").click(async () => {
                 $("#uploadSpinner").show()
-                await eps.uploadWavToEPS(localChart.wavesample)
+                $("#uploadPercent").html("0%").show()
+                await eps.uploadWavToEPS(localChart.wavesample, 1, 0, (percent) => {
+                    $("#uploadPercent").html(`${percent}%`)
+                })
                 $("#uploadSpinner").hide()
+                $("#uploadPercent").hide().html("0%")
             })
             $("#uploadEps").click(async () => {
                 if (!epsChart.wavesample || epsChart.wavesample.length == 0) {
@@ -539,8 +580,12 @@
                     return
                 }
                 $("#uploadEpsSpinner").show()
-                await eps.uploadWavToEPS(epsChart.wavesample)
+                $("#uploadEpsPercent").html("0%").show()
+                await eps.uploadWavToEPS(epsChart.wavesample, 1, 0, (percent) => {
+                    $("#uploadEpsPercent").html(`${percent}%`)
+                })
                 $("#uploadEpsSpinner").hide()
+                $("#uploadEpsPercent").hide().html("0%")
             })
             $("#createInst").click(() => {
                 eps.createInstrument()
@@ -663,6 +708,20 @@
             $("#bugs").click(() => {
                 window.location = "https://github.com/summitt/EnsoniqEPS16Plus/issues"
             })
+
+            // Dark mode. Applied after the slots exist so their canvases repaint
+            // with the scope palette, and remembered like the MIDI port choices.
+            function setDarkMode(enabled) {
+                $("body").toggleClass("dark", enabled)
+                WaveEditor.setTheme(enabled ? "dark" : "light")
+                localStorage.setItem("darkMode", enabled ? "1" : "0")
+            }
+            $("#darkMode").change(function () {
+                setDarkMode(this.checked)
+            })
+            const startDark = localStorage.getItem("darkMode") == "1"
+            $("#darkMode").prop("checked", startDark)
+            setDarkMode(startDark)
 
             $("#liveToast").show()
 

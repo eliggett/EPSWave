@@ -171,7 +171,7 @@ class EPS16 {
             wavedata = wavedata.concat(wavePart)
             this.debug("WAVE", wavedata.length)
 
-            plotCallback(wavedata, Math.round((wavedata.length / offset) * 100)/100)
+            plotCallback(wavedata, Math.min(100, Math.round((wavedata.length / offset) * 100)))
         }
         if(wavedata.length < offset){
             let start = wavedata.length
@@ -181,7 +181,7 @@ class EPS16 {
             wavedata = wavedata.concat(wavePart)
             this.debug("WAVE Last", wavedata.length)
 
-            plotCallback(wavedata, Math.round((wavedata.length / offset) * 100)/100)
+            plotCallback(wavedata, Math.min(100, Math.round((wavedata.length / offset) * 100)))
         }
         
         return wavedata

@@ -12,6 +12,58 @@ class WaveEditor {
 
     static PEAK = 32767
 
+    /***
+     * Screen colours. `trace` of null means the slot keeps its own colour; the
+     * dark theme overrides it so every trace reads as scope phosphor.
+     */
+    static THEMES = {
+        light: {
+            background: '#fbfbfc',
+            graticule: 'rgba(33,37,41,0.07)',
+            ticks: 'rgba(33,37,41,0.18)',
+            period: 'rgba(23,162,184,0.22)',
+            zero: '#6c757d',
+            empty: '#adb5bd',
+            trace: null,
+            selectionFill: 'rgba(23,162,184,0.16)',
+            selectionEdge: 'rgba(23,162,184,0.9)'
+        },
+        dark: {
+            background: '#0a0e0c',
+            graticule: 'rgba(125,220,160,0.10)',
+            ticks: 'rgba(125,220,160,0.22)',
+            period: 'rgba(125,220,160,0.30)',
+            zero: 'rgba(150,235,180,0.55)',
+            empty: '#5d6b62',
+            trace: '#3dff7a',
+            selectionFill: 'rgba(90,220,255,0.14)',
+            selectionEdge: 'rgba(120,230,255,0.85)'
+        }
+    }
+
+    /*** Divisions across and down, as on a scope screen. */
+    static GRATICULE_COLUMNS = 10
+    static GRATICULE_ROWS = 8
+    /*** Subdivisions per division, marked as ticks along the centre axes. */
+    static GRATICULE_SUBDIVISIONS = 5
+
+    static theme = 'light'
+    static instances = []
+
+    static palette() {
+        return WaveEditor.THEMES[WaveEditor.theme] || WaveEditor.THEMES.light
+    }
+
+    /***
+     * Repaints every live editor. Canvases that have been removed from the page
+     * are dropped, so deleted soundscape slots do not pile up.
+     */
+    static setTheme(name) {
+        WaveEditor.theme = WaveEditor.THEMES[name] ? name : 'light'
+        WaveEditor.instances = WaveEditor.instances.filter(editor => editor.canvas.isConnected)
+        for (const editor of WaveEditor.instances) editor.render()
+    }
+
     /*** Tools */
     static PEN = 'pen'
     static LINE = 'line'
@@ -53,6 +105,8 @@ class WaveEditor {
         this.canvas.style.height = (options.height || 180) + 'px'
         this.canvas.style.touchAction = 'none'
         this.canvas.style.cursor = this.readOnly ? 'default' : 'crosshair'
+
+        WaveEditor.instances.push(this)
 
         if (toolbar) this.buildToolbar(toolbar)
         this.attachPointerHandlers()
@@ -181,14 +235,16 @@ class WaveEditor {
         const height = this.height
         if (width === 0) return
 
+        const palette = WaveEditor.palette()
+
         ctx.clearRect(0, 0, width, height)
-        ctx.fillStyle = '#fbfbfc'
+        ctx.fillStyle = palette.background
         ctx.fillRect(0, 0, width, height)
 
         this.renderGrid()
 
         if (this.data.length === 0) {
-            ctx.fillStyle = '#adb5bd'
+            ctx.fillStyle = palette.empty
             ctx.font = '12px sans-serif'
             ctx.textAlign = 'center'
             ctx.fillText('No wavesample loaded', width / 2, height / 2 - 8)
@@ -198,8 +254,9 @@ class WaveEditor {
 
         this.renderSelection()
 
-        ctx.strokeStyle = this.color
-        ctx.fillStyle = this.color
+        const trace = palette.trace || this.color
+        ctx.strokeStyle = trace
+        ctx.fillStyle = trace
         ctx.lineWidth = 1
 
         if (this.viewLength > width) {
@@ -209,34 +266,64 @@ class WaveEditor {
         }
     }
 
+    /***
+     * Scope style screen: an even grid of divisions over the full plot area,
+     * with finer ticks along the centre axes, then the period markers, then the
+     * zero line last so it stays on top of everything.
+     */
     renderGrid() {
         const ctx = this.ctx
+        const palette = WaveEditor.palette()
         const width = this.width
         const height = this.height
+        const top = this.padding
+        const bottom = height - this.padding
+        const plotHeight = bottom - top
+        const columns = WaveEditor.GRATICULE_COLUMNS
+        const rows = WaveEditor.GRATICULE_ROWS
 
-        // Zero line, kept clearly darker than the other gridlines so it reads as
-        // the reference the waveform swings about.
-        ctx.strokeStyle = '#6c757d'
+        // Division lines. The outermost rows land on full scale, so these double
+        // as the +/- limit markers.
+        ctx.strokeStyle = palette.graticule
         ctx.lineWidth = 1
         ctx.beginPath()
-        ctx.moveTo(0, height / 2)
-        ctx.lineTo(width, height / 2)
+        for (let column = 0; column <= columns; column++) {
+            const x = Math.round((column * width) / columns) + 0.5
+            ctx.moveTo(x, top)
+            ctx.lineTo(x, bottom)
+        }
+        for (let row = 0; row <= rows; row++) {
+            const y = Math.round(top + (row * plotHeight) / rows) + 0.5
+            ctx.moveTo(0, y)
+            ctx.lineTo(width, y)
+        }
         ctx.stroke()
 
-        // Full scale markers
-        ctx.strokeStyle = '#eceeef'
+        // Fine ticks along the centre axes, as on a scope faceplate.
+        const centreY = Math.round(top + plotHeight / 2) + 0.5
+        const centreX = Math.round(width / 2) + 0.5
+        const tick = 3
+        const acrossTicks = columns * WaveEditor.GRATICULE_SUBDIVISIONS
+        const downTicks = rows * WaveEditor.GRATICULE_SUBDIVISIONS
+        ctx.strokeStyle = palette.ticks
         ctx.beginPath()
-        ctx.moveTo(0, this.valueToY(WaveEditor.PEAK))
-        ctx.lineTo(width, this.valueToY(WaveEditor.PEAK))
-        ctx.moveTo(0, this.valueToY(-WaveEditor.PEAK))
-        ctx.lineTo(width, this.valueToY(-WaveEditor.PEAK))
+        for (let step = 0; step <= acrossTicks; step++) {
+            const x = Math.round((step * width) / acrossTicks) + 0.5
+            ctx.moveTo(x, centreY - tick)
+            ctx.lineTo(x, centreY + tick)
+        }
+        for (let step = 0; step <= downTicks; step++) {
+            const y = Math.round(top + (step * plotHeight) / downTicks) + 0.5
+            ctx.moveTo(centreX - tick, y)
+            ctx.lineTo(centreX + tick, y)
+        }
         ctx.stroke()
 
         // Period boundaries, so a generated wave shows where its cycles fall
         if (this.periodSamples > 1 && this.viewLength > 0) {
             const visible = this.viewLength / this.periodSamples
             if (visible <= 128) {
-                ctx.strokeStyle = '#e3e6e8'
+                ctx.strokeStyle = palette.period
                 ctx.beginPath()
                 const first = Math.ceil(this.viewStart / this.periodSamples)
                 for (let p = first; p * this.periodSamples <= this.viewStart + this.viewLength; p++) {
@@ -247,6 +334,14 @@ class WaveEditor {
                 ctx.stroke()
             }
         }
+
+        // Zero line, kept clearly stronger than the graticule so it reads as the
+        // reference the waveform swings about.
+        ctx.strokeStyle = palette.zero
+        ctx.beginPath()
+        ctx.moveTo(0, centreY)
+        ctx.lineTo(width, centreY)
+        ctx.stroke()
     }
 
     /***
@@ -260,10 +355,11 @@ class WaveEditor {
         const right = this.sampleToX(this.selection.end)
         if (right < 0 || left > this.width) return
 
-        ctx.fillStyle = 'rgba(23,162,184,0.16)'
+        const palette = WaveEditor.palette()
+        ctx.fillStyle = palette.selectionFill
         ctx.fillRect(left, 0, Math.max(1, right - left), this.height)
 
-        ctx.strokeStyle = 'rgba(23,162,184,0.9)'
+        ctx.strokeStyle = palette.selectionEdge
         ctx.lineWidth = 1
         ctx.beginPath()
         ctx.moveTo(left + 0.5, 0)
