@@ -13,16 +13,38 @@ class EPS16 {
         this.setUpCallback = setUpCallback
         this.errorCallback = errorCallback
         this.successCallback = successCallback
-        navigator.requestMIDIAccess({sysex: true}).then( (midiAccess) => {
-            for(let input of midiAccess.inputs.values()){
-                this.inputs.push(input)
-            }
-            for(let output of midiAccess.outputs.values()){
-                this.outputs.push(output)
-            }
-            this.setUpCallback(this.inputs, this.outputs)
+        // Optional log sinks. Both default to no-ops so the class works without
+        // any UI attached.
+        this.midiCallback = () => {}
+        this.debugCallback = () => {}
+        // Never let a missing or refused Web MIDI implementation escape the
+        // constructor. This runs before the rest of the page is wired up, so a
+        // throw here would take the editor, the generator and every button with
+        // it, and the page would look dead rather than merely disconnected.
+        // Firefox does not always expose requestMIDIAccess; Chrome always does.
+        if(typeof navigator.requestMIDIAccess != 'function'){
+            this.errorCallback("Error: This browser does not support Web MIDI, so the EPS16+ "
+                + "cannot be reached. Generating, editing, previewing and saving WAV files still work. "
+                + "Chrome or a Chromium based browser is needed for transfers.")
+            return
+        }
+        try{
+            navigator.requestMIDIAccess({sysex: true}).then( (midiAccess) => {
+                for(let input of midiAccess.inputs.values()){
+                    this.inputs.push(input)
+                }
+                for(let output of midiAccess.outputs.values()){
+                    this.outputs.push(output)
+                }
+                this.setUpCallback(this.inputs, this.outputs)
 
-        }, this.onMIDIFailure);
+            }, (error) => {
+                this.errorCallback(`Error: Web MIDI access was refused (${error}). `
+                    + "Sysex permission is required to talk to the EPS16+.")
+            });
+        }catch(error){
+            this.errorCallback(`Error: Could not request Web MIDI access (${error})`)
+        }
 
     }
     /***
@@ -147,7 +169,7 @@ class EPS16 {
             let end = (chunkSize *i) + chunkSize
             let wavePart = await this.getWavesampleData(start, end)
             wavedata = wavedata.concat(wavePart)
-            console.log("WAVE", wavedata.length)
+            this.debug("WAVE", wavedata.length)
 
             plotCallback(wavedata, Math.round((wavedata.length / offset) * 100)/100)
         }
@@ -157,7 +179,7 @@ class EPS16 {
             let wavePart = await this.getWavesampleData(start,end)
 
             wavedata = wavedata.concat(wavePart)
-            console.log("WAVE Last", wavedata.length)
+            this.debug("WAVE Last", wavedata.length)
 
             plotCallback(wavedata, Math.round((wavedata.length / offset) * 100)/100)
         }
@@ -171,13 +193,13 @@ class EPS16 {
         let cmd = this.createMIDIMessage(0x06, sampleOffsets)
         await this.sendData(cmd)
         let responses = await this.readMessages()
-        console.log("#####################Responses", responses)
+        this.debug("#####################Responses", responses)
         for(let resp of responses){
             if(await this.isAck(resp)){
                 await this.sleep(1000)
                 await this.sendAck()
                 let messages = await this.readMessages()
-                console.log("#####################", messages)
+                this.debug("#####################", messages)
                 for(let msg of messages){
                     if(msg.length > 4){
                         let waveData = this.convertFrom16BitMidi(msg)
@@ -196,17 +218,17 @@ class EPS16 {
         return []
     }
     async setParameter(paramGroup, paramByte, paramValue){
-        console.log(`Setting Value ${paramValue.toString(16)}, ${paramValue} for group ${paramGroup.toString(16)}, ${paramByte.toString(16)}`)
+        this.debug(`Setting Value ${paramValue.toString(16)}, ${paramValue} for group ${paramGroup.toString(16)}, ${paramByte.toString(16)}`)
         let header = [paramGroup, paramByte]
         let midiValue = this.convertTo12BitMidi([paramValue],4)
-        console.log(`Converted 12 bit midi value is ${midiValue.map(val => val.toString(16))}`)
+        this.debug(`Converted 12 bit midi value is ${midiValue.map(val => val.toString(16))}`)
         let msg = header.concat(midiValue)
         let cmd = this.createMIDIMessage(0x11,msg)
-        console.log("Set Parameter", cmd)
+        this.debug("Set Parameter", cmd)
         await this.sendData(cmd)
     }
     async putWavesampleDataInChunks(audio, chunkSize, numWaves=1, waveIndex=0, progressCallback=()=>{}){
-        console.log("Total Size: ", audio.length)
+        this.debug("Total Size: ", audio.length)
         let chunks = []
         for (let i = 0; i < audio.length; i += chunkSize) {
             const chunk = audio.slice(i, i + chunkSize);
@@ -217,7 +239,7 @@ class EPS16 {
             }*/
             chunks.push(chunk)
         }
-        console.log(chunks)
+        this.debug(chunks)
 
         let start = 0;
         for(let chunk of chunks){
@@ -229,7 +251,7 @@ class EPS16 {
                 }
                 await this.sleep(2000)
             } 
-            console.log( "Percent Complete:", ((start+chunk.length)/audio.length) * 100)
+            this.debug( "Percent Complete:", ((start+chunk.length)/audio.length) * 100)
             progressCallback(
                 `${ Math.round(
                     (waveIndex + ((start+chunk.length)/audio.length))/numWaves*100)
@@ -245,7 +267,7 @@ class EPS16 {
 
     }
     async putWavesampleData(audio, start=0){
-        console.log("OFFSETS", start, audio.length, audio.length + start)
+        this.debug("OFFSETS", start, audio.length, audio.length + start)
         let midiData = this.convertTo16BitMidi(audio)
         let startOffset = this.convertTo12BitMidi([start], 4)
         let endOffset = this.convertTo12BitMidi([audio.length + start], 4)
@@ -326,7 +348,7 @@ class EPS16 {
         /* sample rate */
         view.setUint32(24, sampleRate, true);
         /* byte rate (sample rate * block align) */
-        view.setUint32(28, sampleRate * 4, true);
+        view.setUint32(28, sampleRate * 2, true);
         /* block align (channel count * bytes per sample) */
         view.setUint16(32, 1 * 2, true);
         /* bits per sample */
@@ -388,6 +410,30 @@ class EPS16 {
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
+    /***
+     * Logging hooks
+     */
+    setMidiCallback(callback){
+        this.midiCallback = callback
+    }
+    setDebugCallback(callback){
+        this.debugCallback = callback
+    }
+    /***
+     * Goes to the browser console always, and to the event log only when debug
+     * output is switched on there.
+     */
+    debug(...parts){
+        console.log(...parts)
+        this.debugCallback(parts.map(part => this.describe(part)).join(" "))
+    }
+    describe(value){
+        if(typeof value == 'string') return value
+        if(Array.isArray(value) || ArrayBuffer.isView(value)){
+            return `[${Array.from(value).join(", ")}]`
+        }
+        return String(value)
+    }
     async readMessages(){ 
         let readMessages = []
         const startTime = Date.now()
@@ -415,6 +461,7 @@ class EPS16 {
         this.midiInput = this.inputs.find((input) => input.name == this.input)
         this.midiInput.onmidimessage = (midiMessage) => {
             console.log("Received <-", midiMessage.data)
+            this.midiCallback("<-", midiMessage.data)
             if(midiMessage.data[0] == 0xF0){ //Sysex Data
                 this.midiMessages.push(midiMessage.data)
             }
@@ -423,7 +470,7 @@ class EPS16 {
                 if(message.indexOf("Error") != -1){
                     this.errorCallback(message)
                 }
-                console.log(message)
+                this.debug(message)
             }
         }
     }
@@ -432,6 +479,10 @@ class EPS16 {
         this.midiOutput = this.outputs.find((output) => output.name == this.output)
     }
     async sendData(message){
+        if(!this.midiOutput || typeof this.midiOutput.send != 'function'){
+            this.errorCallback("Error: No MIDI output selected, cannot send to the EPS16+")
+            return false
+        }
         let packet = [
             0xF0,
             0x0F,
@@ -441,6 +492,7 @@ class EPS16 {
         packet = packet.concat(message)
         packet.push(0xf7)
         console.log("Send ->", packet)
+        this.midiCallback("->", packet)
         await this.midiOutput.send(packet)
         await this.sleep(700)
 
@@ -519,11 +571,14 @@ class EPS16 {
         
     }
     convertTo16BitMidi(data){
+        // Copy rather than adding the bias in place, otherwise the caller's
+        // wavesample is corrupted and cannot be uploaded a second time.
+        let biased = new Array(data.length)
         for(let i=0; i<data.length;i++){
-            data[i] = data[i] +2**16
+            biased[i] = data[i] +2**16
         }
         let midiArray=[]
-        for(let byte of data){
+        for(let byte of biased){
             let byte3 = byte & 0x003F
             let byte2 = (byte & 0x00C0) >> 6
             byte2 = (byte & 0x0F00) >> 6 | byte2
@@ -548,7 +603,7 @@ class EPS16 {
         let word3 = bit16Params[121]
         let word4 = bit16Params[122] >> 8
         let offset = (word1 | word2 |  word3 | word4) >> 9
-        console.log("OFFSET", offset)
+        this.debug("OFFSET", offset)
         return offset
     }
     setInstrumentNumber(num){

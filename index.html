@@ -14,6 +14,9 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.2.1/dist/css/bootstrap.min.css"
         integrity="sha384-GJzZqFGwb1QTTN6wy59ffF1BuGJpLSa9DkKMp0DgiMDm4iYMj70gZWKYbI706tWS" crossorigin="anonymous">
     <script src="./eps.js"></script>
+    <script src="./waveGen.js"></script>
+    <script src="./wavePreview.js"></script>
+    <script src="./waveEditor.js"></script>
     <script src="./epsChart.js"></script>
 </head>
 
@@ -33,6 +36,16 @@
         <div class="row">
             <div class="col-sm">
                 <h2>Enable Sysex: <i>Edit -> System-Midi->Sysex-MIDI</i> and set to ON</h2>
+            </div>
+        </div>
+        <div class="row" id="midiUnsupported" style="display:none">
+            <div class="col-sm">
+                <div class="alert alert-warning" role="alert">
+                    <b>This browser does not support Web MIDI</b>, so wavesamples cannot be
+                    transferred to or from the EPS16+. Use Chrome or another Chromium based
+                    browser for transfers. Generating waveforms, drawing and editing them,
+                    audio preview and saving WAV files all still work here.
+                </div>
             </div>
         </div>
         <div class="row">
@@ -190,6 +203,24 @@
                                         <button id="download" class="btn btn-info btn-block"><i
                                                 class="fa-solid fa-file-arrow-down"></i> Save Wavesample</button>
                                     </div>
+                                    <div class="col-12 mt-2">
+                                        <button id="uploadEps" class="btn btn-info btn-block"><i
+                                                class="fa-solid fa-upload"></i> Upload Edits Back to EPS16+
+                                            <span id="uploadEpsSpinner" class="spinner-border spinner-border-sm"
+                                                role="status" aria-hidden="true" style="display:none"></span>
+                                        </button>
+                                    </div>
+                                    <div class="col-12 mt-2">
+                                        <div class="input-group input-group-sm mb-1">
+                                            <div class="input-group-prepend">
+                                                <label class="input-group-text" for="epsRate">Sample Rate</label>
+                                            </div>
+                                            <select id="epsRate" class="custom-select"></select>
+                                        </div>
+                                        <i><small><b>Note:</b> Set this to the rate the wavesample was recorded at
+                                            on the EPS, so the preview and the saved WAV play back at the right
+                                            pitch.</small></i>
+                                    </div>
                                 </div>
                             </div>
                             <div class="col-sm">
@@ -197,6 +228,9 @@
                                     <div class="col-sm">
                                         <div style="width: 100%;"><canvas id="localWave_chart"></canvas></div>
                                     </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-12" id="localWaveGen"></div>
                                 </div>
                                 <div class="row">
                                     <div class="col-12">
@@ -304,8 +338,26 @@
                         Event Log
                     </div>
                     <div class="card-body">
+                        <div class="form-row mb-2">
+                            <div class="col-auto">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="logMidi">
+                                    <label class="form-check-label" for="logMidi">
+                                        Show MIDI traffic (<code>-&gt;</code> sent, <code>&lt;-</code> received)
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="logDebug">
+                                    <label class="form-check-label" for="logDebug">
+                                        Debug output
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
                         <div class="form-group">
-                            <textarea class="form-control" id="log" rows="3"></textarea>
+                            <textarea class="form-control" id="log" rows="9"></textarea>
                           </div>
                         </div>
                     </div>
@@ -314,9 +366,6 @@
         </div>
     </div>
 
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.0.0/chart.min.js"
-            integrity="sha512-lkEx3HSoujDP3+V+i46oZpNx3eK67QPiWiCwoeQgR1I+4kutWAuOSs3BxEUZt4U/mUfyY5uDHlypuQ1HHKVykA=="
-            crossorigin="anonymous" referrerpolicy="no-referrer"></script>
         <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"
             integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo"
             crossorigin="anonymous"></script>
@@ -352,11 +401,43 @@
             $("#waveNum").val(1)
 
 
+            // MIDI logging can produce a line per packet, so the log is capped
+            // and kept scrolled to the newest entry.
+            const LOG_MAX_LINES = 1000
+            let logLines = []
+
+            function logTimestamp() {
+                const now = new Date()
+                const pad = (value) => String(value).padStart(2, '0')
+                return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+                    + `--${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+            }
+
+            function log(message) {
+                logLines.push(`${logTimestamp()}: ${message}`)
+                if (logLines.length > LOG_MAX_LINES) {
+                    logLines = logLines.slice(-LOG_MAX_LINES)
+                }
+                const element = document.getElementById("log")
+                element.value = logLines.join("\r\n") + "\r\n"
+                element.scrollTop = element.scrollHeight
+            }
+
+            // Sysex wavesample transfers run to thousands of bytes, so show the
+            // head of each packet and the total rather than the whole thing.
+            function formatMidiBytes(bytes) {
+                const shown = 24
+                let text = Array.from(bytes).slice(0, shown)
+                    .map(byte => byte.toString(16).toUpperCase().padStart(2, '0')).join(" ")
+                if (bytes.length > shown) text += ` ... (${bytes.length} bytes)`
+                return text
+            }
+
             function handleError(error) {
-                $("#log").append(`${new Date()}: ${error}\r\n`)
+                log(error)
             }
             function handleSuccess(success) {
-                $("#log").append(`${new Date()}: ${success}\r\n`)
+                log(success)
             }
 
             let eps = new EPS16(function (inputs, outputs) {
@@ -387,6 +468,21 @@
 
             }, handleError, handleSuccess)
 
+            if (typeof navigator.requestMIDIAccess != "function") {
+                $("#midiUnsupported").show()
+            }
+
+            // Checked at emit time rather than attached and detached, so turning
+            // a checkbox on starts logging immediately mid transfer.
+            eps.setMidiCallback((direction, bytes) => {
+                if (!$("#logMidi").is(":checked")) return
+                log(`${direction} ${formatMidiBytes(bytes)}`)
+            })
+            eps.setDebugCallback((message) => {
+                if (!$("#logDebug").is(":checked")) return
+                log(`DEBUG: ${message}`)
+            })
+
             function resetUI(){
                 $("#instNum").val(0) 
                 eps.setInstrumentNumber(0)
@@ -396,8 +492,26 @@
                 eps.setWavesampleNumber(1)
             }
 
+            for (let rate of WaveGen.SAMPLE_RATES) {
+                let rateOption = $("<option>")
+                rateOption.val(rate)
+                rateOption.html(`${(rate / 1000).toFixed(1)} kHz`)
+                $("#epsRate").append(rateOption)
+            }
+            $("#epsRate").val(WaveGen.DEFAULT_SAMPLE_RATE)
+
             let localChart = new EPSChart("localWave", "Uploaded Wavesample", 'rgb(237,1,33)', true, eps)
             let epsChart = new EPSChart("epsWave", "EPS Wavesample", 'rgb(75,192,192)', false, eps)
+            localChart.mountGenerator("localWaveGen")
+
+            // The EPS slot has no generator, so its rate comes from this select.
+            // It drives both the preview pitch and the exported WAV header.
+            epsChart.sampleRate = parseInt($("#epsRate").val())
+            $("#epsRate").change(() => {
+                epsChart.sampleRate = parseInt($("#epsRate").val())
+                epsChart.refreshPreview()
+            })
+
             let waveScapes = []
 
             $("#midiIn").change((value) => {
@@ -412,12 +526,21 @@
                 eps.deleteInstrument()
             })
             $("#download").click(() => {
-                eps.saveFile(epsChart.wavesample)
+                eps.saveFile(epsChart.wavesample, parseInt($("#epsRate").val()))
             })
             $("#upload").click(async () => {
                 $("#uploadSpinner").show()
                 await eps.uploadWavToEPS(localChart.wavesample)
                 $("#uploadSpinner").hide()
+            })
+            $("#uploadEps").click(async () => {
+                if (!epsChart.wavesample || epsChart.wavesample.length == 0) {
+                    handleError("Error: Nothing to upload, get a wavesample from the EPS first")
+                    return
+                }
+                $("#uploadEpsSpinner").show()
+                await eps.uploadWavToEPS(epsChart.wavesample)
+                $("#uploadEpsSpinner").hide()
             })
             $("#createInst").click(() => {
                 eps.createInstrument()
@@ -459,24 +582,11 @@
             $("#getWS").click(async () => {
                 $("#downloadSpinner").show()
                 $("#percentComplete").show()
-                epsChart.wavesample = epsWavesample = await eps.getWavesampleDataChunked(5000, (wavedata, percentComplete) => {
+                const epsWavesample = await eps.getWavesampleDataChunked(5000, (wavedata, percentComplete) => {
                     $("#percentComplete").html(`${percentComplete}%`)
-                    epsChart.wavesample = wavedata
-                    epsChart.chart.data.labels = Array.from({ length: epsChart.wavesample.length }, (value, index) => index),
-                        epsChart.chart.data.datasets = [
-                            {
-                                data: epsChart.wavesample.map(a => a / 32767),
-                                label: "EPS Wavesample",
-                                fill: false,
-                                borderColor: 'rgb(75, 192, 192)',
-                                tension: 0.1,
-                                pointRadius: 0,
-                                borderWidth: 1
-                            }
-                        ]
-                    epsChart.chart.update()
-
+                    epsChart.setWavesample(wavedata)
                 })
+                epsChart.setWavesample(epsWavesample)
                 $("#downloadSpinner").hide()
                 $("#percentComplete").hide()
                 $("#percentComplete").html("0%")
@@ -498,6 +608,9 @@
                         <div class="col-12">
                             <div style="width: 100%;"><canvas id="wave${index}_chart"></canvas></div>
                         </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-12" id="wave${index}Gen"></div>
                     </div>
                     <div class="row">
                         <div class="col-12">
@@ -526,12 +639,15 @@
                 div.attr("id", `chart${index}`)
                 div.html(chartHtml)
                 $("#scapes").append(div)
-                waveScapes.push(new EPSChart(`wave${index}`, `Wave ${index}`, 'rgb(75,192,192)', true, eps))
+                let waveChart = new EPSChart(`wave${index}`, `Wave ${index}`, 'rgb(75,192,192)', true, eps)
+                waveChart.mountGenerator(`wave${index}Gen`)
+                waveScapes.push(waveChart)
                 $(`#wave${index}Btn`).click( () =>{
                     $(`#chart${index}`).remove()
                     for(let i=0; i<waveScapes.length; i++){
                         const wave = waveScapes[i]
                         if(wave.label == `Wave ${index}`){
+                            wave.preview.stop()
                             waveScapes.splice(i,1)
                             break;
                         }
