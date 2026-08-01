@@ -15,8 +15,13 @@
         integrity="sha384-GJzZqFGwb1QTTN6wy59ffF1BuGJpLSa9DkKMp0DgiMDm4iYMj70gZWKYbI706tWS" crossorigin="anonymous">
     <style>
         /* Bootstrap 4 has no dark theme, so the components in use are overridden
-           explicitly. Everything is scoped to body.dark. */
-        body.dark { background-color: #12151a; color: #c8ced6; }
+           explicitly. Everything is scoped to body.dark.
+
+           color-scheme covers the parts the browser draws itself and no rule of
+           ours can reach: scrollbars, number input spinners, and in Firefox the
+           popup list of a <select>. Without it Firefox leaves all of those
+           white on the dark page. */
+        body.dark { color-scheme: dark; background-color: #12151a; color: #c8ced6; }
         body.dark h2, body.dark b, body.dark strong { color: #e6ebf1; }
         body.dark .card { background-color: #1b1f26; border-color: #2b323c; }
         body.dark .card-header { background-color: #232830; border-color: #2b323c; color: #e6ebf1; }
@@ -44,38 +49,123 @@
         body.dark .text-muted { color: #8b95a1 !important; }
         body.dark .custom-control-label { color: #c8ced6; }
         body.dark a { color: #6fb8ff; }
+
+        /* Wavesample name fields, dressed as the synth's own display.
+
+           The EPS shows upper case only, so the field is upper cased here as
+           well as in the JS that feeds it: the CSS keeps what is on screen
+           honest even for a keystroke the input handler has not seen yet.
+           Letter spacing and tabular figures keep the twelve character cells
+           roughly even, since the font is not strictly monospaced. Swapping the
+           face out later means changing the url and the family name here and
+           nothing else. */
+        @font-face {
+            font-family: 'LCD14';
+            src: url('./fonts/lcd-font/otf/LCD14.otf') format('opentype');
+            font-display: swap;
+        }
+        .eps-name {
+            font-family: 'LCD14', monospace;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+        /* Light mode: a passive LCD, dark segments on a grey green panel. */
+        .eps-name.form-control {
+            background-color: #cfd8b9;
+            color: #1e2416;
+            border-color: #9aa585;
+        }
+        .eps-name.form-control:focus {
+            background-color: #d9e2c2;
+            color: #1e2416;
+            border-color: #7c8869;
+            box-shadow: none;
+        }
+        /* Dark mode: the vacuum fluorescent display it actually is. The glow is
+           a text-shadow rather than a filter so the characters stay crisp. */
+        body.dark .eps-name.form-control,
+        body.dark .eps-name.form-control:focus {
+            background-color: #000000;
+            color: #3dff9e;
+            border-color: #26463a;
+            text-shadow: 0 0 6px rgba(61, 255, 158, 0.55);
+        }
+        body.dark .eps-name.form-control:focus { border-color: #3dff9e; box-shadow: none; }
+        body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: none; }
+        .eps-name.form-control::placeholder { color: #7b8768; }
     </style>
     <script src="./eps.js"></script>
     <script src="./waveGen.js"></script>
     <script src="./wavePreview.js"></script>
     <script src="./waveEditor.js"></script>
+    <script src="./pitchDetect.js"></script>
     <script src="./epsChart.js"></script>
+    <script>
+        // Firefox refuses localStorage outright in several configurations, most
+        // relevantly on file:// pages, and it throws rather than returning null.
+        // Every stored preference goes through here so that a refusal costs the
+        // preference and nothing else. The dark mode switch was the first
+        // synchronous localStorage read on the page in Firefox, because the
+        // MIDI callback that reads the port names never fires there, so a throw
+        // took out dark mode alone and left the rest of the page working.
+        window.safeStorage = {
+            get(key){
+                try { return localStorage.getItem(key) } catch(error){ return null }
+            },
+            set(key, value){
+                try { localStorage.setItem(key, value) } catch(error){}
+            }
+        }
+        // Dark by default. Resolved up here so the theme is settled before the
+        // page is painted and before any other script can fail: the switch used
+        // to be wired at the very end of a long inline script, where anything
+        // that threw earlier left the page stuck in light mode.
+        window.startDark = window.safeStorage.get("darkMode") != "0"
+        if(window.startDark) WaveEditor.theme = "dark"
+    </script>
 </head>
 
-<body>
+<body class="dark">
+    <script>
+        // The class ships on <body> so the first paint is already dark and the
+        // page still themes correctly with scripting off. Strip it only if the
+        // preference says so.
+        if(!window.startDark) document.body.classList.remove("dark")
+    </script>
     <div class="container">
-        <div class="toast" role="alert" aria-live="assertive" aria-atomic="true">
-            <div class="toast-header">
-              <img src="..." class="rounded me-2" alt="...">
-              <strong class="me-auto">Bootstrap</strong>
-              <small>11 mins ago</small>
-              <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
-            </div>
-            <div class="toast-body">
-              Hello, world! This is a toast message.
-            </div>
-          </div>
         <div class="row align-items-center">
             <div class="col-sm">
                 <h2>Enable Sysex: <i>Edit -> System-Midi->Sysex-MIDI</i> and set to ON</h2>
             </div>
             <div class="col-sm-auto">
                 <div class="custom-control custom-switch">
-                    <input type="checkbox" class="custom-control-input" id="darkMode">
+                    <input type="checkbox" class="custom-control-input" id="darkMode" checked>
                     <label class="custom-control-label" for="darkMode">Dark mode</label>
                 </div>
             </div>
         </div>
+        <script>
+            // Wired here, next to the switch, in plain DOM calls. It used to sit
+            // at the end of the main script where it depended on jQuery, on the
+            // MIDI setup, and on four hundred lines of unrelated code all having
+            // survived. The theme is the one thing on the page that should never
+            // be able to break.
+            ;(function(){
+                var toggle = document.getElementById("darkMode")
+                toggle.checked = window.startDark
+                toggle.addEventListener("change", function(){
+                    document.body.classList.toggle("dark", toggle.checked)
+                    // Repaints the editor canvases, which draw their own colours.
+                    // Called on the bare name: a top level `class` declaration
+                    // lives in the global lexical scope, so WaveEditor works but
+                    // window.WaveEditor is undefined, and guarding on the latter
+                    // silently skipped every repaint.
+                    WaveEditor.setTheme(toggle.checked ? "dark" : "light")
+                    window.safeStorage.set("darkMode", toggle.checked ? "1" : "0")
+                })
+            })()
+        </script>
         <div class="row" id="midiUnsupported" style="display:none">
             <div class="col-sm">
                 <div class="alert alert-warning" role="alert">
@@ -132,6 +222,19 @@
                                     <select id="midiOut" class="custom-select" id="inputGroupSelect01">
                                     </select>
                                 </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-4">
+                                <button id="testConnection" class="btn btn-primary btn-block"><i
+                                        class="fa-solid fa-plug-circle-check"></i> Test Connection
+                                    <span id="testConnectionSpinner" class="spinner-border spinner-border-sm"
+                                        role="status" aria-hidden="true" style="display:none"></span>
+                                </button>
+                            </div>
+                            <div class="col-sm">
+                                <div id="testConnectionResult" class="alert alert-secondary mb-0 py-2"
+                                    style="display:none"></div>
                             </div>
                         </div>
                     </div>
@@ -196,18 +299,41 @@
                             <div class="col-sm">
                                 <button id="createInst" class="btn btn-info btn-block"><i
                                         class="fa-regular fa-square-plus"></i> Create Instrument</button>
+                                <input type="text" class="form-control form-control-sm eps-name mt-2"
+                                    id="instName" maxlength="12" placeholder="UNNAMED INST"
+                                    title="12 characters. The EPS displays A-Z 0-9 space * + - only">
+                                <button id="renameInst" class="btn btn-outline-secondary btn-sm btn-block mt-1"><i
+                                        class="fa-solid fa-pen"></i> Rename Instrument</button>
                             </div>
                             <div class="col-sm">
                                 <button id="createLayer" class="btn btn-info btn-block"><i
                                         class="fa-regular fa-square-plus"></i> Create Layer</button>
+                                <input type="text" class="form-control form-control-sm eps-name mt-2"
+                                    id="layerName" maxlength="12" placeholder="UNNAMED LAYR"
+                                    title="12 characters. The EPS displays A-Z 0-9 space * + - only">
+                                <button id="renameLayer" class="btn btn-outline-secondary btn-sm btn-block mt-1"><i
+                                        class="fa-solid fa-pen"></i> Rename Layer</button>
                             </div>
                             <div class="col-sm">
                                 <button id="createSQR" class="btn btn-info btn-block"><i
                                         class="fa-regular fa-square-plus"></i> Create Wavesample</button>
+                                <input type="text" class="form-control form-control-sm eps-name mt-2"
+                                    id="wsName" maxlength="12" placeholder="UNNAMED WS"
+                                    title="12 characters. The EPS displays A-Z 0-9 space * + - only">
+                                <button id="renameWS" class="btn btn-outline-secondary btn-sm btn-block mt-1"><i
+                                        class="fa-solid fa-pen"></i> Rename Wavesample</button>
                             </div>
                             <div class="col-sm">
                                 <button id="delete" class="btn btn-danger btn-block"><i
                                         class="fa-regular fa-trash-can"></i> Delete Instrument</button>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-12 mt-2">
+                                <i><small><b>Note:</b> A name left empty is filled in with the placeholder
+                                    when you create. Rename acts on whatever is selected above, and reads the
+                                    existing settings back before writing, so nothing else about the
+                                    instrument, layer or wavesample changes.</small></i>
                             </div>
                         </div>
                     </div>
@@ -242,6 +368,16 @@
                                                 class="fa-solid fa-file-arrow-down"></i> Save Wavesample</button>
                                     </div>
                                     <div class="col-12 mt-2">
+                                        <div class="input-group input-group-sm mb-1">
+                                            <div class="input-group-prepend">
+                                                <label class="input-group-text" for="epsName">Name</label>
+                                            </div>
+                                            <input type="text" class="form-control eps-name" id="epsName"
+                                                maxlength="12" placeholder="WAVESAMPLE"
+                                                title="12 characters, sent with the upload. The EPS displays A-Z 0-9 space * + - only">
+                                        </div>
+                                    </div>
+                                    <div class="col-12 mt-2">
                                         <button id="uploadEps" class="btn btn-info btn-block"><i
                                                 class="fa-solid fa-upload"></i> Upload Edits Back to EPS16+
                                             <span id="uploadEpsSpinner" class="spinner-border spinner-border-sm"
@@ -256,9 +392,29 @@
                                             </div>
                                             <select id="epsRate" class="custom-select"></select>
                                         </div>
-                                        <i><small><b>Note:</b> Set this to the rate the wavesample was recorded at
-                                            on the EPS, so the preview and the saved WAV play back at the right
-                                            pitch.</small></i>
+                                        <select id="epsRateAll" class="custom-select custom-select-sm mb-1"
+                                            style="display:none"></select>
+                                        <div class="input-group input-group-sm mb-1">
+                                            <div class="input-group-prepend">
+                                                <label class="input-group-text" for="epsRoot">Root Key</label>
+                                            </div>
+                                            <select id="epsRoot" class="custom-select"></select>
+                                        </div>
+                                        <div class="input-group input-group-sm mb-1">
+                                            <div class="input-group-prepend">
+                                                <label class="input-group-text" for="epsFine">Fine Tune</label>
+                                            </div>
+                                            <input type="number" class="form-control" id="epsFine" value="0"
+                                                min="-99" max="99" step="1">
+                                            <div class="input-group-append">
+                                                <span class="input-group-text">cents</span>
+                                            </div>
+                                        </div>
+                                        <i><small><b>Note:</b> Both are read from the synth with every wavesample
+                                            and sent back with every upload. Change them here to retune a
+                                            wavesample already on the EPS: the rate shifts its pitch, the root key
+                                            moves which note plays it back unshifted. "Other rate" opens the full
+                                            range, 312.5 kHz down to 6.25 kHz.</small></i>
                                     </div>
                                 </div>
                             </div>
@@ -287,6 +443,16 @@
                                         </div>
                                     </div>
                                     <div class="col-12">
+                                        <div class="input-group input-group-sm mb-2">
+                                            <div class="input-group-prepend">
+                                                <label class="input-group-text" for="localName">Name</label>
+                                            </div>
+                                            <input type="text" class="form-control eps-name" id="localName"
+                                                maxlength="12" placeholder="WAVESAMPLE"
+                                                title="12 characters, sent with the upload. The EPS displays A-Z 0-9 space * + - only">
+                                        </div>
+                                    </div>
+                                    <div class="col-12">
                                         <button id="upload" class="btn btn-info btn-block"><i
                                                 class="fa-solid fa-upload"></i> Upload to EPS16+
                                             <span id="uploadSpinner" class="spinner-border spinner-border-sm"
@@ -303,64 +469,6 @@
                                             them. </i><br />
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="col-sm">
-                <div class="card">
-                    <div class="card-header">
-                        Transfer Settings and Diagnostics
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-sm-4">
-                                <div class="input-group input-group-sm mb-2">
-                                    <div class="input-group-prepend">
-                                        <label class="input-group-text" for="blockSize">Block Size</label>
-                                    </div>
-                                    <input type="number" class="form-control" id="blockSize" min="32" max="2048"
-                                        step="32" value="256">
-                                    <div class="input-group-append">
-                                        <span class="input-group-text">samples</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-sm-4">
-                                <div class="input-group input-group-sm mb-2">
-                                    <div class="input-group-prepend">
-                                        <label class="input-group-text" for="testLength">Test Length</label>
-                                    </div>
-                                    <input type="number" class="form-control" id="testLength" min="1" max="20000"
-                                        step="100" value="2000">
-                                    <div class="input-group-append">
-                                        <span class="input-group-text">samples</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-sm-4">
-                                <button id="runTest" class="btn btn-warning btn-block btn-sm"><i
-                                        class="fa-solid fa-vial"></i> Run Loopback Test
-                                    <span id="testSpinner" class="spinner-border spinner-border-sm" role="status"
-                                        aria-hidden="true" style="display:none"></span>
-                                    <span id="testPercent" style="display:none">0%</span>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-12">
-                                <div id="testResult" class="alert alert-secondary mb-2" style="display:none"></div>
-                                <i><small><b>Block Size</b> is how many samples go into a single sysex message. The
-                                    EPS gives up on a message that takes longer than 2 seconds to arrive, which at
-                                    MIDI speed is roughly 2000 samples on a good interface and far fewer on a slow
-                                    USB adapter. Lower this if transfers are refused; raise it for more speed.</small></i><br />
-                                <i><small><b>Loopback Test</b> writes a deterministic pattern into the selected
-                                    instrument, layer and wavesample, waits 5 seconds, reads it back and compares
-                                    every sample. It overwrites whatever is in that wavesample, so point it at a
-                                    scratch one.</small></i>
                             </div>
                         </div>
                     </div>
@@ -433,6 +541,64 @@
             <div class="col-sm">
                 <div class="card">
                     <div class="card-header">
+                        Transfer Settings and Diagnostics
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-sm-4">
+                                <div class="input-group input-group-sm mb-2">
+                                    <div class="input-group-prepend">
+                                        <label class="input-group-text" for="blockSize">Block Size</label>
+                                    </div>
+                                    <input type="number" class="form-control" id="blockSize" min="32" max="2048"
+                                        step="32" value="256">
+                                    <div class="input-group-append">
+                                        <span class="input-group-text">samples</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-sm-4">
+                                <div class="input-group input-group-sm mb-2">
+                                    <div class="input-group-prepend">
+                                        <label class="input-group-text" for="testLength">Test Length</label>
+                                    </div>
+                                    <input type="number" class="form-control" id="testLength" min="1" max="20000"
+                                        step="100" value="2000">
+                                    <div class="input-group-append">
+                                        <span class="input-group-text">samples</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-sm-4">
+                                <button id="runTest" class="btn btn-warning btn-block btn-sm"><i
+                                        class="fa-solid fa-vial"></i> Run Loopback Test
+                                    <span id="testSpinner" class="spinner-border spinner-border-sm" role="status"
+                                        aria-hidden="true" style="display:none"></span>
+                                    <span id="testPercent" style="display:none">0%</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-12">
+                                <div id="testResult" class="alert alert-secondary mb-2" style="display:none"></div>
+                                <i><small><b>Block Size</b> is how many samples go into a single sysex message. The
+                                    EPS gives up on a message that takes longer than 2 seconds to arrive, which at
+                                    MIDI speed is roughly 2000 samples on a good interface and far fewer on a slow
+                                    USB adapter. Lower this if transfers are refused; raise it for more speed.</small></i><br />
+                                <i><small><b>Loopback Test</b> writes a deterministic pattern into the selected
+                                    instrument, layer and wavesample, waits 5 seconds, reads it back and compares
+                                    every sample. It overwrites whatever is in that wavesample, so point it at a
+                                    scratch one.</small></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-sm">
+                <div class="card">
+                    <div class="card-header">
                         Event Log
                     </div>
                     <div class="card-body">
@@ -452,6 +618,10 @@
                                         Debug output
                                     </label>
                                 </div>
+                            </div>
+                            <div class="col-auto">
+                                <button id="clearLog" class="btn btn-outline-secondary btn-sm py-0"><i
+                                        class="fa-regular fa-trash-can"></i> Clear Log</button>
                             </div>
                         </div>
                         <div class="form-group">
@@ -521,6 +691,13 @@
                 element.scrollTop = element.scrollHeight
             }
 
+            // Clears the backing array too, otherwise the next line redraws the
+            // textarea from everything that was supposedly cleared.
+            $("#clearLog").click(() => {
+                logLines = []
+                document.getElementById("log").value = ""
+            })
+
             // Sysex wavesample transfers run to thousands of bytes, so show the
             // head of each packet and the total rather than the whole thing.
             function formatMidiBytes(bytes) {
@@ -553,8 +730,8 @@
                     option.html(output.name)
                     $("#midiOut").append(option)
                 }
-                let midiIn = localStorage.getItem("midiIn")
-                let midiOut = localStorage.getItem("midiOut")
+                let midiIn = safeStorage.get("midiIn")
+                let midiOut = safeStorage.get("midiOut")
                 if (midiIn) {
                     $("#midiIn").val(midiIn)
                     eps.setInput(midiIn)
@@ -590,24 +767,34 @@
                 eps.setWavesampleNumber(1)
             }
 
-            for (let rate of WaveGen.SAMPLE_RATES) {
-                let rateOption = $("<option>")
-                rateOption.val(rate)
-                rateOption.html(`${(rate / 1000).toFixed(1)} kHz`)
-                $("#epsRate").append(rateOption)
-            }
-            $("#epsRate").val(WaveGen.DEFAULT_SAMPLE_RATE)
-
             let localChart = new EPSChart("localWave", "Uploaded Wavesample", 'rgb(237,1,33)', true, eps)
             let epsChart = new EPSChart("epsWave", "EPS Wavesample", 'rgb(75,192,192)', false, eps)
             localChart.mountGenerator("localWaveGen")
+            localChart.mountNameInput("localName")
+            epsChart.mountNameInput("epsName")
 
             // The EPS slot has no generator, so its rate comes from this select.
-            // It drives both the preview pitch and the exported WAV header.
-            epsChart.sampleRate = parseInt($("#epsRate").val())
-            $("#epsRate").change(() => {
-                epsChart.sampleRate = parseInt($("#epsRate").val())
-                epsChart.refreshPreview()
+            // It drives the preview pitch, the exported WAV header, and the rate
+            // written back to the synth on upload.
+            const epsRateEl = document.getElementById("epsRate")
+            const epsRateAllEl = document.getElementById("epsRateAll")
+            epsChart.sampleRate = EPSChart.mountRateSelects(
+                epsRateEl, epsRateAllEl, epsChart.sampleRate, (hz) => {
+                    epsChart.sampleRate = hz
+                    epsChart.refreshPreview()
+                })
+
+            const epsRootEl = document.getElementById("epsRoot")
+            epsRootEl.innerHTML = EPSChart.noteOptionsHtml()
+            epsRootEl.value = epsChart.rootKey
+            epsRootEl.addEventListener('change', () => {
+                epsChart.rootKey = parseInt(epsRootEl.value)
+            })
+
+            const epsFineEl = document.getElementById("epsFine")
+            epsFineEl.value = epsChart.fineTune
+            epsFineEl.addEventListener('change', () => {
+                epsFineEl.value = epsChart.setFineTune(parseInt(epsFineEl.value) || 0)
             })
 
             let waveScapes = []
@@ -615,13 +802,13 @@
             // Block size drives every sysex data transfer, up and down. Kept in
             // localStorage because it depends on the interface, not the sample.
             {
-                const stored = parseInt(localStorage.getItem("blockSize"))
+                const stored = parseInt(safeStorage.get("blockSize"))
                 $("#blockSize").val(eps.setChunkSize(stored || EPS16.DEFAULT_CHUNK_SAMPLES))
             }
             $("#blockSize").change(() => {
                 const applied = eps.setChunkSize(parseInt($("#blockSize").val()))
                 $("#blockSize").val(applied)
-                localStorage.setItem("blockSize", applied)
+                safeStorage.set("blockSize", applied)
                 log(`Block size set to ${applied} samples `
                     + `(${applied * 3 + 5} bytes, about ${((applied * 3 + 5) / 3125).toFixed(2)} s on the wire)`)
             })
@@ -638,7 +825,8 @@
                 const report = await eps.runLoopbackTest(
                     length,
                     (percent) => { $("#testPercent").html(`${percent}%`) },
-                    (status) => { log(status) })
+                    (status) => { log(status) },
+                    epsChart.sampleRate)
 
                 let detail = [report.message]
                 detail.push(`Sent ${report.requested} samples in blocks of ${report.blockSize}`
@@ -647,6 +835,13 @@
                     detail.push(`Measured throughput ${report.bytesPerSecond} bytes/sec`
                         + ` (MIDI can do 3125). Blocks of up to ${report.suggestedBlockSize} samples`
                         + ` fit inside the 2 second command timer at that rate.`)
+                }
+                if (report.rateWritten > 0) {
+                    const kHz = (hz) => `${(hz / 1000).toFixed(1)} kHz`
+                    detail.push(report.rateReadBack == report.rateWritten
+                        ? `Sample rate: wrote ${kHz(report.rateWritten)} and read the same back.`
+                        : `Sample rate: wrote ${kHz(report.rateWritten)} but the EPS reports `
+                            + `${report.rateReadBack ? kHz(report.rateReadBack) : 'nothing'}.`)
                 }
                 for (let example of report.examples) {
                     detail.push(`sample ${example.index}: expected ${example.expected}, got ${example.actual}`)
@@ -664,26 +859,50 @@
                 $("#runTest").prop("disabled", false)
             })
 
+            // Asks the EPS for one read only System-MIDI parameter. Nothing on
+            // the synth needs to exist for that, which matters because a freshly
+            // powered EPS has no instrument, layer or wavesample.
+            $("#testConnection").click(async () => {
+                const result = $("#testConnectionResult")
+                const show = (text, kind) => result
+                    .removeClass("alert-secondary alert-success alert-danger alert-warning")
+                    .addClass(`alert-${kind}`).html(text).show()
+
+                $("#testConnection").prop("disabled", true)
+                $("#testConnectionSpinner").show()
+                show("Testing ...", "secondary")
+
+                const report = await eps.ping((status) => {
+                    show(status, "secondary")
+                    log(status)
+                })
+                log(report.message)
+                show(report.message, report.ok ? "success" : (report.reachable ? "warning" : "danger"))
+
+                $("#testConnectionSpinner").hide()
+                $("#testConnection").prop("disabled", false)
+            })
+
             $("#midiIn").change((value) => {
                 eps.setInput(value.target.value)
-                localStorage.setItem('midiIn', value.target.value);
+                safeStorage.set('midiIn', value.target.value);
             })
             $("#midiOut").change((value) => {
                 eps.setOutput(value.target.value)
-                localStorage.setItem('midiOut', value.target.value);
+                safeStorage.set('midiOut', value.target.value);
             })
             $("#delete").click(() => {
                 eps.deleteInstrument()
             })
             $("#download").click(() => {
-                eps.saveFile(epsChart.wavesample, parseInt($("#epsRate").val()))
+                eps.saveFile(epsChart.wavesample, epsChart.sampleRate)
             })
             $("#upload").click(async () => {
                 $("#uploadSpinner").show()
                 $("#uploadPercent").html("0%").show()
                 await eps.uploadWavToEPS(localChart.wavesample, 1, 0, (percent) => {
                     $("#uploadPercent").html(`${percent}%`)
-                })
+                }, localChart.sampleRate, localChart.rootKey, localChart.fineTune, localChart.name)
                 $("#uploadSpinner").hide()
                 $("#uploadPercent").hide().html("0%")
             })
@@ -696,22 +915,64 @@
                 $("#uploadEpsPercent").html("0%").show()
                 await eps.uploadWavToEPS(epsChart.wavesample, 1, 0, (percent) => {
                     $("#uploadEpsPercent").html(`${percent}%`)
-                })
+                }, epsChart.sampleRate, epsChart.rootKey, epsChart.fineTune, epsChart.name)
                 $("#uploadEpsSpinner").hide()
                 $("#uploadEpsPercent").hide().html("0%")
             })
-            $("#createInst").click(() => {
-                eps.createInstrument()
+            // The three name fields in the EPS Functions card. Each filters to
+            // the character set the synth can display, exactly as the
+            // wavesample name fields lower down the page do, and each falls
+            // back to its own placeholder when left empty.
+            const nameField = (inputId, fallback) => {
+                const el = document.getElementById(inputId)
+                el.addEventListener('input', () => {
+                    const caret = el.selectionStart
+                    const clean = el.value
+                        .toUpperCase()
+                        .replace(/#/g, '+')
+                        .replace(EPS16.NAME_DISALLOWED, '')
+                        .slice(0, EPS16.NAME_LENGTH)
+                    if (clean != el.value) {
+                        const removed = el.value.length - clean.length
+                        el.value = clean
+                        el.setSelectionRange(Math.max(0, caret - removed), Math.max(0, caret - removed))
+                    }
+                })
+                el.addEventListener('change', () => { el.value = EPS16.sanitizeName(el.value) })
+                return () => EPS16.sanitizeName(el.value) || fallback
+            }
+            const instName = nameField("instName", EPS16.DEFAULT_INSTRUMENT_NAME)
+            const layerName = nameField("layerName", EPS16.DEFAULT_LAYER_NAME)
+            const wsName = nameField("wsName", EPS16.DEFAULT_WAVESAMPLE_NAME)
+
+            $("#createInst").click(async () => {
+                await eps.createInstrument(instName())
             })
-            $("#createLayer").click(() => {
-                eps.createLayer()
+            $("#createLayer").click(async () => {
+                await eps.createLayer(layerName())
             })
-            $("#createSQR").click(() => {
-                eps.createSqrWave()
+            $("#createSQR").click(async () => {
+                await eps.createSqrWave(wsName())
+            })
+            // Rename takes the field as typed rather than the placeholder:
+            // renaming something to "UNNAMED INST" because the box was empty
+            // would be a surprise, so eps.rename reports it as a mistake.
+            $("#renameInst").click(async () => {
+                await eps.renameInstrument($("#instName").val())
+            })
+            $("#renameLayer").click(async () => {
+                await eps.renameLayer($("#layerName").val())
+            })
+            $("#renameWS").click(async () => {
+                await eps.renameWavesample($("#wsName").val())
             })
             $("#uploadSoundScape").click(async() => {
                 $("#percentAllComplete").html(`0%`)
                 let waves = waveScapes.map(ws => ws.wavesample)
+                let rates = waveScapes.map(ws => ws.sampleRate)
+                let roots = waveScapes.map(ws => ws.rootKey)
+                let tunes = waveScapes.map(ws => ws.fineTune)
+                let names = waveScapes.map(ws => ws.name)
                 console.log(waves)
                 $("#uploadSoundScapeSpinner").show()
                 const value = $('input[name="flexRadioDefault"]:checked').val();
@@ -719,19 +980,19 @@
                     await eps.uploadToDifferentInstruments(waves, (percent) => { 
                         $("#percentAllComplete").show()
                         $("#percentAllComplete").html(`${percent}%`)
-                    })
+                    }, rates, roots, tunes, names)
                     resetUI()
                 } else if (value == "morph") {
                     await eps.createMorphingWaveTable(waves, (percent) => { 
                         $("#percentAllComplete").show()
                         $("#percentAllComplete").html(`${percent}%`)
-                    })
+                    }, rates, roots, tunes, names)
                     resetUI()
                 } else if (value == "transwave") {
                     await eps.uploadAsTranswave(waves, (percent) => { 
                         $("#percentAllComplete").show()
                         $("#percentAllComplete").html(`${percent}%`)
-                    })
+                    }, rates, roots, tunes, names)
                     resetUI()
                 }
                 $("#uploadSoundScapeSpinner").hide()
@@ -745,6 +1006,45 @@
                     epsChart.setWavesample(wavedata)
                 })
                 epsChart.setWavesample(epsWavesample)
+                // The rate came back in word 131 of the parameter block that
+                // the download already fetched, so stop making the user guess.
+                if (eps.lastSampleRate) {
+                    epsChart.sampleRate = EPSChart.selectRate(
+                        epsRateEl, epsRateAllEl, eps.lastSampleRate)
+                    epsChart.refreshPreview()
+                    log(`Wavesample rate read from the EPS: `
+                        + `${(eps.lastSampleRate / 1000).toFixed(1)} kHz (code ${eps.lastSampleRateCode})`)
+                }
+                if (typeof eps.lastRootKey == "number") {
+                    epsChart.rootKey = eps.lastRootKey
+                    epsRootEl.value = eps.lastRootKey
+                    log(`Root key read from the EPS: `
+                        + `${WaveGen.noteToName(eps.lastRootKey)} (${eps.lastRootKey})`)
+                }
+                // Word 86's scaling is undocumented, so adopt the value only
+                // when it lands inside the range the parameter page accepts.
+                // Anything else is logged raw rather than written back later.
+                if (typeof eps.lastFineTune == "number") {
+                    epsFineEl.value = epsChart.setFineTune(eps.lastFineTune)
+                    log(`Fine tune read from the EPS: ${eps.lastFineTune} cents`)
+                } else if (typeof eps.lastFineTuneRaw == "number") {
+                    log(`Fine tune raw value ${eps.lastFineTuneRaw} is outside the `
+                        + `documented -99..+99 range, leaving the field alone`)
+                }
+                // Words 0 to 11 of the same parameter block. Adopted as if the
+                // user had typed it, so uploading straight back keeps the name
+                // the wavesample already had.
+                if (typeof eps.lastWavesampleName == "string") {
+                    epsChart.setName(eps.lastWavesampleName, true)
+                    // The rename field at the top of the page gets it too, so
+                    // renaming starts from the current name rather than a blank
+                    // box. No extra traffic: this came out of the parameter
+                    // block the download already fetched.
+                    $("#wsName").val(EPS16.sanitizeName(eps.lastWavesampleName))
+                    log(eps.lastWavesampleName.length > 0
+                        ? `Wavesample name read from the EPS: "${eps.lastWavesampleName}"`
+                        : `Wavesample has no name on the EPS`)
+                }
                 $("#downloadSpinner").hide()
                 $("#percentComplete").hide()
                 $("#percentComplete").html("0%")
@@ -784,11 +1084,22 @@
                         </div>
                     </div>
                     <div class="row">
+                        <div class="col-12">
+                            <div class="input-group input-group-sm mb-2">
+                                <div class="input-group-prepend">
+                                    <label class="input-group-text" for="wave${index}Name">Name</label>
+                                </div>
+                                <input type="text" class="form-control eps-name" id="wave${index}Name"
+                                    maxlength="12" placeholder="WAVESAMPLE"
+                                    title="12 characters, sent with the upload. The EPS displays A-Z 0-9 space * + - only">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
                         <div class="col-2">
                             <button class="btn btn-block" id="wave${index}Btn">
                                 <svg class="svg-inline--fa fa-trash" aria-hidden="true" focusable="false" data-prefix="fas" data-icon="trash" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512" data-fa-i2svg=""><path fill="currentColor" d="M135.2 17.7L128 32H32C14.3 32 0 46.3 0 64S14.3 96 32 96H416c17.7 0 32-14.3 32-32s-14.3-32-32-32H320l-7.2-14.3C307.4 6.8 296.3 0 284.2 0H163.8c-12.1 0-23.2 6.8-28.6 17.7zM416 128H32L53.2 467c1.6 25.3 22.6 45 47.9 45H346.9c25.3 0 46.3-19.7 47.9-45L416 128z"></path></svg>
                             </button>
-                            </div>
                         </div>
                     </div>
                 `
@@ -799,6 +1110,7 @@
                 $("#scapes").append(div)
                 let waveChart = new EPSChart(`wave${index}`, `Wave ${index}`, 'rgb(75,192,192)', true, eps)
                 waveChart.mountGenerator(`wave${index}Gen`)
+                waveChart.mountNameInput(`wave${index}Name`)
                 waveScapes.push(waveChart)
                 $(`#wave${index}Btn`).click( () =>{
                     $(`#chart${index}`).remove()
@@ -822,23 +1134,10 @@
                 window.location = "https://github.com/summitt/EnsoniqEPS16Plus/issues"
             })
 
-            // Dark mode. Applied after the slots exist so their canvases repaint
-            // with the scope palette, and remembered like the MIDI port choices.
-            function setDarkMode(enabled) {
-                $("body").toggleClass("dark", enabled)
-                WaveEditor.setTheme(enabled ? "dark" : "light")
-                localStorage.setItem("darkMode", enabled ? "1" : "0")
-            }
-            $("#darkMode").change(function () {
-                setDarkMode(this.checked)
-            })
-            const startDark = localStorage.getItem("darkMode") == "1"
-            $("#darkMode").prop("checked", startDark)
-            setDarkMode(startDark)
-
-            $("#liveToast").show()
-
-            
+            // Dark mode is applied in the head and wired next to its switch, so
+            // there is nothing to do here beyond repainting the slots that were
+            // built after the theme was chosen.
+            WaveEditor.setTheme(window.startDark ? "dark" : "light")
 
         </script>
 </body>

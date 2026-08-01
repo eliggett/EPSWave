@@ -40,12 +40,162 @@ class EPS16 {
      */
     static MAX_CHUNK_ATTEMPTS = 4
 
+    /***
+     * Status codes that mean "not now" rather than "not this". Section 5 gives
+     * 14 as "Current disk activity prevented the execution of the command",
+     * which says nothing about the block that was offered, so the answer is to
+     * wait and offer the same block again. Halving it, the remedy for a block
+     * the EPS could not receive in time, would only make the transfer longer.
+     */
+    static TRANSIENT_STATUS = [0x14]
+
+    /***
+     * Sample rate lives in two places, both documented.
+     *
+     * Word 131 of the wavesample parameter block (section 7.3) carries it in
+     * the high byte of the word, so it comes back with every parameter dump.
+     * Page 20 item 0D (section 9.5) is the same value as a single settable
+     * parameter. It is tagged "receive only", which per NOTE 1 means the EPS
+     * will not announce it when you change it on the front panel, not that it
+     * cannot be written; NOTE 3 marks the parameters that refuse a single PUT,
+     * and this is not one of them.
+     */
+    static SAMPLE_RATE_PARAM = 0x0D
+    static SAMPLE_RATE_WORD = 131
+
+    /***
+     * Root key, likewise in two places.
+     *
+     * Word 80 of the wavesample parameter block shares itself: the high byte is
+     * the root key, the low byte is the Volume Modulator Crossfade Fadecurve.
+     * That sharing only matters if you write the block back, and there is no
+     * need to, because section 9.7 gives root key its own address on the pitch
+     * page. It carries no "*" or "**", so it takes a single PUT PARAMETER.
+     */
+    static ROOT_KEY_PAGE = 0x10
+    static ROOT_KEY_PARAM = 0x01
+    static ROOT_KEY_WORD = 80
+
+    /***
+     * Fine tune, the next parameter along on the pitch page, range -99 to +99.
+     * This is what cancels the pitch error left over when a file's rate does not
+     * land on one the EPS can hold.
+     *
+     * Word 86 of the block is described only as a "signed 7 bit fraction in hi
+     * byte", with no scale given, so the readback below is the direct reading
+     * and is treated as informational until hardware confirms it. Writing goes
+     * through the parameter page, where the range is stated plainly.
+     */
+    static FINE_TUNE_PARAM = 0x0A
+    static FINE_TUNE_WORD = 86
+    static FINE_TUNE_LIMIT = 99
+
+    /***
+     * What to ask for when checking that the link works.
+     *
+     * Free System Blocks, page 34 item 00 on the System-MIDI page. Section 9.1
+     * says a System-MIDI parameter ignores the instrument, layer and wavesample
+     * fields, which is the whole point: a freshly powered EPS has none of those,
+     * so anything addressed to a wavesample would fail for reasons that say
+     * nothing about the connection. It is also read only, so the test cannot
+     * disturb the instrument, and the answer is a genuinely useful number.
+     *
+     * Section 7.1: one block is 256 words, so one block is 256 samples.
+     */
+    static PING_PAGE = 0x34
+    static PING_ITEM = 0x00
+    static SAMPLES_PER_BLOCK = 256
+
+    /***
+     * Wavesample name: section 7.3, word offsets 00 to 11, "12 ASCII bytes, one
+     * byte per word", carried in the high byte like every other word in the
+     * block.
+     *
+     * Section 9.5 has no entry for it at all, so unlike the sample rate, the
+     * root key and fine tune there is no single PUT PARAMETER that reaches it.
+     * NOTE 3 of section 9 gives the only route: read the whole parameter block
+     * with GET WAVESAMPLE PARAMETERS, change the twelve words, and send the
+     * block back with PUT WAVESAMPLE PARAMETERS. See setWavesampleName.
+     */
+    static NAME_WORD = 0
+    static NAME_LENGTH = 12
+
+    /***
+     * Instruments and layers name themselves the same way, at the same offset.
+     * Section 7.1 word 00-11 for the instrument, section 7.2 word 00-11 for the
+     * layer, both "12 ASCII bytes, one byte per word".
+     *
+     * Both are marked "**" in section 9 as well, Instrument Name at page 28
+     * item 08 and Layer Name at page 24 item 05, which per NOTE 3 means they
+     * accept neither a single GET nor a single PUT. The whole block route is
+     * the only one, exactly as for the wavesample.
+     */
+    static BLOCK_INSTRUMENT = { get: 0x03, put: 0x0C, label: "instrument" }
+    static BLOCK_LAYER      = { get: 0x04, put: 0x0D, label: "layer" }
+    static BLOCK_WAVESAMPLE = { get: 0x05, put: 0x0E, label: "wavesample" }
+
+    /***
+     * What a newly created thing is called when the user has not said. Twelve
+     * characters is the hard limit, so "UNNAMED LAYER" does not fit and is
+     * spelled "UNNAMED LAYR", which does, at exactly twelve.
+     */
+    static DEFAULT_INSTRUMENT_NAME = "UNNAMED INST"
+    static DEFAULT_LAYER_NAME = "UNNAMED LAYR"
+    static DEFAULT_WAVESAMPLE_NAME = "UNNAMED WS"
+
+    /***
+     * The character set the EPS will actually display, established on hardware
+     * rather than from the specification, which says only "12 ASCII bytes".
+     *
+     * The synth is misleadingly permissive about this. It accepts any byte you
+     * send without complaint and hands the same byte back on a GET, so a name
+     * looks perfectly fine from this end. Walk over to the front panel and the
+     * characters outside this set are simply not there: send "Bass Sweep" and
+     * the display reads "B S", the lower case having been dropped rather than
+     * folded. The front panel's own rename screen offers exactly these.
+     */
+    static NAME_DISALLOWED = /[^A-Z0-9 *+-]/g
+
+    /***
+     * Trims a name to what the EPS can hold and show.
+     *
+     * Letters are folded up, because upper case is the only case the display
+     * has, and dropping to the allowed set silently is precisely the trap
+     * described above. Sharps become "+", the nearest thing the set offers, so
+     * a generated "PWM C#3" arrives as "PWM C+3" rather than losing the sharp
+     * and reading as a different note. Everything else outside the set becomes
+     * a space, which keeps word breaks in a file name intact.
+     *
+     * Spaces themselves are ordinary characters, runs of them included, since a
+     * name is stored space padded to twelve either way.
+     */
+    static sanitizeName(name){
+        const clean = String(name == null ? '' : name)
+            // Decompose first so an accented letter keeps its letter instead of
+            // becoming a space. Sample packs are full of them.
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toUpperCase()
+            .replace(/#/g, '+')
+            .replace(EPS16.NAME_DISALLOWED, ' ')
+            .slice(0, EPS16.NAME_LENGTH)
+        // Nothing but spaces means no name: the field is space padded anyway,
+        // so writing one would only blank whatever the EPS already has. Any
+        // trailing spaces go for the same reason, while leading ones are kept
+        // in case they were meant to position the name on the display.
+        return clean.trim().length == 0 ? '' : clean.replace(/ +$/, '')
+    }
+
     inputs = []
     outputs = []
     constructor(setUpCallback, errorCallback, successCallback){
         this.inputs = []
         this.outputs = []
         this.chunkSize = EPS16.DEFAULT_CHUNK_SAMPLES
+        // Sysex header nibble: the EPS's base channel minus one. Everything
+        // is ignored by the synth if this does not match, with no error and
+        // no clue, which is why the connection test can scan for it.
+        this.baseChannel = 0
         // Rolling measurement of how fast sample blocks actually get through,
         // taken from the time between handing a block to the MIDI port and the
         // EPS acknowledging it. Used only for reporting.
@@ -96,8 +246,15 @@ class EPS16 {
     /***
      * EPS Sysex Commands
      */
-    async getWavesampleParams(){
-        let cmd = this.createMIDIMessage(0x05)
+    /***
+     * Fetches one parameter block: instrument, layer or wavesample.
+     *
+     * All three follow the same exchange, described in section 4.2 and worked
+     * through in section 8: the GET is answered with an ACK and the matching
+     * PUT header, and the block itself only follows once we ACK that.
+     */
+    async getParamBlock(kind){
+        let cmd = this.createMIDIMessage(kind.get)
         await this.sendData(cmd);
         let messages = await this.readMessages()
         for(let msg of messages){
@@ -112,9 +269,46 @@ class EPS16 {
                 }
             }
         }
-        this.errorCallback("Error: Unable to get WaveSample Parameters")
         return []
-        
+    }
+    async getWavesampleParams(){
+        const params = await this.getParamBlock(EPS16.BLOCK_WAVESAMPLE)
+        if(params.length == 0){
+            this.errorCallback("Error: Unable to get WaveSample Parameters")
+            return []
+        }
+        this.readSampleRate(params)
+        this.readRootKey(params)
+        this.readFineTune(params)
+        this.readWavesampleName(params)
+        return params
+    }
+    /***
+     * The instrument's own parameter block, section 7.1. Fetched only to read
+     * or change its name, so nothing else in it is decoded.
+     */
+    async getInstrumentParams(){
+        const params = await this.getParamBlock(EPS16.BLOCK_INSTRUMENT)
+        if(params.length == 0){
+            this.errorCallback("Error: Unable to get instrument parameters")
+            return []
+        }
+        this.lastInstrumentName = this.readBlockName(params)
+        this.debug(`Instrument name "${this.lastInstrumentName}"`)
+        return params
+    }
+    /***
+     * The layer's parameter block, section 7.2. Same story as the instrument.
+     */
+    async getLayerParams(){
+        const params = await this.getParamBlock(EPS16.BLOCK_LAYER)
+        if(params.length == 0){
+            this.errorCallback("Error: Unable to get layer parameters")
+            return []
+        }
+        this.lastLayerName = this.readBlockName(params)
+        this.debug(`Layer name "${this.lastLayerName}"`)
+        return params
     }
     async deleteInstrument(){
         const msg = this.createMIDIMessage(0x1C)
@@ -134,12 +328,13 @@ class EPS16 {
         ]
         await this.sendData(data) 
     }
-    async createInstrument(){
+    async createInstrument(name = null){
         let message = this.createMIDIMessage(0x15)
         await this.sendData(message)
         let messages = await this.readMessages()
         if(await this.isAck(messages[0])){
             this.successCallback("Success: Created instrument")
+            await this.nameAfterCreate(EPS16.BLOCK_INSTRUMENT, name)
             return true
         }else{
             this.errorCallback("Error: Unable to create instrument")
@@ -147,30 +342,74 @@ class EPS16 {
         }
 
     }
-    async createLayer(){
+    async createLayer(name = null){
         let message = this.createMIDIMessage(0x16)
         await this.sendData(message)
         let messages = await this.readMessages()
         if(await this.isAck(messages[0])){
             this.successCallback("Success: Created layer")
+            await this.nameAfterCreate(EPS16.BLOCK_LAYER, name)
             return true
         }else{
             this.errorCallback("Error: Unable to create layer")
             return false
         }
     }
-    async createSqrWave(){
+    async createSqrWave(name = null){
         let message = this.createMIDIMessage(0x19)
         await this.sendData(message)
         let messages = await this.readMessages()
         if(await this.isAck(messages[0])){
             this.successCallback("Success: Created SQR")
+            await this.nameAfterCreate(EPS16.BLOCK_WAVESAMPLE, name)
             return true
         }else{
             this.errorCallback("Error: Unable to create SQR wavesample")
             return false;
         }
     }
+    /***
+     * Names something that has just been created, if a name was given. The
+     * failure is reported but not fatal: the thing exists either way, and
+     * saying "could not create" over a name that would not stick would be a
+     * lie. Callers that create in a loop looking for a free slot pass nothing
+     * and skip all of this.
+     */
+    async nameAfterCreate(kind, name){
+        const clean = EPS16.sanitizeName(name)
+        if(clean.length == 0) return true
+        // The EPS has just allocated the block. Give it a moment before asking
+        // to read it straight back.
+        await this.sleep(300)
+        if(await this.setBlockName(kind, clean)){
+            this.successCallback(`Success: Named the ${kind.label} "${clean}"`)
+            return true
+        }
+        return false
+    }
+    /***
+     * Renames whatever is currently selected. Unlike naming at creation time,
+     * an empty name here is a mistake worth pointing out rather than a silent
+     * "leave it alone".
+     */
+    async rename(kind, name){
+        const clean = EPS16.sanitizeName(name)
+        if(clean.length == 0){
+            this.errorCallback(`Error: Enter a name before renaming the ${kind.label}`)
+            return false
+        }
+        this.previousBlockName = null
+        if(await this.setBlockName(kind, clean)){
+            const was = this.previousBlockName
+            this.successCallback(`Success: Renamed the ${kind.label} `
+                + (was ? `from "${was}" to "${clean}"` : `to "${clean}"`))
+            return true
+        }
+        return false
+    }
+    async renameInstrument(name){ return await this.rename(EPS16.BLOCK_INSTRUMENT, name) }
+    async renameLayer(name){ return await this.rename(EPS16.BLOCK_LAYER, name) }
+    async renameWavesample(name){ return await this.rename(EPS16.BLOCK_WAVESAMPLE, name) }
     async clearWavesample(){
         let params = await this.getWavesampleParams()
         if(params.length == 0) return false
@@ -270,10 +509,130 @@ class EPS16 {
         this.errorCallback("Error: Unable to get wavesample data from EPS")
         return []
     }
+    /***
+     * Turns the four six bit bytes of a parameter value back into a number.
+     * Values are right justified in 24 bits and signed, per section 9.
+     */
+    decodeParameterValue(bytes){
+        const word = ((bytes[0] & 0x3F) << 18) | ((bytes[1] & 0x3F) << 12)
+            | ((bytes[2] & 0x3F) << 6) | (bytes[3] & 0x3F)
+        return word >= 0x800000 ? word - 0x1000000 : word
+    }
+    /***
+     * Asks the EPS for one parameter. The answer is a PUT PARAMETER message
+     * carrying the value inline, so unlike a data transfer there is no second
+     * exchange to complete.
+     */
+    async getParameter(page, item, timeoutMs = EPS16.COMMAND_TIMER_MS){
+        const cmd = this.createMIDIMessage(0x08, [page, item])
+        await this.sendData(cmd)
+        const messages = await this.readMessages(timeoutMs)
+        const result = { answered: messages.length > 0, value: null, status: -1 }
+        for(const msg of messages){
+            const status = this.responseStatus(msg)
+            if(status >= 0 && result.status < 0) result.status = status
+            // PUT PARAMETER: command, instrument, layer and wavesample fields,
+            // the page and item echoed back, then four bytes of value.
+            if(msg.length >= 13 && msg[0] == 0x11){
+                result.value = this.decodeParameterValue(msg.slice(9, 13))
+            }
+        }
+        return result
+    }
+    /***
+     * Checks that the EPS is reachable, without needing an instrument, a layer
+     * or a wavesample to exist. Reports what it found rather than throwing, so
+     * the caller can show the whole picture.
+     */
+    async ping(statusCallback = () => {}){
+        const report = {
+            ok: false, reachable: false, freeBlocks: null,
+            channel: this.baseChannel, foundChannel: -1, status: -1, message: ""
+        }
+        if(!this.midiOutput || typeof this.midiOutput.send != 'function'){
+            report.message = "No MIDI output is selected, so nothing can be sent."
+            return report
+        }
+        if(!this.midiInput || typeof this.midiInput != 'object'){
+            report.message = "No MIDI input is selected, so the EPS has no way to answer."
+            return report
+        }
+
+        statusCallback(`Asking the EPS for its free memory on base channel ${this.baseChannel + 1} ...`)
+        const answer = await this.getParameter(EPS16.PING_PAGE, EPS16.PING_ITEM)
+        report.status = answer.status
+        if(answer.answered){
+            // Anything at all coming back proves the whole path: our message
+            // reached the synth, sysex is switched on, it parsed the header,
+            // and the return cable works. Even a refusal proves that.
+            report.reachable = true
+            if(answer.value !== null){
+                report.ok = true
+                report.freeBlocks = answer.value
+                const samples = answer.value * EPS16.SAMPLES_PER_BLOCK
+                report.message = `Connected. Sysex is on and working. Free memory `
+                    + `${answer.value} blocks, about ${samples.toLocaleString()} samples `
+                    + `(${Math.round(samples * 2 / 1024).toLocaleString()} KB).`
+            }else if(answer.status >= 0){
+                report.message = `The EPS answered, so sysex is on, but it declined the `
+                    + `request: ${this.statusText(answer.status)}.`
+            }else{
+                report.message = "The EPS answered, so sysex is on, but the reply was not "
+                    + "the expected parameter value."
+            }
+            return report
+        }
+
+        // Silence has one cause that looks identical to a dead cable and is far
+        // more common: the sysex header carries the base channel, and a synth
+        // set to a different one ignores every message without complaint.
+        statusCallback("No answer. Checking the other base channels ...")
+        const found = await this.findBaseChannel(statusCallback)
+        if(found >= 0){
+            report.foundChannel = found
+            report.reachable = true
+            report.ok = true
+            report.message = `The EPS is on base channel ${found + 1}, not `
+                + `${report.channel + 1}. Switched to it.`
+            return report
+        }
+        report.message = "No answer from the EPS on any base channel. Check that the MIDI "
+            + "cables are the right way round, that both ports above are the ones the synth "
+            + "is on, and that Edit / System-MIDI / Sysex-MIDI is set to ON."
+        return report
+    }
+    /***
+     * Tries every base channel and returns the one that answers, leaving it
+     * selected. Restores the original if nothing does.
+     */
+    async findBaseChannel(statusCallback = () => {}){
+        const original = this.baseChannel
+        for(let channel=0; channel<16; channel++){
+            if(channel == original) continue
+            this.setBaseChannel(channel)
+            this.debug(`Trying base channel ${channel + 1}`)
+            statusCallback(`Trying base channel ${channel + 1} of 16 ...`)
+            const answer = await this.getParameter(EPS16.PING_PAGE, EPS16.PING_ITEM, 700)
+            if(answer.answered) return channel
+        }
+        this.setBaseChannel(original)
+        return -1
+    }
+    setBaseChannel(channel){
+        this.baseChannel = Math.max(0, Math.min(15, Math.floor(channel) || 0))
+        return this.baseChannel
+    }
     async setParameter(paramGroup, paramByte, paramValue){
         this.debug(`Setting Value ${paramValue.toString(16)}, ${paramValue} for group ${paramGroup.toString(16)}, ${paramByte.toString(16)}`)
         let header = [paramGroup, paramByte]
-        let midiValue = this.convertTo12BitMidi([paramValue],4)
+        // Section 9: parameter values are right justified in a 24 bit word.
+        // Negatives therefore go as 24 bit two's complement. Passing one
+        // straight through produced a negative MIDI byte, because
+        // convertTo12BitMidi builds its bit string with toString(2), which
+        // writes a minus sign rather than a sign bit. Nothing had used a
+        // negative parameter until fine tune.
+        const encoded = paramValue < 0 ? paramValue + 0x1000000 : paramValue
+        let midiValue = this.convertTo12BitMidi([encoded],4)
         this.debug(`Converted 12 bit midi value is ${midiValue.map(val => val.toString(16))}`)
         let msg = header.concat(midiValue)
         let cmd = this.createMIDIMessage(0x11,msg)
@@ -281,10 +640,19 @@ class EPS16 {
         await this.sendData(cmd)
         // The spec notes that PUT PARAMETER only answers when the parameter
         // number or value is wrong, so this usually times out. Keep it short:
-        // it exists to pace the command and to drain an error response before
-        // it can be mistaken for the answer to the next command. The error
-        // itself is reported by the incoming message handler either way.
-        await this.readMessages(300)
+        // it exists to pace the command, to drain an error response before it
+        // can be mistaken for the answer to the next command, and to report
+        // whether the value was accepted.
+        const messages = await this.readMessages(300)
+        const status = this.noteStatus(messages)
+        // Silence means accepted. ACK and WAIT are not errors either.
+        if(status > 0x01){
+            this.errorCallback(`Error: The EPS refused parameter `
+                + `${paramGroup.toString(16)}/${paramByte.toString(16)} = ${paramValue}: `
+                + `${this.statusText(status)}`)
+            return false
+        }
+        return true
     }
     async putWavesampleDataInChunks(audio, chunkSize, numWaves=1, waveIndex=0, progressCallback=()=>{}){
         this.debug("Total Size: ", audio.length)
@@ -298,11 +666,14 @@ class EPS16 {
             let attempts = 1
             while(!sent && attempts < EPS16.MAX_CHUNK_ATTEMPTS){
                 // Let the EPS finish giving up on the refused block before
-                // offering another one, then try again with a smaller block. A
-                // NAK here is nearly always the two second command timer
-                // expiring part way through, so a shorter block is the fix.
-                await this.sleep(1500)
-                if(size > EPS16.MIN_CHUNK_SAMPLES){
+                // offering another one. What happens next depends on why it was
+                // refused: a busy machine wants time, a block that arrived too
+                // slowly wants to be smaller.
+                const busy = EPS16.TRANSIENT_STATUS.includes(this.lastStatusCode)
+                await this.sleep(busy ? 2500 : 1500)
+                if(busy){
+                    this.debug("EPS was busy, offering the same block again")
+                }else if(size > EPS16.MIN_CHUNK_SAMPLES){
                     size = Math.max(EPS16.MIN_CHUNK_SAMPLES, Math.floor(size / 2))
                     this.debug("Block refused, retrying with", size, "samples per block")
                 }
@@ -321,13 +692,46 @@ class EPS16 {
             progressCallback(
                 `${ Math.round((waveIndex + (start/audio.length))/numWaves*100) }`)
         }
-        await this.sendAck()
-        let messages = await this.readMessages()
-        await this.sendAck()
+        // The transfer ends with the EPS acknowledging the last block; section 8
+        // has nothing after that. Two unsolicited ACKs used to be sent here, and
+        // the EPS answered both with errors because nothing was pending, which
+        // put a spurious "Disk Access in Progress" and "NAK" in the log at the
+        // end of every otherwise perfect upload.
+        this.successCallback(`Success: Sent ${audio.length} samples to the EPS`)
         await this.sleep(1000)
         await this.setParameter(0x20, 0x18, audio.length)
         return true
 
+    }
+    /***
+     * Status code carried by a response command, or -1 if this is not one.
+     */
+    responseStatus(message){
+        if(typeof message == 'undefined' || message.length != 3 || message[0] != 1) return -1
+        return message[2]
+    }
+    /***
+     * Plain text for a status code, borrowing the table used for logging.
+     */
+    statusText(code){
+        if(code < 0) return "no response"
+        return this.getResponseMessage([0x01, 0x00, code])
+            .replace(/^(Error|INFO|SUCCESS): /, '')
+    }
+    /***
+     * Records the status of whatever the EPS answered with, so the retry logic
+     * can tell a block it disliked from a machine that was merely busy.
+     */
+    noteStatus(messages){
+        this.lastStatusCode = -1
+        for(let msg of messages){
+            const status = this.responseStatus(msg)
+            if(status >= 0){
+                this.lastStatusCode = status
+                return status
+            }
+        }
+        return -1
     }
     async putWavesampleData(audio, start=0){
         this.debug("OFFSETS", start, audio.length, audio.length + start)
@@ -339,6 +743,7 @@ class EPS16 {
         //send offset command (PUT WAVESAMPLE DATA, part one)
         await this.sendData(cmd)
         let messages = await this.readMessages()
+        this.noteStatus(messages)
         if(messages.length == 0){
             this.errorCallback("Error: Unable to initiate pushing a wavesample to the the EPS"
                 + " (no response to the data range command)")
@@ -352,7 +757,9 @@ class EPS16 {
             }
         }
         if(!accepted){
-            this.errorCallback(`Error: The EPS refused the data range ${start} to ${start + audio.length}`)
+            this.errorCallback(`Error: The EPS would not take the data range ${start} to `
+                + `${start + audio.length}: ${this.statusText(this.lastStatusCode)}`
+                + (EPS16.TRANSIENT_STATUS.includes(this.lastStatusCode) ? ", retrying" : ""))
             return false
         }
         // Part two: the block of samples. sendData holds for the wire time, so
@@ -362,6 +769,7 @@ class EPS16 {
         let responses = await this.readMessages(EPS16.COMMAND_TIMER_MS + 1000)
         this.transferStats.dataBytes += midiData.length + 5
         this.transferStats.dataMs += Date.now() - started
+        this.noteStatus(responses)
         if(responses.length == 0){
             // Silence is a failure. Reporting success here meant a block that
             // never landed still counted as written, which is how a transfer
@@ -372,27 +780,53 @@ class EPS16 {
         }
         for(let resp of responses){
             if(await this.isAck(resp)){
-                this.successCallback("Success: Wavesample data successfully sent")
+                // Per block, so it goes to the debug log rather than the event
+                // log: a full length upload is two thousand blocks and would
+                // push everything else out of a capped log.
+                this.debug(`Sent samples ${start} to ${start + audio.length}`)
                 return true
             }
         }
-        this.errorCallback(`Error: The EPS refused a block of ${audio.length} samples at offset ${start}.`
-            + " A NAK here usually means the block took longer than 2 seconds to arrive;"
-            + " reduce the block size.")
+        this.errorCallback(`Error: The EPS refused a block of ${audio.length} samples at offset `
+            + `${start}: ${this.statusText(this.lastStatusCode)}`
+            + (this.lastStatusCode == 0x17
+                ? ". A NAK here usually means the block took longer than 2 seconds to arrive;"
+                    + " reduce the block size."
+                : ""))
         return false
 
 
     }
 
-    async uploadWavToEPS(audio, numWaves=1, waveIndex=0, progressCallback=()=>{}){
+    async uploadWavToEPS(audio, numWaves=1, waveIndex=0, progressCallback=()=>{}, sampleRate=0, rootKey=0, fineTune=null, name=null){
         await this.setParameter(0x20, 0x00, 2) // set loop forward
         await this.setParameter(0x20, 0x19, 0) // set loop pos
         await this.setParameter(0x20, 0x17, 0) // set loop start
         //await this.setParameter(0x20, 0x18, 1) // set loop end
         await this.setParameter(0x20, 0x15, 0) // set sample start
         await this.setParameter(0x20, 0x16, 1) // set sample end
-        
+
         if(await this.truncateWavesample() && await this.putWavesampleDataInChunks(audio, this.chunkSize, numWaves, waveIndex, progressCallback)){
+            // Last, so that a rate the EPS dislikes cannot disturb the transfer
+            // itself. The data is already in by this point.
+            if(sampleRate > 0){
+                const actual = await this.setSampleRate(sampleRate)
+                this.successCallback(`Success: Sample rate set to ${(actual/1000).toFixed(1)} kHz`)
+            }
+            if(rootKey > 0){
+                const key = await this.setRootKey(rootKey)
+                this.successCallback(`Success: Root key set to ${WaveGen.noteToName(key)} (${key})`)
+            }
+            if(typeof fineTune == 'number'){
+                const cents = await this.setFineTune(fineTune)
+                this.successCallback(`Success: Fine tune set to ${cents > 0 ? '+' : ''}${cents} cents`)
+            }
+            // Last of all: naming reads the parameter block back and returns it
+            // whole, so everything above has to be in place first.
+            const clean = EPS16.sanitizeName(name)
+            if(clean.length > 0 && await this.setWavesampleName(clean)){
+                this.successCallback(`Success: Wavesample named "${clean}"`)
+            }
             //this.sendAck()
             return true
         }else{
@@ -651,7 +1085,7 @@ class EPS16 {
             0xF0,
             0x0F,
             0x03,
-            0x00
+            this.baseChannel & 0x0F
         ]
         packet = packet.concat(message)
         packet.push(0xf7)
@@ -799,6 +1233,207 @@ class EPS16 {
         this.debug("OFFSET", offset)
         return offset
     }
+    /***
+     * Pulls the sample rate out of a parameter dump and remembers it. Word 131
+     * carries the value in the high byte, the same convention as the offset
+     * words either side of it.
+     */
+    readSampleRate(bit16Params){
+        const code = (bit16Params[EPS16.SAMPLE_RATE_WORD] >> 8) & 0x7F
+        if(code < WaveGen.RATE_CODE_MIN || code > WaveGen.RATE_CODE_MAX){
+            this.debug("Sample rate code out of range:", code)
+            return 0
+        }
+        this.lastSampleRateCode = code
+        this.lastSampleRate = WaveGen.rateFromCode(code)
+        this.debug(`Sample rate code ${code} = ${this.lastSampleRate} Hz`)
+        return this.lastSampleRate
+    }
+    /***
+     * Writes the sample rate of the selected wavesample. The rate is quantised
+     * to what the hardware can represent, so the caller gets back the rate that
+     * was actually set rather than the one it asked for.
+     */
+    async setSampleRate(hz){
+        const code = WaveGen.codeForRate(hz)
+        const actual = WaveGen.rateFromCode(code)
+        this.debug(`Setting sample rate to ${actual} Hz (code ${code})`)
+        await this.setParameter(0x20, EPS16.SAMPLE_RATE_PARAM, code)
+        return actual
+    }
+    /***
+     * Reads the rate back off the synth. Used to confirm that a write landed,
+     * since the EPS answers a PUT PARAMETER only when it rejects one.
+     */
+    /***
+     * Reads the root key out of a parameter dump. Only the high byte of word 80
+     * belongs to it; the low byte is the crossfade fadecurve and is left alone.
+     */
+    readRootKey(bit16Params){
+        const note = (bit16Params[EPS16.ROOT_KEY_WORD] >> 8) & 0x7F
+        this.lastRootKey = note
+        this.debug(`Root key ${note}`)
+        return note
+    }
+    /***
+     * Writes the root key of the selected wavesample: the MIDI note at which it
+     * plays back at the pitch it was recorded or generated at.
+     */
+    async setRootKey(note){
+        const key = Math.max(0, Math.min(127, Math.round(note)))
+        this.debug(`Setting root key to ${key}`)
+        await this.setParameter(EPS16.ROOT_KEY_PAGE, EPS16.ROOT_KEY_PARAM, key)
+        return key
+    }
+    /***
+     * Reads fine tune out of a parameter dump. See FINE_TUNE_WORD: the block's
+     * scaling is not documented, so anything outside the range the parameter
+     * page accepts is reported rather than believed.
+     */
+    readFineTune(bit16Params){
+        const raw = (bit16Params[EPS16.FINE_TUNE_WORD] >> 8) & 0xFF
+        const signed = raw > 127 ? raw - 256 : raw
+        this.lastFineTuneRaw = signed
+        this.lastFineTune = Math.abs(signed) <= EPS16.FINE_TUNE_LIMIT ? signed : null
+        this.debug(`Fine tune raw ${signed}`)
+        return this.lastFineTune
+    }
+    /***
+     * Writes fine tune in cents. Sent as a negative parameter value when flat,
+     * which is why setParameter had to learn two's complement.
+     */
+    async setFineTune(cents){
+        const value = Math.max(-EPS16.FINE_TUNE_LIMIT,
+            Math.min(EPS16.FINE_TUNE_LIMIT, Math.round(cents)))
+        this.debug(`Setting fine tune to ${value}`)
+        await this.setParameter(EPS16.ROOT_KEY_PAGE, EPS16.FINE_TUNE_PARAM, value)
+        return value
+    }
+    /***
+     * Reads the name out of a parameter dump. Words 0 to 11, one character per
+     * word in the high byte, the same layout in all three block types.
+     * Anything unprintable is shown as a space rather than dropped, so the
+     * character positions still line up with the display.
+     */
+    readBlockName(bit16Params){
+        let name = ''
+        for(let i=0; i<EPS16.NAME_LENGTH; i++){
+            const code = (bit16Params[EPS16.NAME_WORD + i] >> 8) & 0x7F
+            name += (code >= 0x20 && code <= 0x7E) ? String.fromCharCode(code) : ' '
+        }
+        return name.replace(/ +$/, '')
+    }
+    readWavesampleName(bit16Params){
+        this.lastWavesampleName = this.readBlockName(bit16Params)
+        this.debug(`Wavesample name "${this.lastWavesampleName}"`)
+        return this.lastWavesampleName
+    }
+    /***
+     * Names an instrument, layer or wavesample.
+     *
+     * There is no single PUT PARAMETER for any of the three names, so this is a
+     * read, modify, write of the entire parameter block. Only the twelve name
+     * words change; every other word goes back exactly as it came, which the 12
+     * and 16 bit conversions allow because they are exact inverses of each
+     * other.
+     *
+     * Whatever the block already holds is fetched first rather than assumed, so
+     * a rename cannot disturb the settings around it. In an upload this runs
+     * last, after the rate, root key and fine tune, so the block read here
+     * already carries those new values.
+     */
+    async setBlockName(kind, name){
+        const clean = EPS16.sanitizeName(name)
+        if(clean.length == 0) return true
+        const params = await this.getParamBlock(kind)
+        if(params.length < EPS16.NAME_LENGTH){
+            this.errorCallback(`Error: Could not read the ${kind.label} parameters, so `
+                + `"${clean}" was not set as the name`)
+            return false
+        }
+        // Free: the block had to be fetched anyway, so the old name is already
+        // here and the log can say what actually changed.
+        this.previousBlockName = this.readBlockName(params)
+        const block = params.slice()
+        const padded = clean.padEnd(EPS16.NAME_LENGTH, ' ')
+        for(let i=0; i<EPS16.NAME_LENGTH; i++){
+            // Keep the low byte. Section 7 marks these words as ASCII in the
+            // high byte and says nothing about the low one, so it is not ours
+            // to clear.
+            block[EPS16.NAME_WORD + i] =
+                (block[EPS16.NAME_WORD + i] & 0x00FF) | (padded.charCodeAt(i) << 8)
+        }
+        this.debug(`Setting ${kind.label} name to "${clean}"`)
+        return await this.putParamBlock(kind, block)
+    }
+    async setWavesampleName(name){
+        return await this.setBlockName(EPS16.BLOCK_WAVESAMPLE, name)
+    }
+    async setInstrumentName(name){
+        return await this.setBlockName(EPS16.BLOCK_INSTRUMENT, name)
+    }
+    async setLayerName(name){
+        return await this.setBlockName(EPS16.BLOCK_LAYER, name)
+    }
+    /***
+     * Sends a whole parameter block back. Two messages, as the note at the head
+     * of section 4.2 requires of every PUT that carries a block: the command
+     * with the edit context, then the block itself once the EPS has ACKed.
+     */
+    async putParamBlock(kind, block){
+        const cmd = this.createMIDIMessage(kind.put)
+        await this.sendData(cmd)
+        let messages = await this.readMessages()
+        this.noteStatus(messages)
+        if(messages.length == 0){
+            this.errorCallback(`Error: No response to the ${kind.label} parameter block command`)
+            return false
+        }
+        let accepted = false
+        for(let msg of messages){
+            if(await this.isAck(msg)){
+                accepted = true
+                break
+            }
+        }
+        if(!accepted){
+            this.errorCallback(`Error: The EPS would not take a ${kind.label} parameter block: `
+                + this.statusText(this.lastStatusCode))
+            return false
+        }
+        await this.sendData(this.convertTo16BitMidi(block))
+        const responses = await this.readMessages(EPS16.COMMAND_TIMER_MS + 1000)
+        this.noteStatus(responses)
+        if(responses.length == 0){
+            this.errorCallback(`Error: No response after sending a ${block.length} word `
+                + `${kind.label} parameter block`)
+            return false
+        }
+        for(let resp of responses){
+            if(await this.isAck(resp)) return true
+        }
+        this.errorCallback(`Error: The EPS refused the ${kind.label} parameter block: `
+            + this.statusText(this.lastStatusCode))
+        return false
+    }
+    /***
+     * One value for one wave of a multi wave upload. Accepts an array with an
+     * entry per wave, a single value for all of them, or nothing at all, which
+     * returns null so the caller leaves that setting alone. Zero is a real
+     * value here, so it cannot double as the "not given" marker.
+     */
+    perWave(values, index){
+        if(values === null || typeof values == 'undefined') return null
+        if(!Array.isArray(values)) return values
+        if(values.length == 0) return null
+        const value = values[index]
+        return (typeof value == 'number' || typeof value == 'string') ? value : values[0]
+    }
+    async readBackSampleRate(){
+        const params = await this.getWavesampleParams()
+        if(params.length == 0) return 0
+        return this.readSampleRate(params)
+    }
     setInstrumentNumber(num){
         this.instNum = num
     }
@@ -862,9 +1497,12 @@ class EPS16 {
      * Uploads the test pattern, waits, reads it back and compares. Returns a
      * report rather than printing one, so the caller decides how to show it.
      */
-    async runLoopbackTest(length, progressCallback=()=>{}, statusCallback=()=>{}){
+    async runLoopbackTest(length, progressCallback=()=>{}, statusCallback=()=>{}, sampleRate=0){
         const expected = EPS16.testPattern(length)
         const report = {
+            rateRequested: sampleRate,
+            rateWritten: 0,
+            rateReadBack: 0,
             passed: false,
             stage: 'upload',
             requested: length,
@@ -886,9 +1524,11 @@ class EPS16 {
             return report
         }
 
+        if(sampleRate > 0) report.rateWritten = WaveGen.rateFromCode(WaveGen.codeForRate(sampleRate))
+
         statusCallback(`Uploading ${length} test samples in blocks of ${this.chunkSize} ...`)
         const started = Date.now()
-        const uploaded = await this.uploadWavToEPS(expected, 1, 0, progressCallback)
+        const uploaded = await this.uploadWavToEPS(expected, 1, 0, progressCallback, sampleRate)
         report.uploadMs = Date.now() - started
         if(this.transferStats.dataMs > 0){
             report.bytesPerSecond = Math.round(
@@ -908,6 +1548,11 @@ class EPS16 {
         const actual = await this.getWavesampleDataChunked(this.chunkSize, (data, percent) => {
             progressCallback(`${percent}`)
         })
+        // getWavesampleDataChunked fetches the parameter block first, so the
+        // rate the synth is actually holding is already decoded by now. This is
+        // the check on whether a PUT PARAMETER to a "receive only" parameter
+        // sticks.
+        report.rateReadBack = this.lastSampleRate || 0
         report.returned = actual.length
         report.received = actual
 
@@ -939,7 +1584,7 @@ class EPS16 {
     /***
      * Macros
      */
-    async uploadAsTranswave(arrayOfWaveTables, progressCallback){
+    async uploadAsTranswave(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[]){
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
         let isSuccess = false
@@ -959,29 +1604,40 @@ class EPS16 {
         for(let wave of arrayOfWaveTables){
             transwave = transwave.concat(wave)
         }
-        isSuccess = await this.uploadWavToEPS(transwave, 1,0,progressCallback)
+        // Every wave ends up in one wavesample here, so only the first slot's
+        // name has anywhere to go.
+        isSuccess = await this.uploadWavToEPS(transwave, 1, 0, progressCallback,
+            this.perWave(sampleRates, 0), this.perWave(rootKeys, 0), this.perWave(fineTunes, 0),
+            this.perWave(names, 0))
         if(!isSuccess){
             this.errorCallback("Error: Unable to upload transwave to EPS16")
             return
         }
-        //set loop end
+        // Each of these reports for itself now, so the outcome is the AND of
+        // them rather than a guess made afterwards from whatever happened to be
+        // in the message queue. The old test here was `messages.length = 0`, an
+        // assignment rather than a comparison: it emptied the array, evaluated
+        // to 0, and took the failure branch every single time, so a transwave
+        // that went in perfectly still reported an error.
         await this.sleep(1000)
-        await this.setParameter(0x20,0x18,arrayOfWaveTables[0].length)
+        let ok = true
+        //set loop end
+        ok = await this.setParameter(0x20,0x18,arrayOfWaveTables[0].length) && ok
         //set modulation to transwave
-        await this.setParameter(0x20,0x06,0x07)
+        ok = await this.setParameter(0x20,0x06,0x07) && ok
         //set modulation source to wheel
-        await this.setParameter(0x20,0x07,0x0A)
+        ok = await this.setParameter(0x20,0x07,0x0A) && ok
         //set modulation ammount
-        await this.setParameter(0x20,0x08,arrayOfWaveTables.length+1)
-        let messages = await this.readMessages()
-        if(messages.length = 0){
+        ok = await this.setParameter(0x20,0x08,arrayOfWaveTables.length+1) && ok
+        if(ok){
             this.successCallback("Complete: Uploaded Transwave")
         }else{
-            this.errorCallback("Error: Error occured when uploading the transwave")
+            this.errorCallback("Error: The transwave samples were sent, but the EPS refused one "
+                + "of the modulation settings above")
         }
 
     }
-    async uploadToDifferentInstruments(arrayOfWaveTables, progressCallback){
+    async uploadToDifferentInstruments(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[]){
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
         let index =0
@@ -989,7 +1645,9 @@ class EPS16 {
             //find an empty instrument
             for(let i=this.instNum; i<8; i++){
                 if(await this.createInstrument() && await this.createLayer() && await this.createSqrWave()){
-                    await this.uploadWavToEPS(wave, arrayOfWaveTables.length, index, progressCallback)
+                    await this.uploadWavToEPS(wave, arrayOfWaveTables.length, index, progressCallback,
+                        this.perWave(sampleRates, index), this.perWave(rootKeys, index),
+                        this.perWave(fineTunes, index), this.perWave(names, index))
                     this.successCallback("Success: Adding new instrument")
                     index++
                     await this.sleep(500)
@@ -1002,7 +1660,7 @@ class EPS16 {
         }
         this.successCallback("Complete: Uploading samples")
     }
-    async createMorphingWaveTable(arrayOfWaveTables, progressCallback){
+    async createMorphingWaveTable(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[]){
         //enable all patche
         let isSuccess = false
         for(let i=this.instNum; i<8; i++){
@@ -1027,7 +1685,9 @@ class EPS16 {
             let wave = arrayOfWaveTables[i]
             this.setLayerNumber(i)
             //this.setWavesampleNumber(1)
-            if( !(await this.createLayer() && await this.createSqrWave() && this.setWavesampleNumber(i+1) && await this.uploadWavToEPS(wave, arrayOfWaveTables.length, i, progressCallback))){
+            if( !(await this.createLayer() && await this.createSqrWave() && this.setWavesampleNumber(i+1) && await this.uploadWavToEPS(wave, arrayOfWaveTables.length, i, progressCallback,
+                this.perWave(sampleRates, i), this.perWave(rootKeys, i), this.perWave(fineTunes, i),
+                this.perWave(names, i)))){
                 this.errorCallback("Error: Unable to update instrument parameters")
                 return false
             }

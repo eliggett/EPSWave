@@ -7,13 +7,71 @@
 class WaveGen {
 
     /***
-     * Sample rates supported by the EPS16+, in Hz.
-     * These are the rates as displayed on the synth's front panel. They look
-     * like a single master clock (~89.2kHz) divided by 2..8, so the true rates
-     * are within a few cents of these values.
+     * Sample rates supported by the EPS16+.
+     *
+     * Word 131 of the wavesample parameter block (section 7.3 of the External
+     * Command Specification) holds the rate as a divider: the sample period is
+     * that value times 1.6 microseconds. So every rate the machine can hold is
+     * 625000/code Hz, and nothing else.
+     *
+     * The seven rates offered when sampling are codes 14, 21, 28, 35, 42, 49
+     * and 56, which is a single clock over 7k for k = 2..8. Editing an existing
+     * wavesample reaches the whole range: code 2 is 312.5 kHz and code 100 is
+     * 6.25 kHz, matching the limits seen on the front panel.
      */
-    static SAMPLE_RATES = [44600, 29800, 22300, 17900, 14800, 12800, 11200]
-    static DEFAULT_SAMPLE_RATE = 44600
+    static RATE_CLOCK = 625000
+    static RATE_CODE_MIN = 2
+    static RATE_CODE_MAX = 100
+
+    /***
+     * Codes worth putting at the top of a menu: the seven sampling rates, plus
+     * code 13 which at 48077 Hz is the closest the EPS gets to a 48 kHz file.
+     * Code 14 doubles as the nearest to 44.1 kHz.
+     */
+    static COMMON_RATE_CODES = [13, 14, 21, 28, 35, 42, 49, 56]
+
+    /***
+     * Rates are rounded to whole Hz. The error is under a fiftieth of a cent
+     * and it keeps every rate an integer, which the selects and the WAV header
+     * both want.
+     */
+    static rateFromCode(code){
+        return Math.round(WaveGen.RATE_CLOCK / code)
+    }
+
+    static codeForRate(hz){
+        const code = Math.round(WaveGen.RATE_CLOCK / hz)
+        return Math.max(WaveGen.RATE_CODE_MIN, Math.min(WaveGen.RATE_CODE_MAX, code))
+    }
+
+    /***
+     * Every rate the EPS can hold, fastest first.
+     */
+    static allRateCodes(){
+        const codes = []
+        for(let code=WaveGen.RATE_CODE_MIN; code<=WaveGen.RATE_CODE_MAX; code++) codes.push(code)
+        return codes
+    }
+
+    /***
+     * Menu text for a rate code. The two codes that matter for imported files
+     * say so, because 48.1 and 44.6 kHz do not look like the 48 and 44.1 kHz
+     * the file claims to be.
+     */
+    static rateLabel(code){
+        const hz = WaveGen.rateFromCode(code)
+        // Enough decimals to keep every entry distinct: the codes crowd together
+        // at the slow end, where 1 decimal would print four pairs of twins.
+        let label = hz >= 100000 ? `${(hz/1000).toFixed(0)} kHz`
+            : hz >= 10000 ? `${(hz/1000).toFixed(1)} kHz`
+            : `${(hz/1000).toFixed(2)} kHz`
+        if(code == 13) label += " (48k files)"
+        if(code == 14) label += " (44.1k files)"
+        return label
+    }
+
+    static SAMPLE_RATES = WaveGen.COMMON_RATE_CODES.map(code => WaveGen.rateFromCode(code))
+    static DEFAULT_SAMPLE_RATE = WaveGen.rateFromCode(14)
 
     /***
      * Largest waveform the generator will produce. Hand editing is not capped.
@@ -79,9 +137,14 @@ class WaveGen {
      * so the choice matches what will be heard.
      */
     static nearestSampleRate(rate) {
+        // The whole code range, not just the sampling rates: an imported file is
+        // an edit to an existing wavesample, which is exactly where the EPS
+        // opens up every rate. It is the difference between landing a 16 kHz
+        // file 3 cents out and landing it a whole tone flat.
         let best = WaveGen.DEFAULT_SAMPLE_RATE
         let bestDistance = Infinity
-        for (const candidate of WaveGen.SAMPLE_RATES) {
+        for (const code of WaveGen.allRateCodes()) {
+            const candidate = WaveGen.rateFromCode(code)
             const distance = Math.abs(WaveGen.centsBetween(rate, candidate))
             if (distance < bestDistance) {
                 bestDistance = distance
