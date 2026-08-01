@@ -5,11 +5,51 @@ class EPS16 {
      */
     static MAX_IMPORT_SAMPLES = 512900
 
+    /***
+     * MIDI runs at 31250 baud, 8N1, so ten bits per byte: 3.125 bytes per
+     * millisecond. Every sysex packet occupies the wire for its own length,
+     * which matters because of COMMAND_TIMER_MS below.
+     */
+    static MIDI_BYTES_PER_MS = 3.125
+
+    /***
+     * Section 3.1 of the External Command Specification: the transmitter starts
+     * a two second command timer when it sends a message, and the receiver does
+     * the same while it waits for the second part of a PUT WAVESAMPLE DATA
+     * exchange. A block of samples that takes longer than this to arrive is
+     * NAKed even though nothing was actually wrong with it, so every block has
+     * to fit comfortably inside the window.
+     */
+    static COMMAND_TIMER_MS = 2000
+
+    /***
+     * Samples per PUT/GET WAVESAMPLE DATA block. 256 samples is 773 bytes on
+     * the wire, a quarter of a second at the full MIDI rate and around half a
+     * second through a slow USB adapter, so it clears the two second timer with
+     * plenty of room. Raise it for a fast interface, lower it if blocks are
+     * still being refused.
+     */
+    static DEFAULT_CHUNK_SAMPLES = 256
+    static MIN_CHUNK_SAMPLES = 32
+    static MAX_CHUNK_SAMPLES = 2048
+
+    /***
+     * How many times a single block is offered before the upload gives up. Each
+     * failure halves the block size, so the last attempt is a quarter the size
+     * of the first.
+     */
+    static MAX_CHUNK_ATTEMPTS = 4
+
     inputs = []
     outputs = []
     constructor(setUpCallback, errorCallback, successCallback){
         this.inputs = []
         this.outputs = []
+        this.chunkSize = EPS16.DEFAULT_CHUNK_SAMPLES
+        // Rolling measurement of how fast sample blocks actually get through,
+        // taken from the time between handing a block to the MIDI port and the
+        // EPS acknowledging it. Used only for reporting.
+        this.transferStats = { dataBytes: 0, dataMs: 0 }
         this.instNum = 0
         this.layerNum = 0
         this.wsBytes = [0x00, 0x01]
@@ -65,6 +105,9 @@ class EPS16 {
                 await this.sendAck()
                 let responses = await this.readMessages()
                 for(let resp of responses){
+                    // Skip anything short enough to be a response command; the
+                    // parameter block is the long message.
+                    if(resp.length <= 4) continue
                     return this.convertFrom16BitMidi(resp, true)
                 }
             }
@@ -169,27 +212,26 @@ class EPS16 {
         const params = await this.getWavesampleParams()
         if(params.length == 0 ) return []
         const offset = this.getEndOffset(params)
-        const iter = Math.floor(offset/chunkSize)
-        for(let i=0; i<=iter; i++){
-            let start = chunkSize * i
-            let end = (chunkSize *i) + chunkSize
-            let wavePart = await this.getWavesampleData(start, end)
+        const size = Math.max(EPS16.MIN_CHUNK_SAMPLES,
+            Math.min(EPS16.MAX_CHUNK_SAMPLES, chunkSize || this.chunkSize))
+        // Walk to the end offset rather than looping a fixed number of times.
+        // The old loop asked for one block past the end whenever the length was
+        // an exact multiple of the block size, and it advanced by the requested
+        // size even when the EPS returned fewer samples than that.
+        while(wavedata.length < offset){
+            const start = wavedata.length
+            const end = Math.min(start + size, offset)
+            const wavePart = await this.getWavesampleData(start, end)
+            if(wavePart.length == 0){
+                this.errorCallback(`Error: Download stopped at sample ${start} of ${offset}`)
+                break
+            }
             wavedata = wavedata.concat(wavePart)
             this.debug("WAVE", wavedata.length)
 
             plotCallback(wavedata, Math.min(100, Math.round((wavedata.length / offset) * 100)))
         }
-        if(wavedata.length < offset){
-            let start = wavedata.length
-            let end = offset
-            let wavePart = await this.getWavesampleData(start,end)
 
-            wavedata = wavedata.concat(wavePart)
-            this.debug("WAVE Last", wavedata.length)
-
-            plotCallback(wavedata, Math.min(100, Math.round((wavedata.length / offset) * 100)))
-        }
-        
         return wavedata
     }
     async getWavesampleData(start, end){
@@ -202,9 +244,14 @@ class EPS16 {
         this.debug("#####################Responses", responses)
         for(let resp of responses){
             if(await this.isAck(resp)){
-                await this.sleep(1000)
+                // Section 8, step 3: the ACK has to reach the EPS inside its
+                // two second timer, so do not dawdle here.
+                await this.sleep(150)
                 await this.sendAck()
-                let messages = await this.readMessages()
+                // The block itself is (end - start) * 3 bytes plus the frame,
+                // so give it that long on top of the command timer.
+                let messages = await this.readMessages(
+                    EPS16.COMMAND_TIMER_MS + this.wireTime((end - start) * 3 + 5))
                 this.debug("#####################", messages)
                 for(let msg of messages){
                     if(msg.length > 4){
@@ -232,37 +279,47 @@ class EPS16 {
         let cmd = this.createMIDIMessage(0x11,msg)
         this.debug("Set Parameter", cmd)
         await this.sendData(cmd)
+        // The spec notes that PUT PARAMETER only answers when the parameter
+        // number or value is wrong, so this usually times out. Keep it short:
+        // it exists to pace the command and to drain an error response before
+        // it can be mistaken for the answer to the next command. The error
+        // itself is reported by the incoming message handler either way.
+        await this.readMessages(300)
     }
     async putWavesampleDataInChunks(audio, chunkSize, numWaves=1, waveIndex=0, progressCallback=()=>{}){
         this.debug("Total Size: ", audio.length)
-        let chunks = []
-        for (let i = 0; i < audio.length; i += chunkSize) {
-            const chunk = audio.slice(i, i + chunkSize);
-            /*if(chunk.length < chunkSize){
-                while(chunk.length < chunkSize){
-                    chunk.push(0)
+        let size = Math.max(EPS16.MIN_CHUNK_SAMPLES,
+            Math.min(EPS16.MAX_CHUNK_SAMPLES, chunkSize || this.chunkSize))
+        let start = 0
+        while(start < audio.length){
+            let length = Math.min(size, audio.length - start)
+            let chunk = audio.slice(start, start + length)
+            let sent = await this.putWavesampleData(chunk, start)
+            let attempts = 1
+            while(!sent && attempts < EPS16.MAX_CHUNK_ATTEMPTS){
+                // Let the EPS finish giving up on the refused block before
+                // offering another one, then try again with a smaller block. A
+                // NAK here is nearly always the two second command timer
+                // expiring part way through, so a shorter block is the fix.
+                await this.sleep(1500)
+                if(size > EPS16.MIN_CHUNK_SAMPLES){
+                    size = Math.max(EPS16.MIN_CHUNK_SAMPLES, Math.floor(size / 2))
+                    this.debug("Block refused, retrying with", size, "samples per block")
                 }
-            }*/
-            chunks.push(chunk)
-        }
-        this.debug(chunks)
-
-        let start = 0;
-        for(let chunk of chunks){
-            if(!await this.putWavesampleData(chunk, start)){
-                //try again
-                if(!await this.putWavesampleData(chunk, start)){
-                    this.errorCallback("Error: Unable to upload a portion of the wavesample")
-                    return false
-                }
-                await this.sleep(2000)
-            } 
-            this.debug( "Percent Complete:", ((start+chunk.length)/audio.length) * 100)
+                length = Math.min(size, audio.length - start)
+                chunk = audio.slice(start, start + length)
+                sent = await this.putWavesampleData(chunk, start)
+                attempts++
+            }
+            if(!sent){
+                this.errorCallback("Error: Unable to upload a portion of the wavesample"
+                    + ` (stopped at sample ${start} of ${audio.length})`)
+                return false
+            }
+            start += length
+            this.debug("Percent Complete:", (start / audio.length) * 100)
             progressCallback(
-                `${ Math.round(
-                    (waveIndex + ((start+chunk.length)/audio.length))/numWaves*100)
-                }`)
-            start+=chunkSize
+                `${ Math.round((waveIndex + (start/audio.length))/numWaves*100) }`)
         }
         await this.sendAck()
         let messages = await this.readMessages()
@@ -279,32 +336,49 @@ class EPS16 {
         let endOffset = this.convertTo12BitMidi([audio.length + start], 4)
         let sampleOffsets = startOffset.concat(endOffset)
         let cmd = this.createMIDIMessage(0x0f,sampleOffsets)
-        //send offset command
+        //send offset command (PUT WAVESAMPLE DATA, part one)
         await this.sendData(cmd)
         let messages = await this.readMessages()
         if(messages.length == 0){
-            this.errorCallback("Error: Unable to initiate pushing a wavesample to the the EPS")
+            this.errorCallback("Error: Unable to initiate pushing a wavesample to the the EPS"
+                + " (no response to the data range command)")
             return false
         }
+        let accepted = false
         for(let msg of messages){
             if(await this.isAck(msg)){
-                //send midi data
-                //await this.sendAck()
-                await this.sendData(midiData)
-                let responses = await this.readMessages()
-                if(responses.length == 0 ){
-                    this.successCallback("Success: Wavesample data successfully sent")
-                    return true
-                }
-                for(let resp of responses){
-                    if(await this.isAck(resp)){
-                        this.successCallback("Success: Wavesample data successfully sent")
-                        return true
-                    }
-                }
+                accepted = true
+                break
             }
         }
-        this.errorCallback("Error: Unable to send wavesample data to EPS")
+        if(!accepted){
+            this.errorCallback(`Error: The EPS refused the data range ${start} to ${start + audio.length}`)
+            return false
+        }
+        // Part two: the block of samples. sendData holds for the wire time, so
+        // the response window below starts once the EPS has the whole block.
+        const started = Date.now()
+        await this.sendData(midiData)
+        let responses = await this.readMessages(EPS16.COMMAND_TIMER_MS + 1000)
+        this.transferStats.dataBytes += midiData.length + 5
+        this.transferStats.dataMs += Date.now() - started
+        if(responses.length == 0){
+            // Silence is a failure. Reporting success here meant a block that
+            // never landed still counted as written, which is how a transfer
+            // could finish cleanly and still play back corrupted.
+            this.errorCallback(`Error: No response after sending ${audio.length} samples`
+                + ` at offset ${start}. Try a smaller block size.`)
+            return false
+        }
+        for(let resp of responses){
+            if(await this.isAck(resp)){
+                this.successCallback("Success: Wavesample data successfully sent")
+                return true
+            }
+        }
+        this.errorCallback(`Error: The EPS refused a block of ${audio.length} samples at offset ${start}.`
+            + " A NAK here usually means the block took longer than 2 seconds to arrive;"
+            + " reduce the block size.")
         return false
 
 
@@ -318,7 +392,7 @@ class EPS16 {
         await this.setParameter(0x20, 0x15, 0) // set sample start
         await this.setParameter(0x20, 0x16, 1) // set sample end
         
-        if(await this.truncateWavesample() && await this.putWavesampleDataInChunks(audio,5000, numWaves, waveIndex, progressCallback)){
+        if(await this.truncateWavesample() && await this.putWavesampleDataInChunks(audio, this.chunkSize, numWaves, waveIndex, progressCallback)){
             //this.sendAck()
             return true
         }else{
@@ -457,15 +531,28 @@ class EPS16 {
         }
     }
     async isAck(message){
-        if(typeof message != 'undefined' && message.length >0 && message[0] == 1 && message[message.length-1] == 1){ /// Wait message
-            this.sleep(30000) /// manual sais wait up to 30 seconds 
-            let messages = await this.readMessages()
-            return messages.reduce( (acc, msg) => acc || this.isAck(msg), false)
-        }else if(typeof message != 'undefined' && message.length >0 && message[0] == 1 && message[message.length-1] == 0){ /// ACK message
-            return true
-        }else{
+        // Section 4.1: a response command is exactly three bytes once the sysex
+        // frame is off, 01 followed by the two byte status code. Anything
+        // longer is a data block, which must never be mistaken for an ACK just
+        // because it happens to start with 1 and end with 0.
+        if(typeof message == 'undefined' || message.length != 3 || message[0] != 1) return false
+        const status = message[message.length-1]
+        if(status == 0x01){ /// WAIT message
+            // Section 3.2: acknowledge the WAIT, restart the command timer with
+            // a thirty second value, and listen again. The old code neither
+            // sent the ACK nor awaited the sleep, so WAIT mode never worked.
+            this.debug("INFO: WAIT received, acknowledging and waiting up to 30 seconds")
+            await this.sendAck()
+            let messages = await this.readMessages(30000)
+            for(let msg of messages){
+                // Sequential, not a reduce over promises: `acc || this.isAck()`
+                // ORs a Promise, which is always truthy, so every message used
+                // to count as an ACK once a WAIT had been seen.
+                if(await this.isAck(msg)) return true
+            }
             return false
         }
+        return status == 0x00 /// ACK message
     }
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
@@ -494,16 +581,29 @@ class EPS16 {
         }
         return String(value)
     }
-    async readMessages(){ 
+    /***
+     * Waits for the receiver to answer and returns everything that arrived, in
+     * the order it arrived. This returns as soon as the reply lands, so a
+     * generous default costs nothing: it is only paid when the EPS stays quiet,
+     * and operations like truncating a long wavesample can take a while to
+     * answer. Callers waiting on a block of sample data pass a window that also
+     * covers the wire time.
+     */
+    async readMessages(timeoutMs = 4000){
         let readMessages = []
         const startTime = Date.now()
-        let timeout=0;
-        while(this.midiMessages.length == 0 &&  timeout < 5000){
-            timeout = Date.now() - startTime;
-            await this.sleep(500)
+        while(this.midiMessages.length == 0 && (Date.now() - startTime) < timeoutMs){
+            await this.sleep(10)
         }
+        // A command can be answered by more than one message (a WAIT followed
+        // by an ACK), so let a short burst settle rather than returning the
+        // instant the first one lands.
+        if(this.midiMessages.length > 0) await this.sleep(30)
         while(this.midiMessages.length > 0){
-            const msg = this.midiMessages.pop()
+            // shift, not pop: responses have to come back in the order the EPS
+            // sent them, otherwise a NAK can be read ahead of the ACK it
+            // followed and the wrong one wins.
+            const msg = this.midiMessages.shift()
             const striped = this.stripSysexHeader(msg)
             readMessages.push(striped)
         }
@@ -525,7 +625,11 @@ class EPS16 {
             if(midiMessage.data[0] == 0xF0){ //Sysex Data
                 this.midiMessages.push(midiMessage.data)
             }
-            if(midiMessage.data[4] == 0x1){
+            // A response command is the whole packet: frame, 01, and a two byte
+            // status code. Testing data[4] alone also matched blocks of sample
+            // data whose first byte happened to be 01, which logged invented
+            // errors during a download.
+            if(midiMessage.data.length == 8 && midiMessage.data[4] == 0x1){
                 let message = this.getResponseMessage(this.stripSysexHeader(midiMessage.data))
                 if(message.indexOf("Error") != -1){
                     this.errorCallback(message)
@@ -553,9 +657,38 @@ class EPS16 {
         packet.push(0xf7)
         console.log("Send ->", packet)
         this.midiCallback("->", packet)
-        await this.midiOutput.send(packet)
-        await this.sleep(700)
+        // Anything still sitting in the queue belongs to a command that has
+        // already been answered and read, so it can only confuse the response
+        // to this one. A stale ACK is worse than no ACK: it makes a block that
+        // was never accepted look like it was.
+        this.midiMessages.length = 0
+        this.midiOutput.send(packet)
+        // send() only queues the bytes, it does not wait for them to go out.
+        // Hold for the time the packet needs on the wire so callers start
+        // listening for a response once the EPS has actually seen the message,
+        // not while it is still arriving.
+        await this.sleep(this.wireTime(packet.length) + 40)
 
+    }
+    /***
+     * Milliseconds a packet of this many bytes occupies the MIDI wire.
+     */
+    wireTime(bytes){
+        return Math.ceil(bytes / EPS16.MIDI_BYTES_PER_MS)
+    }
+    /***
+     * Largest block, in samples, that still fits inside the EPS's two second
+     * command timer at the given throughput, with a safety factor of two.
+     */
+    chunkSizeFor(bytesPerSecond){
+        const budget = (bytesPerSecond * EPS16.COMMAND_TIMER_MS / 1000) / 2
+        return Math.max(EPS16.MIN_CHUNK_SAMPLES,
+            Math.min(EPS16.MAX_CHUNK_SAMPLES, Math.floor((budget - 5) / 3)))
+    }
+    setChunkSize(samples){
+        this.chunkSize = Math.max(EPS16.MIN_CHUNK_SAMPLES,
+            Math.min(EPS16.MAX_CHUNK_SAMPLES, Math.floor(samples) || EPS16.DEFAULT_CHUNK_SAMPLES))
+        return this.chunkSize
     }
     createMIDIMessage(command, data=[]){
         let header = [
@@ -697,6 +830,110 @@ class EPS16 {
             breakPoints.pointD = breakPoints.pointC + sectionLength
         }
         return breakPoints
+    }
+
+    /***
+     * Transfer self test
+     */
+
+    /***
+     * A deterministic test pattern of the requested length. Every sample is
+     * derived from its own index with Knuth's multiplicative hash, so the value
+     * at any position is unique and unpredictable: a block that arrives shifted,
+     * duplicated or dropped cannot accidentally match, the way a ramp or a sine
+     * sometimes can. The pattern uses the full 16 bit range to exercise every
+     * bit of the three byte word format.
+     */
+    static testPattern(length){
+        const data = new Array(length)
+        for(let i=0; i<length; i++){
+            const hash = (i * 2654435761) % 4294967296
+            const word = Math.floor(hash / 65536) & 0xFFFF
+            let value = word > 32767 ? word - 65536 : word
+            // -32768 has no positive counterpart; keep the pattern symmetric so
+            // a mismatch is always a transfer fault and never a clamp.
+            if(value == -32768) value = -32767
+            data[i] = value
+        }
+        return data
+    }
+
+    /***
+     * Uploads the test pattern, waits, reads it back and compares. Returns a
+     * report rather than printing one, so the caller decides how to show it.
+     */
+    async runLoopbackTest(length, progressCallback=()=>{}, statusCallback=()=>{}){
+        const expected = EPS16.testPattern(length)
+        const report = {
+            passed: false,
+            stage: 'upload',
+            requested: length,
+            returned: 0,
+            mismatches: 0,
+            firstMismatch: -1,
+            lastMismatch: -1,
+            examples: [],
+            blockSize: this.chunkSize,
+            uploadMs: 0,
+            bytesPerSecond: 0,
+            suggestedBlockSize: this.chunkSize,
+            message: ''
+        }
+        this.transferStats = { dataBytes: 0, dataMs: 0 }
+
+        if(!this.midiOutput || typeof this.midiOutput.send != 'function'){
+            report.message = "Cannot run the test: no MIDI output is selected."
+            return report
+        }
+
+        statusCallback(`Uploading ${length} test samples in blocks of ${this.chunkSize} ...`)
+        const started = Date.now()
+        const uploaded = await this.uploadWavToEPS(expected, 1, 0, progressCallback)
+        report.uploadMs = Date.now() - started
+        if(this.transferStats.dataMs > 0){
+            report.bytesPerSecond = Math.round(
+                (this.transferStats.dataBytes / this.transferStats.dataMs) * 1000)
+            report.suggestedBlockSize = this.chunkSizeFor(report.bytesPerSecond)
+        }
+        if(!uploaded){
+            report.message = `Upload failed after ${(report.uploadMs/1000).toFixed(1)} s.`
+            return report
+        }
+
+        report.stage = 'readback'
+        statusCallback("Upload finished. Waiting 5 seconds before reading it back ...")
+        await this.sleep(5000)
+
+        statusCallback("Reading the wavesample back from the EPS ...")
+        const actual = await this.getWavesampleDataChunked(this.chunkSize, (data, percent) => {
+            progressCallback(`${percent}`)
+        })
+        report.returned = actual.length
+        report.received = actual
+
+        report.stage = 'compare'
+        const shared = Math.min(expected.length, actual.length)
+        for(let i=0; i<shared; i++){
+            if(actual[i] === expected[i]) continue
+            report.mismatches++
+            if(report.firstMismatch < 0) report.firstMismatch = i
+            report.lastMismatch = i
+            if(report.examples.length < 5){
+                report.examples.push({ index: i, expected: expected[i], actual: actual[i] })
+            }
+        }
+        report.passed = report.mismatches == 0 && report.returned == length
+
+        if(report.passed){
+            report.message = `PASS: all ${length} samples came back identical.`
+        }else if(report.returned != length){
+            report.message = `FAIL: sent ${length} samples, got ${report.returned} back`
+                + (report.mismatches > 0 ? `, and ${report.mismatches} of the shared ones differ.` : '.')
+        }else{
+            report.message = `FAIL: ${report.mismatches} of ${length} samples differ`
+                + `, first at ${report.firstMismatch}, last at ${report.lastMismatch}.`
+        }
+        return report
     }
 
     /***

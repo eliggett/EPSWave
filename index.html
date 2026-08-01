@@ -38,6 +38,9 @@
         body.dark .btn-outline-secondary:hover { background-color: #2f3640; color: #ffffff; border-color: #4a5568; }
         body.dark .btn-secondary { background-color: #4a5568; border-color: #4a5568; }
         body.dark .alert-warning { background-color: #3a3320; color: #f0d9a0; border-color: #5c4f2c; }
+        body.dark .alert-secondary { background-color: #232830; color: #c8ced6; border-color: #333b47; }
+        body.dark .alert-success { background-color: #1c3323; color: #a7dbb4; border-color: #2f5b3c; }
+        body.dark .alert-danger { background-color: #3a2124; color: #eda9ae; border-color: #5f3238; }
         body.dark .text-muted { color: #8b95a1 !important; }
         body.dark .custom-control-label { color: #c8ced6; }
         body.dark a { color: #6fb8ff; }
@@ -310,6 +313,64 @@
             <div class="col-sm">
                 <div class="card">
                     <div class="card-header">
+                        Transfer Settings and Diagnostics
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-sm-4">
+                                <div class="input-group input-group-sm mb-2">
+                                    <div class="input-group-prepend">
+                                        <label class="input-group-text" for="blockSize">Block Size</label>
+                                    </div>
+                                    <input type="number" class="form-control" id="blockSize" min="32" max="2048"
+                                        step="32" value="256">
+                                    <div class="input-group-append">
+                                        <span class="input-group-text">samples</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-sm-4">
+                                <div class="input-group input-group-sm mb-2">
+                                    <div class="input-group-prepend">
+                                        <label class="input-group-text" for="testLength">Test Length</label>
+                                    </div>
+                                    <input type="number" class="form-control" id="testLength" min="1" max="20000"
+                                        step="100" value="2000">
+                                    <div class="input-group-append">
+                                        <span class="input-group-text">samples</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-sm-4">
+                                <button id="runTest" class="btn btn-warning btn-block btn-sm"><i
+                                        class="fa-solid fa-vial"></i> Run Loopback Test
+                                    <span id="testSpinner" class="spinner-border spinner-border-sm" role="status"
+                                        aria-hidden="true" style="display:none"></span>
+                                    <span id="testPercent" style="display:none">0%</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-12">
+                                <div id="testResult" class="alert alert-secondary mb-2" style="display:none"></div>
+                                <i><small><b>Block Size</b> is how many samples go into a single sysex message. The
+                                    EPS gives up on a message that takes longer than 2 seconds to arrive, which at
+                                    MIDI speed is roughly 2000 samples on a good interface and far fewer on a slow
+                                    USB adapter. Lower this if transfers are refused; raise it for more speed.</small></i><br />
+                                <i><small><b>Loopback Test</b> writes a deterministic pattern into the selected
+                                    instrument, layer and wavesample, waits 5 seconds, reads it back and compares
+                                    every sample. It overwrites whatever is in that wavesample, so point it at a
+                                    scratch one.</small></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col-sm">
+                <div class="card">
+                    <div class="card-header">
                         Upload multiple waveforms at once (can also create transwaves, soundscapes)
                     </div>
                     <div class="card-body">
@@ -551,6 +612,58 @@
 
             let waveScapes = []
 
+            // Block size drives every sysex data transfer, up and down. Kept in
+            // localStorage because it depends on the interface, not the sample.
+            {
+                const stored = parseInt(localStorage.getItem("blockSize"))
+                $("#blockSize").val(eps.setChunkSize(stored || EPS16.DEFAULT_CHUNK_SAMPLES))
+            }
+            $("#blockSize").change(() => {
+                const applied = eps.setChunkSize(parseInt($("#blockSize").val()))
+                $("#blockSize").val(applied)
+                localStorage.setItem("blockSize", applied)
+                log(`Block size set to ${applied} samples `
+                    + `(${applied * 3 + 5} bytes, about ${((applied * 3 + 5) / 3125).toFixed(2)} s on the wire)`)
+            })
+
+            $("#runTest").click(async () => {
+                const length = Math.max(1, Math.min(20000, parseInt($("#testLength").val()) || 2000))
+                $("#testLength").val(length)
+                $("#runTest").prop("disabled", true)
+                $("#testSpinner").show()
+                $("#testPercent").html("0%").show()
+                $("#testResult").hide()
+                log(`Loopback test: ${length} samples, ${eps.chunkSize} samples per block`)
+
+                const report = await eps.runLoopbackTest(
+                    length,
+                    (percent) => { $("#testPercent").html(`${percent}%`) },
+                    (status) => { log(status) })
+
+                let detail = [report.message]
+                detail.push(`Sent ${report.requested} samples in blocks of ${report.blockSize}`
+                    + `, took ${(report.uploadMs / 1000).toFixed(1)} s.`)
+                if (report.bytesPerSecond > 0) {
+                    detail.push(`Measured throughput ${report.bytesPerSecond} bytes/sec`
+                        + ` (MIDI can do 3125). Blocks of up to ${report.suggestedBlockSize} samples`
+                        + ` fit inside the 2 second command timer at that rate.`)
+                }
+                for (let example of report.examples) {
+                    detail.push(`sample ${example.index}: expected ${example.expected}, got ${example.actual}`)
+                }
+                $("#testResult")
+                    .removeClass("alert-secondary alert-success alert-danger")
+                    .addClass(report.passed ? "alert-success" : "alert-danger")
+                    .html(detail.join("<br />"))
+                    .show()
+                for (let line of detail) log(line)
+                if (report.received) epsChart.setWavesample(report.received)
+
+                $("#testSpinner").hide()
+                $("#testPercent").hide().html("0%")
+                $("#runTest").prop("disabled", false)
+            })
+
             $("#midiIn").change((value) => {
                 eps.setInput(value.target.value)
                 localStorage.setItem('midiIn', value.target.value);
@@ -627,7 +740,7 @@
             $("#getWS").click(async () => {
                 $("#downloadSpinner").show()
                 $("#percentComplete").show()
-                const epsWavesample = await eps.getWavesampleDataChunked(5000, (wavedata, percentComplete) => {
+                const epsWavesample = await eps.getWavesampleDataChunked(eps.chunkSize, (wavedata, percentComplete) => {
                     $("#percentComplete").html(`${percentComplete}%`)
                     epsChart.setWavesample(wavedata)
                 })
