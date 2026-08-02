@@ -70,6 +70,11 @@
             letter-spacing: 0.08em;
             text-transform: uppercase;
         }
+        /* Qualified with .form-control so it outranks Bootstrap's
+           .form-control-sm, which the fields under the Create buttons carry and
+           which would otherwise set the size back to 0.875rem. The field height
+           is an em calculation in Bootstrap, so the box grows to suit. */
+        .eps-name.form-control { font-size: 1.25rem; }
         /* Light mode: a passive LCD, dark segments on a grey green panel. */
         .eps-name.form-control {
             background-color: #cfd8b9;
@@ -94,6 +99,13 @@
         body.dark .eps-name.form-control:focus { border-color: #3dff9e; box-shadow: none; }
         body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: none; }
         .eps-name.form-control::placeholder { color: #7b8768; }
+
+        /* Expanded event log. The height is the viewport less the room the card
+           header, the checkbox row and the page margins take, so the textarea
+           fills what is left of the screen and the whole card still fits
+           without the page itself scrolling. rows= on the textarea loses to
+           this, which is the point. */
+        #log.log-expanded { height: calc(100vh - 13rem); min-height: 12rem; }
     </style>
     <script src="./eps.js"></script>
     <script src="./waveGen.js"></script>
@@ -173,27 +185,6 @@
                     transferred to or from the EPS16+. Use Chrome or another Chromium based
                     browser for transfers. Generating waveforms, drawing and editing them,
                     audio preview and saving WAV files all still work here.
-                </div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="col-sm">
-                <div class="card">
-                    <div class="card-header">
-                        Support
-                    </div>
-                    <div class="card-body">
-                        <div class="row">
-                            <div class="col-sm">
-                                <button class="btn btn-primary btn-block" id="patron"><i
-                                        class="fa-brands fa-patreon"></i> Support via Patron!</button>
-                            </div>
-                            <div class="col-sm">
-                                <button id="bugs" class="btn btn-info btn-block"><i class="fa-brands fa-github"></i>
-                                    Submit Bugs and Requests here</button>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -623,6 +614,16 @@
                                 <button id="clearLog" class="btn btn-outline-secondary btn-sm py-0"><i
                                         class="fa-regular fa-trash-can"></i> Clear Log</button>
                             </div>
+                            <div class="col-auto">
+                                <button id="expandLog" class="btn btn-outline-secondary btn-sm py-0"><span
+                                        id="expandLogIcon"><i
+                                            class="fa-solid fa-up-right-and-down-left-from-center"></i></span>
+                                    <span id="expandLogLabel">Expand</span></button>
+                            </div>
+                            <div class="col-auto">
+                                <button id="exportLog" class="btn btn-outline-secondary btn-sm py-0"><i
+                                        class="fa-solid fa-file-arrow-down"></i> Export...</button>
+                            </div>
                         </div>
                         <div class="form-group">
                             <textarea class="form-control" id="log" rows="9"></textarea>
@@ -696,6 +697,59 @@
             $("#clearLog").click(() => {
                 logLines = []
                 document.getElementById("log").value = ""
+            })
+
+            // Grows the log to fill the screen. The preference sticks, because
+            // anyone who wants a big log while chasing a transfer wants it again
+            // next time. Scrolled into view on expanding, since the log sits at
+            // the bottom of a long page and growing something off screen looks
+            // like nothing happened.
+            function setLogExpanded(expanded, scroll) {
+                const element = document.getElementById("log")
+                element.classList.toggle("log-expanded", expanded)
+                $("#expandLogLabel").text(expanded ? "Collapse" : "Expand")
+                // Replaced as markup rather than by editing the <i>'s class:
+                // Font Awesome's script swaps each <i> for an <svg>, so by now
+                // there is no <i> left to find. Writing a fresh one back in is
+                // what the preview button does too, and the observer renders it.
+                $("#expandLogIcon").html(expanded
+                    ? '<i class="fa-solid fa-down-left-and-up-right-to-center"></i>'
+                    : '<i class="fa-solid fa-up-right-and-down-left-from-center"></i>')
+                element.scrollTop = element.scrollHeight
+                // The card, not the textarea: once expanded the textarea is
+                // taller than the viewport, and bringing *it* into view puts its
+                // top off screen along with these buttons.
+                if (expanded && scroll) {
+                    element.closest(".card").scrollIntoView({ block: "start", behavior: "smooth" })
+                }
+                safeStorage.set("logExpanded", expanded ? "1" : "0")
+            }
+            $("#expandLog").click(() => {
+                setLogExpanded(!document.getElementById("log").classList.contains("log-expanded"), true)
+            })
+            setLogExpanded(safeStorage.get("logExpanded") == "1", false)
+
+            // Exports what is in the log, not what is on screen: the textarea
+            // holds the same lines, but reading the array keeps the export
+            // independent of anything the browser does to the field.
+            $("#exportLog").click(() => {
+                if (logLines.length == 0) {
+                    handleError("Error: The log is empty, nothing to export")
+                    return
+                }
+                // CRLF so the file opens sensibly in a plain Windows editor,
+                // which is where a log emailed about a MIDI problem tends to go.
+                const text = logLines.join("\r\n") + "\r\n"
+                const blob = new Blob([text], { type: "text/plain;charset=utf-8" })
+                const url = (window.URL || window.webkitURL).createObjectURL(blob)
+                const link = document.createElement("a")
+                link.href = url
+                link.download = `eps16-log-${logTimestamp().replace(/[^0-9-]/g, "")}.txt`
+                link.click()
+                // Chrome keeps the blob alive for the life of the document
+                // otherwise, and a long session can export several times.
+                setTimeout(() => (window.URL || window.webkitURL).revokeObjectURL(url), 1000)
+                log(`Exported ${logLines.length} log lines to ${link.download}`)
             })
 
             // Sysex wavesample transfers run to thousands of bytes, so show the
@@ -1127,12 +1181,6 @@
 
             })
             $("#addWave").click()
-            $("#patron").click(() => {
-                window.location = "https://patreon.com/null0perat0r"
-            })
-            $("#bugs").click(() => {
-                window.location = "https://github.com/summitt/EnsoniqEPS16Plus/issues"
-            })
 
             // Dark mode is applied in the head and wired next to its switch, so
             // there is nothing to do here beyond repainting the slots that were

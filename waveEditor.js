@@ -13,6 +13,14 @@ class WaveEditor {
     static PEAK = 32767
 
     /***
+     * Display height in CSS pixels, overridable per instance with
+     * `options.height`. The graticule, the trace and the hit testing are all
+     * derived from `this.height`, so this is the only place that needs to
+     * change to resize a slot.
+     */
+    static DEFAULT_HEIGHT = 315
+
+    /***
      * Screen colours. `trace` of null means the slot keeps its own colour; the
      * dark theme overrides it so every trace reads as scope phosphor.
      */
@@ -102,7 +110,7 @@ class WaveEditor {
         this.pointer = null
 
         this.canvas.style.width = '100%'
-        this.canvas.style.height = (options.height || 180) + 'px'
+        this.canvas.style.height = (options.height || WaveEditor.DEFAULT_HEIGHT) + 'px'
         this.canvas.style.touchAction = 'none'
         this.canvas.style.cursor = this.readOnly ? 'default' : 'crosshair'
 
@@ -191,7 +199,7 @@ class WaveEditor {
      * Pixel <-> sample mapping
      */
     get width() { return this.canvas.clientWidth || 1 }
-    get height() { return parseInt(this.canvas.style.height, 10) || 180 }
+    get height() { return parseInt(this.canvas.style.height, 10) || WaveEditor.DEFAULT_HEIGHT }
     get padding() { return 6 }
 
     xToSample(x) {
