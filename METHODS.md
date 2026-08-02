@@ -510,3 +510,144 @@ each; if one answers it is reported and left selected.
 Only when nothing answers on any channel does the test conclude that something
 is actually wrong, and it then names the three things worth checking: cable
 direction, port selection, and Edit / System·MIDI / Sysex-MIDI.
+
+## Whole instrument backup and restore (preliminary)
+
+**Nothing below is implemented.** This is a design study written against the
+specification and the code that already exists, recorded so the next person does
+not have to re-derive it. Every figure quoted is either from the specification or
+computed from the measured transfer rate in *Blocks and the two second command
+timer* above.
+
+The goal: copy an entire instrument — its parameters, every layer, every
+wavesample and all of the audio — to a file on the computer, and put it back.
+
+### The inventory comes free
+
+The question that decides whether any of this is practical is how to find out
+what is *inside* an instrument. It turns out not to be a problem. Most of the
+instrument parameter block of section 7.1 is a directory:
+
+| Words     | Contents                                    |
+|-----------|---------------------------------------------|
+| 29-44     | 8 pitch table offsets, two words each       |
+| 45-60     | 8 layer offsets                             |
+| 61-316    | **128 wavesample offsets**                  |
+| 317-318   | effect offset                               |
+
+Appendix B confirms this against the RAM structure it documents:
+`inst_ptable_ptrs ds 8*2`, `inst_layer_ptrs ds 8*2`, `inst_ws_ptrs ds 128*2`,
+`inst_effect_ptr ds.l 1`. A zero pointer means the object does not exist, so a
+single `GET INSTRUMENT` (command `03`) yields the complete inventory before
+anything is transferred. Section 7.2 word 19-106, the layer map of 88 keys, then
+says which wavesamples belong to which layer.
+
+This is the same command that would answer the separate "query the instrument"
+idea in `TODO.md`, and it is worth building on its own first.
+
+### Backing up
+
+1. `GET INSTRUMENT` (`03`) for the inventory and the instrument parameters.
+2. Per existing layer: `GET LAYER` (`04`), and `GET PITCH TABLE` (`07`) when
+   layer word 17 names a custom table.
+3. Per existing wavesample: `GET WAVESAMPLE PARAMETERS` (`05`), then the audio
+   through `getWavesampleDataChunked`, which already walks to the end offset and
+   retries failed chunks.
+
+Wavesample words 12 and 13 are *Copy Number* and *Copy Layer*. When they are
+non-zero the wavesample shares its data with another one and has none of its
+own; asking for it returns status `11`, "Wavesample is a copy". Backup has to
+notice this and skip the fetch, or a multi-zone instrument transfers the same
+audio several times over. Restore recreates those with `COPY WAVESAMPLE` (`1B`).
+
+### Restoring, and the one sharp edge
+
+**The instrument block cannot be written back as it was read.** Of its 323
+words, roughly 291 are RAM pointers belonging to the EPS's own allocator; the
+addresses that were valid when the backup was taken mean nothing afterwards.
+Only about 17 words are actual parameters — name, MIDI out channel and program,
+pressure mode, MIDI status, the four patch bitmaps, key-down and key-up layers,
+key range and transposition. Layers are worse, or better: 7 parameter words and
+a name, with words 19-106 being the layer map.
+
+So restore is structural, and it ends with the read, modify, write that
+`setBlockName` already performs:
+
+1. `CREATE INSTRUMENT` (`15`).
+2. `CREATE LAYER` (`16`) and `CREATE WAVESAMPLE` (`19`) for each object.
+   Both commands take an **explicit number**, so the original numbering can be
+   reproduced exactly.
+3. Upload the audio per wavesample, which is mechanically what `uploadWavToEPS`
+   already does: sample end to 1, truncate, then chunked `PUT WAVESAMPLE DATA`.
+4. Per block, `GET` the **freshly created** block, overlay the saved parameter
+   words onto the pointer words the EPS just wrote itself, and `PUT` it back.
+
+Preserving the numbering in step 2 is what makes step 4 safe: the layer maps and
+the copy references restore verbatim, so there is never any need to resolve the
+disagreement between section 7.2, which calls a layer map entry a wavesample
+number in the high byte, and Appendix B, which calls it a 12 bit offset into the
+instrument's wavesample pointer table.
+
+Two orderings matter. Wavesample words 132 and 133, the key range, and the layer
+map are two views of the same thing on this machine, and setting either
+regenerates the other; restore the key ranges and then check the map rather than
+writing both and hoping. And the data offsets in words 115-130 only mean
+anything once the audio is in, so the wavesample parameter block goes last.
+
+Pre-flight is cheap. Instrument word 15 is *Total Instrument Size in Blocks*, and
+Free System Blocks is already read by `ping()`, so whether the instrument fits
+can be settled before spending twenty minutes finding out that it does not.
+
+### What cannot be captured: effects
+
+There is **no** `GET EFFECT` or `PUT EFFECT` command. The instrument block holds
+an effect offset and there is nothing to read through it. Effects are reachable
+only as individual parameters on page `30`, section 9.12, and that route has two
+problems:
+
+- NOTE 2 states that functions on the Effect Select·Bypass page "neither
+  transmit nor receive PUT or GET PARAMETER commands". **The effect algorithm
+  cannot be selected over MIDI**, and cannot reliably be read back either.
+- Section 9.12 is the most OCR-damaged part of the document. A dozen distinct
+  parameters are all printed with low byte `00`.
+
+So the effect parameters can be saved for the algorithm that happens to be
+loaded, but not the choice of algorithm. Either prompt the user to select it by
+hand before restoring, or drive the front panel with `VIRTUAL BUTTON PRESS`
+(`40`) — button `11` is Effect·Select·Bypass and `18` is Effects — which works
+but depends on what is already on the display.
+
+### Time is the real constraint
+
+Wavedata costs three MIDI bytes per 16 bit sample. At 31250 baud that is a
+ceiling of 1042 samples per second, and the measured end-to-end figure of 1353
+bytes per second puts the practical rate at **about 451 samples per second**.
+
+| Instrument size | At the 3125 B/s ceiling | At the measured rate |
+|-----------------|-------------------------|----------------------|
+| 128 KB          | 1.0 min                 | 2.4 min              |
+| 512 KB          | 4.2 min                 | 9.7 min              |
+| 1 MB            | 8.4 min                 | 19.4 min             |
+| 2 MB            | 16.8 min                | 39 min               |
+
+A backup and a restore of a large instrument is therefore over an hour of
+unattended MIDI, and a verify pass would double it. That changes what the
+feature is: not a button, but a long running job. It needs per-wavesample
+checkpointing so that a dropout at minute thirty does not discard the run, a
+manifest it can resume from, and a clear indication that the synth should be
+left alone — the sequencer in particular has to be stopped, or commands come
+back with status `13`. The existing chunk retry was written for a thirty second
+transfer, not a thirty minute one.
+
+### What to store
+
+Keep the **raw 16 bit blocks verbatim**, pointer words and all, alongside the
+decoded parameters and the audio. Restore ignores the pointers, so this looks
+redundant, and it is worth it anyway: Appendix B documents the complete
+instrument layout, including the offset packing, the `$120` byte wavesample
+header and the 16 byte chunking, which means a backup taken this way already
+contains everything needed to emit a real `.EFE` instrument file later. That
+would be loadable by the existing Ensoniq disk tools, which is a far larger
+payoff than a private format — but it means reimplementing the EPS's memory
+allocator and verifying against genuine files, so it is a project of its own.
+Capturing the raw blocks now is what avoids having to re-run every backup then.
