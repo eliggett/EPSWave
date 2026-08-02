@@ -26,7 +26,7 @@ To be able to upload a wav file to the EPS16+ you need to:
 [Overview of how to use the original version (somewhat outdated but very useful demo)](https://youtu.be/-471osvR67s)
 
 ### Current Limitations and Bugs
-1. You need a good midi interface, some cheap interfaces do not work well with MIDI System Exclusive (sysex) content. 
+1. You need a good midi interface, [some cheap interfaces do not work well with MIDI System Exclusive (sysex) content](https://llamamusic.com/fb01/index.html#cheapmidi). 
 2. Firefox is picky about enabling web midi and may refuse if you are self-hosting or opening the file directly. Chrome is more forgiving. 
 3. The Transwave functionality might need a bit of tuning. 
 4. It is possible to create a wavsample which will not fit on a disk -- keep that in mind as you create. 
