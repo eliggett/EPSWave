@@ -23,7 +23,15 @@
            popup list of a <select>. Without it Firefox leaves all of those
            white on the dark page. */
         body.dark { color-scheme: dark; background-color: #12151a; color: #c8ced6; }
-        body.dark h2, body.dark b, body.dark strong { color: #e6ebf1; }
+        body.dark h2, body.dark h5, body.dark h6,
+        body.dark b, body.dark strong { color: #e6ebf1; }
+        body.dark .modal-content { background-color: #1b1f26; border-color: #2b323c; }
+        body.dark .modal-header, body.dark .modal-footer { border-color: #2b323c; }
+        body.dark .modal-body hr { border-top-color: #2b323c; }
+        /* Bootstrap's close button is a black glyph with a white text-shadow,
+           which on a dark panel leaves a faint smudge and nothing else. */
+        body.dark .close { color: #e6ebf1; text-shadow: none; opacity: .7; }
+        body.dark .close:hover { color: #ffffff; opacity: 1; }
         body.dark .card { background-color: #1b1f26; border-color: #2b323c; }
         body.dark .card-header { background-color: #232830; border-color: #2b323c; color: #e6ebf1; }
         body.dark .form-control,
@@ -114,6 +122,7 @@
     <script src="./waveEditor.js"></script>
     <script src="./pitchDetect.js"></script>
     <script src="./epsChart.js"></script>
+    <script src="./about.js"></script>
     <script>
         // Firefox refuses localStorage outright in several configurations, most
         // relevantly on file:// pages, and it throws rather than returning null.
@@ -148,8 +157,12 @@
     </script>
     <div class="container">
         <div class="row align-items-center">
-            <div class="col-sm">
-                <h2>Enable Sysex: <i>Edit -> System-Midi->Sysex-MIDI</i> and set to ON</h2>
+            <div class="col-sm d-flex align-items-center">
+                <button type="button" class="btn btn-outline-info btn-sm mr-3 flex-shrink-0"
+                    data-toggle="modal" data-target="#aboutModal">
+                    <i class="fa-solid fa-circle-info"></i> About
+                </button>
+                <h5 class="mb-0">Enable Sysex: <i>Edit -> System-Midi->Sysex-MIDI</i> and set to ON</h5>
             </div>
             <div class="col-sm-auto">
                 <div class="custom-control custom-switch">
@@ -649,6 +662,37 @@
             </div>
         </div>
     </div>
+
+    <!-- About. Only the frame lives here; everything inside comes from
+         about.js, so that is the one file to edit to change what it says. -->
+    <div class="modal fade" id="aboutModal" tabindex="-1" role="dialog"
+        aria-labelledby="aboutModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title mb-0" id="aboutModalLabel">About EPSWave</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body" id="aboutBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        // about.js is a plain script in the head, so ABOUT_HTML is already
+        // defined by the time this runs and there is nothing to wait for.
+        // Filled once rather than on every open: the content never changes
+        // while the page is up.
+        ;(function(){
+            document.getElementById("aboutBody").innerHTML = window.ABOUT_HTML
+                || "<p class='mb-0'>The About text could not be loaded. "
+                 + "Check that <code>about.js</code> is present next to this page.</p>"
+        })()
+    </script>
 
         <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"
             integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo"
