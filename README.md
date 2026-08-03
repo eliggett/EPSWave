@@ -8,7 +8,7 @@ Wavefiles loaded in will be analyzed for pitch and sample rates and should uploa
 ![Screenshot of wave editing](screenshots/wave_gen.png)
 
 ### How to get started
-[Navigate here to use the lastest version.](https://eliggett.github.io/EnsoniqEPS16Plus/)
+[Navigate here to use the lastest version.](https://eliggett.github.io/EPSWave/)
 
 or 
 
@@ -35,8 +35,9 @@ To be able to upload a wav file to the EPS16+ you need to:
 5. You must enable Sysex each time. If it's not working, check the synth's settings and then press "Test Connection". 
 
 ### Credit:  
-- Original Author ['summitt' on Github](https://github.com/summitt/EnsoniqEPS16Plus/)
-- Original Author ['null0perat0r' on Patron](https://patreon.com/null0perat0r)
+- Original Project "EnsoniqEPS16Plus":
+    - ['summitt' on Github](https://github.com/summitt/EnsoniqEPS16Plus/)
+    - ['null0perat0r' on Patron](https://patreon.com/null0perat0r)
 - LCD Font: ['ctrlcctrlv' on Github](https://github.com/ctrlcctrlv/lcd-font)
 - Ensoniq's MIDI Implementation Manual, available [here](reference/)
 - Anthropic's Claude Opus 5, which was instrumental in digesting the original code and the complete midi implementation. Claude made it possible to add tremendous functionality over the course of just one afternoon. 
