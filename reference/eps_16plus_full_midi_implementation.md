@@ -1277,34 +1277,34 @@ This table describes the data transmitted by the second message of the PUT WAVES
 | 99                        | high byte = Volume;  low byte = Output Bus                                                                |
 | 100                       | high byte = Volume Modulation Source;  low byte = Pan Modulation Source                                   |
 
-| Word  Offset  (decimal)   | Data Word Description  (all values in hi byte of word)                                                                 |
-|---------------------------|------------------------------------------------------------------------------------------------------------------------|
-| 101                       | Volume Modulator Crossfade-In Breakpoint A                                                                             |
-| 102                       | Volume Modulator Crossfade-In Breakpoint B                                                                             |
-| 103                       | Volume Modulator Crossfade-Out Breakpoint C                                                                            |
-| 104                       | Volume Modulator Crossfade-Out Breakpoint D                                                                            |
-| 105                       | high byte = unused;                                                                                                    |
-| 106                       | high byte = Volume Modulation Amount;                                                                                  |
-| 107                       | high byte = LFO Waveform;                                                                                              |
-| 108                       | high byte = LFO Speed;                                                                                                 |
-| 109                       | LFO Depth                                                                                                              |
-| 110                       | high byte = LFO Delay Time;                                                                                            |
-| 111                       | high byte = LFO Depth Modulation Amount                                                                                |
-| 112                       | LFO Mode                                                                                                               |
-| 113                       | Random Modulator Frequency                                                                                             |
-| 114                       | Loop Mode                                                                                                              |
-| 115-118                   | Sample Start Offset  (left justified 32 bit field using hi bytes of each word - shift right 9 for word offset)         |
-| 119-122                   | Sample End Offset  (left justified 32 bit field using hi bytes of each word - shift right 9 for word offset)           |
-| 123-126                   | Loop Start Offset  (left justified 32 bit field using hi bytes of each word - shift right 9 for word offset)           |
-| 127-130                   | Loop End Offset  (left justified 32 bit field using hi bytes of each word - shift right 5 for 4 bit loop end fraction) |
-| 131                       | Sample Rate  (sample period = rate * 1.6 microseconds)                                                                 |
-| 132                       | Key Range - Lo Key                                                                                                     |
-| 133                       | Key Range - Hi Key                                                                                                     |
-| 134                       | Start or Loop Modulation Source                                                                                        |
-| 135                       | Start or Loop Modulation Amount                                                                                        |
-| 136                       | Start or Loop Modulation Range                                                                                         |
-| 137                       | Wave Modulation Type                                                                                                   |
-| 138                       | unused                                                                                                                 |
+| Word  Offset  (decimal) | Data Word Description  (all values in hi byte of word unless otherwise specified)                                      |
+|-------------------------|------------------------------------------------------------------------------------------------------------------------|
+| 101                     | Volume Modulator Crossfade-In Breakpoint A                                                                             |
+| 102                     | Volume Modulator Crossfade-In Breakpoint B                                                                             |
+| 103                     | Volume Modulator Crossfade-Out Breakpoint C                                                                            |
+| 104                     | Volume Modulator Crossfade-Out Breakpoint D                                                                            |
+| 105                     | high byte = unused; low byte = Pan Position                                                                            |
+| 106                     | high byte = Volume Modulation Amount; low byte = Pan Modulation Amount                                                 |
+| 107                     | high byte = LFO Waveform; low byte = Boost Switch                                                                      |
+| 108                     | high byte = LFO Speed; low byte = LFO Rate Modulation                                                                  |
+| 109                     | LFO Depth                                                                                                              |
+| 110                     | high byte = LFO Delay Time; low byte = LFO Depth Modulation Amount                                                     |
+| 111                     | high byte = LFO Depth Modulation Source; low byte = LFO Rate Modulation Source                                         |
+| 112                     | LFO Mode                                                                                                               |
+| 113                     | Random Modulator Frequency                                                                                             |
+| 114                     | Loop Mode                                                                                                              |
+| 115-118                 | Sample Start Offset  (left justified 32 bit field using hi bytes of each word - shift right 9 for word offset)         |
+| 119-122                 | Sample End Offset  (left justified 32 bit field using hi bytes of each word - shift right 9 for word offset)           |
+| 123-126                 | Loop Start Offset  (left justified 32 bit field using hi bytes of each word - shift right 9 for word offset)           |
+| 127-130                 | Loop End Offset  (left justified 32 bit field using hi bytes of each word - shift right 5 for 4 bit loop end fraction) |
+| 131                     | Sample Rate  (sample period = rate * 1.6 microseconds)                                                                 |
+| 132                     | Key Range - Lo Key                                                                                                     |
+| 133                     | Key Range - Hi Key                                                                                                     |
+| 134                     | Start or Loop Modulation Source                                                                                        |
+| 135                     | Start or Loop Modulation Amount                                                                                        |
+| 136                     | Start or Loop Modulation Range                                                                                         |
+| 137                     | Wave Modulation Type                                                                                                   |
+| 138                     | unused                                                                                                                 |
 
 ## 7.3.1 WaveSample Envelope Description
 
@@ -1397,33 +1397,30 @@ NOTE: If a System*MIDI parameter is being PUT, the instrument, layer, and WaveSa
 
 ## SysEx High Byte (hex): 34
 
-| Low Byte (hex)   | Range (decimal)                    |
-|------------------|------------------------------------|
-| 00               | 0-10000 (Read Only)                |
-| 0A               | 0-10000 (Read Only)                |
-| 01               | -99 to +99                         |
-| 0B               | 0-12                               |
-| 0C               | 0-15 (Table 1) **                  |
-| OC               | 0-1 (OFF-ON) **                    |
-| OC               | 0-1 (OFF-ON) **                    |
-| 02               | 0-1 (Volume-Mod Pedal) *           |
-| 02               | 0-1 (Sustain-R Patch Sel) *        |
-| OD               | 0-1 (Sustain-R Patch Sel) *        |
-| OE               | 0-2 (Off-Start/Stop-L Patch Sel) * |
-| 03               | 0-1 (OFF-ON) *                     |
-| n/a              | 0-1 (OFF-ON) **                    |
-| n/a              | 0-1 (OFF-ON) **                    |
-| n/a              | 0-1 (Base or Inst Channels) *      |
-| 05               | 0-15 (Channels 1-16) *             |
-| 06               | 0-1 (Base or Inst Channels) *      |
-| 06               | 0-2 (OFF-KEY-CHANNEL) **           |
-| 07               | 0-4 (Table 9) *                    |
-| 0B               | 0-1 (OFF-ON) *                     |
-| 0C               | 0-1 (OFF-ON; only sends ON value)  |
-| 08               | 0-1 (OFF-ON) *                     |
-| OD               | 0-1 (OFF-ON)                       |
-| 09               | 0-127                              |
-| OE               | 0-1 (OFF-ON) **                    |
+| Parameter                        | Low Byte (hex) | Range (decimal)                    |
+|----------------------------------|----------------|------------------------------------|
+| FreeSys Blocks                   | 00             | 0-10000 (Read Only)                |
+| FreeDisk Blocks                  | 0A             | 0-10000 (Read Only)                |
+| Master Tune                      | 01             | -99 to +99                         |
+| global bend range                | 0B             | 0-12                               |
+| touch sensi curve kbd only       | 0C             | 0-15 (Table 1) **                  |
+| All notes off Enable (rack only) | 0C             | 0-1 (OFF-ON) **                    |
+| Foot Pedal Mode                  | 02             | 0-1 (Volume-Mod Pedal) *           |
+| Sustain Foot Switch Mode         | 0D             | 0-1 (Sustain-R Patch Sel) *        |
+| Aux Foot Switch Mode             | 0E             | 0-2 (Off-Start/Stop-L Patch Sel) * |
+| Auto-Loop Finding Enable         | 03             | 0-1 (OFF-ON) *                     |
+| FX Send Bus2 Enable              | n/a            | 0-1 (OFF-ON) **                    |
+| FX Send Bus3 Enable              | n/a            | 0-1 (OFF-ON) **                    |
+| MIDI Base Channel                | 05             | 0-15 (Channels 1-16) *             |
+| MIDI Transmit Mode               | 06             | 0-1 (Base or Inst Channels) *      |
+| Base Channel Pressure Mode       | 0A             | 0-2 (OFF-KEY-CHANNEL) **           |
+| MIDI In Mode                     | 07             | 0-4 (Table 9) *                    |
+| MIDI Controllers Enable          | 0B             | 0-1 (OFF-ON) *                     |
+| MIDI SYSEX Enable                | 0C             | 0-1 (OFF-ON; only sends ON value)  |
+| MIDI Program Change Enable       | 08             | 0-1 (OFF-ON) *                     |
+| MIDI Song Select Enable          | 0D             | 0-1 (OFF-ON)                       |
+| MIDI XCTRL Controller Number     | 09             | 0-127                              |
+| Multi Controllers Enable         | 0E             | 0-1 (OFF-ON) **                    |
 
 ## 9.2 SEQUENCE·SONG PARAMETERS
 
@@ -1968,301 +1965,206 @@ SysEx High Byte (hex): 30
 
 ## 10 PARAMETER VALUE TABLE (in hexadecimal)
 
-| (hex)         | SOFT 1  02  SOFT 3  03  SOFT 4  04  MEDIUM 1  05  MEDIUM 2  06  MEDIUM 3  07  MEDIUM 4  08  FIRM 1  09  FIRM 2  0A  FIRM 3  0B  FIRM 4  0C  HARD 1  0D  HARD 2  0E  HARD 3  0F  HARD 4   |
-|---------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| TABLE 2 (hex) | LFO                                                                                                                                                                                      |
-| 00            | RANDM                                                                                                                                                                                    |
-| 01            | ENV2                                                                                                                                                                                     |
-| 02            | PR+VL                                                                                                                                                                                    |
-| 03            | ENV2                                                                                                                                                                                     |
-| 04            | VEL                                                                                                                                                                                      |
-| 05            | VEL                                                                                                                                                                                      |
-| 06            | VEL                                                                                                                                                                                      |
-| 07            | VEL                                                                                                                                                                                      |
-| 08            | KBD                                                                                                                                                                                      |
-| 09            | PITCH                                                                                                                                                                                    |
-| 0A            | WHERE                                                                                                                                                                                    |
-| 0B            | PEDAL                                                                                                                                                                                    |
-| 0C            | XCTRL                                                                                                                                                                                    |
-| 0D            | PRESS                                                                                                                                                                                    |
-| 0E            | WL+PR                                                                                                                                                                                    |
-| 0F            | OFF                                                                                                                                                                                      |
+### TABLE 1: 
 
-| (hex)         | CURRENT VALUE   |
-|---------------|-----------------|
-| 00            | FULL ON         |
-| 01            | ALL ZEROS       |
-| 02            | FULL VELRANGE   |
-| 03            | SLOW STRING     |
-| 05            | PIANO DECAY     |
-| 06            | PERCUSSION      |
-| 07            | RAM UP          |
-| 08            | RAM DOWN        |
-| 09            | SHORT BLIP      |
-| 0A            | BRASS FILTER    |
-| 0B            | REPEAT TRIANG   |
-| 0C            | REPEAT RAMP     |
-| 0D            | WIND PITCH      |
-| 0E            | REVERB          |
-| OF            | SAVED           |
-| TABLE 4 (hex) | F1=2/LP F2=2/HP |
-| 00            | F1=3/LP F2=1/HP |
-| 01            | F1=2/LP F2=2/LP |
-| 03            | F1=3/LP F2=1/LP |
-| TABLE 5 (hex) | OFF             |
-| 00            | LOOP POS        |
-| 02            | START           |
-| 03            | START+LP        |
-| 04            | LOOPSTRT        |
-| 05            | LOOP END        |
-| 06            | LPSTRT-X        |
-| 07            | TRANSWAV        |
-| TABLE 6 (hex) | TRIANGLE        |
-| 00            | SIN/TRIANGLE    |
-| 01            | SIN WAVE        |
-| 03            | POS/TRIANGLE    |
-| 04            | POS/SIN WAVE    |
-| 05            | SAWTOOTH        |
-| 06            | SQUARE          |
+| (hex) | Value |
+| :--- | :--- |
+| 00 | SOFT 1 |
+| 01 | SOFT 2 |
+| 02 | SOFT 3 |
+| 03 | SOFT 4 |
+| 04 | MEDIUM 1 |
+| 05 | MEDIUM 2 |
+| 06 | MEDIUM 3 |
+| 07 | MEDIUM 4 |
+| 08 | FIRM 1 |
+| 09 | FIRM 2 |
+| 0A | FIRM 3 |
+| 0B | FIRM 4 |
+| 0C | HARD 1 |
+| 0D | HARD 2 |
+| 0E | HARD 3 |
+| 0F | HARD 4 |
 
-| (hex)                 |
-|-----------------------|
-| 00 = 2 MG             |
-| 01 = 1 MG             |
-| 02 = 512 K            |
-| 03 = 256 K            |
-| 04 = 128 K            |
-| 05 = 64 K             |
-| 06 = 32 K             |
-| 07 = 16 K             |
-| 08 = 8 K              |
-| 09 = 4 K              |
-| 0A = 2 K              |
-| 0B = 1 K              |
-| 0C = 512 B            |
-| 0D = 256 B            |
-| 0E = 128 B            |
-| OF = 64 B             |
-| 10 = 32 B             |
-| 11 = 16 B             |
-| 12 = 8 B              |
-| 13 = 4 B              |
-| 14 = 2 B              |
-| 15 = 1 B              |
-| (hex)                 |
-| 00 = FORWARD-NO LOOP  |
-| 01 = BACKWARD-NO LOOP |
-| 02 = LOOP FORWARD     |
-| 03 = LOOP BIDIRECTION |
-| 04 = LOOP AND RELEASE |
-| TABLE 9               |
-| (hex)                 |
-| 00 = OMNI             |
-| 01 = POLY             |
-| 02 = MULTI            |
-| 03 = MONO A           |
-| 04 = MONOB            |
-| TABLE 10              |
-| (hex)                 |
-| 00 = OFF              |
-| 01 = LEGATO           |
-| 02 = PEDAL            |
-| 03 = TRIGGER          |
-| 04 = MINMODE          |
 
-TABLE 11
+### TABLE 2:
 
-| (hex)       |
-|-------------|
-| 00 =  WHEEL |
-| 01 =  PRESS |
-| 02 =  PEDAL |
-| 03 =  XCTRL |
-| 04 =  KBD   |
-| 05 =  VEL   |
-| 06 =  KEYDN |
-| 07 =  SUSTN |
-| 08 =  FTSW2 |
-| 09 =  PATCH |
-| 0A =  OFF   |
+| (hex) | Value |
+| :---  | :---  |
+| 00 | LFO |
+| 01 | RANDM |
+| 02 | ENV1 |
+| 03 | ENV2 |
+| 04 | PR+VL |
+| 05 | VEL |
+| 06 | VEL 1 |
+| 07 | VEL 2 |
+| 08 | KBD |
+| 09 | PITCH |
+| 0A | WHEEL |
+| 0B | PEDAL |
+| 0C | XCTRL |
+| 0D | PRESS |
+| 0E | WL+PR |
+| 0F | OFF |
 
-| (hex)       |
-|-------------|
-| 00 =  WHEEL |
-| 01 =  PRESS |
-| 02 =  PEDAL |
-| 03 =  XCTRL |
-| 04 =  SUSTN |
-| 05 =  FTSW2 |
-| 06 =  PATCH |
-| 07 =  OFF   |
+### TABLE 3
 
-| (hex)       |
-|-------------|
-| 00 =  1/2   |
-| 01 =  1/2T  |
-| 02 =  1/4   |
-| 03 =  1/4T  |
-| 04 =  1/8   |
-| 05 =  1/8T  |
-| 06 =  1/16  |
-| 07 =  1/16T |
-| 08 =  1/32  |
-| 09 =  1/32T |
+| (hex) | Value           |
+| :---- | :-------------- |
+| 00    | CURRENT VALUE   |
+| 01    | FULL ON         |
+| 02    | ALL ZEROS       |
+| 03    | FULL VELRANGE   |
+| 04    | SLOW STRING     |
+| 05    | PIANO DECAY     |
+| 06    | PERCUSSION      |
+| 07    | RAMP UP         |
+| 08    | RAMP DOWN       |
+| 09    | SHORT BLIP      |
+| 0A    | BRASS FILTER    |
+| 0B    | REPEAT TRIANG   |
+| 0C    | REPEAT RAMP     |
+| 0D    | WIND PITCH      |
+| 0E    | REVERB          |
+| 0F    | SAVED           |
 
-|    |
-|----|
+### TABLE 4
 
-|    |
-|----|
+| (hex) | Value               |
+| :---- | :------------------ |
+| 00    | F1=2/LP F2=2/HP     |
+| 01    | F1=3/LP F2=1/HP     |
+| 02    | F1=2/LP F2=2/LP     |
+| 03    | F1=3/LP F2=1/LP     |
 
-|    |
-|----|
+### TABLE 5
 
-|    |
-|----|
+| (hex) | Value        |
+| :---- | :----------- |
+| 00    | OFF          |
+| 01    | LOOP POS     |
+| 02    | START        |
+| 03    | START+LP     |
+| 04    | LOOPSTRT     |
+| 05    | LOOP END     |
+| 06    | LPSTRT-X     |
+| 07    | TRANSWAV     |
 
-|    |
-|----|
+### TABLE 6
 
-|    |
-|----|
+| (hex) | Value          |
+| :---- | :------------- |
+| 00    | TRIANGLE       |
+| 01    | SIN/TRIANGLE   |
+| 02    | SIN WAVE       |
+| 03    | POS/TRIANGLE   |
+| 04    | POS/SIN WAVE   |
+| 05    | SAWTOOTH       |
+| 06    | SQUARE         |
 
-|    |
-|----|
 
-|    |
-|----|
+### TABLE 7
 
-|    |
-|----|
+| (hex) | Value |
+| :---- | :---- |
+| 00    | 2 MG  |
+| 01    | 1 MG  |
+| 02    | 512 K |
+| 03    | 256 K |
+| 04    | 128 K |
+| 05    | 64 K  |
+| 06    | 32 K  |
+| 07    | 16 K  |
+| 08    | 8 K   |
+| 09    | 4 K   |
+| 0A    | 2 K   |
+| 0B    | 1 K   |
+| 0C    | 512 B |
+| 0D    | 256 B |
+| 0E    | 128 B |
+| 0F    | 64 B  |
+| 10    | 32 B  |
+| 11    | 16 B  |
+| 12    | 8 B   |
+| 13    | 4 B   |
+| 14    | 2 B   |
+| 15    | 1 B   |
 
-| 08 =  1/32   |
-|--------------|
-| 09 =  1/32T  |
+### TABLE 8
 
-|    |
-|----|
+| (hex) | Value              |
+| :---- | :----------------- |
+| 00    | FORWARD-NO LOOP    |
+| 01    | BACKWARD-NO LOOP   |
+| 02    | LOOP FORWARD       |
+| 03    | LOOP BIDIRECTION   |
+| 04    | LOOP AND RELEASE   |
 
-|    |
-|----|
+### TABLE 9
 
-|    |
-|----|
+| (hex) | Value  |
+| :---- | :----- |
+| 00    | OMNI   |
+| 01    | POLY   |
+| 02    | MULTI  |
+| 03    | MONO A |
+| 04    | MONO B |
 
-|    |
-|----|
+### TABLE 10
 
-|    |
-|----|
+| (hex) | Value    |
+| :---- | :------- |
+| 00    | OFF      |
+| 01    | LEGATO   |
+| 02    | PEDAL    |
+| 03    | TRIGGER  |
+| 04    | MINIMODE |
 
-|    |
-|----|
 
-|    |
-|----|
+### TABLE 11
 
-|    |
-|----|
+| (hex) | Value |
+| :---- | :---- |
+| 00    | WHEEL |
+| 01    | PRESS |
+| 02    | PEDAL |
+| 03    | XCTRL |
+| 04    | KBD   |
+| 05    | VEL   |
+| 06    | KEYDN |
+| 07    | SUSTN |
+| 08    | FTSW2 |
+| 09    | PATCH |
+| 0A    | OFF   |
 
-|    |
-|----|
+### TABLE 12
 
-| 08 =  1/32   |
-|--------------|
+| (hex) | Value |
+| :---- | :---- |
+| 00    | WHEEL |
+| 01    | PRESS |
+| 02    | PEDAL |
+| 03    | XCTRL |
+| 04    | SUSTN |
+| 05    | FTSW2 |
+| 06    | PATCH |
+| 07    | OFF   |
 
-|    |
-|----|
+### TABLE 13
 
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-| 08 =  1/32   |
-|--------------|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-| 08 =  1/32   |
-|--------------|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-| 08 =  1/32   |
-|--------------|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-|    |
-|----|
-
-| 09 =  1/32T   |
-|---------------|
+| (hex) | Value |
+| :---- | :---- |
+| 00    | 1/2   |
+| 01    | 1/2T  |
+| 02    | 1/4   |
+| 03    | 1/4T  |
+| 04    | 1/8   |
+| 05    | 1/8T  |
+| 06    | 1/16  |
+| 07    | 1/16T |
+| 08    | 1/32  |
+| 09    | 1/32T |
 
 
 
