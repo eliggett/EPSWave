@@ -24,7 +24,7 @@ window.ABOUT_HTML = `
         EPS-16 PLUS sampling synthesizer over MIDI, with waveform generation,
         editing and pitch detection built in.
     </p>
-    <p><img src="icon-192x192.png"</p>
+    <p><img src="icon-192x192.png"></p>
     <p class="mb-0"><b>This version by Elliott Liggett</b></p>
     <p><a href="https://github.com/eliggett/EPSWave" target="_blank" rel="noopener">github.com/eliggett/EPSWave</a></p>
 
