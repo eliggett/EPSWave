@@ -1,53 +1,566 @@
+/***
+ * One waveform slot: the canvas editor, an optional WAV file input, an optional
+ * waveform generator panel, and audio preview.
+ *
+ * `wavesample` stays the public handle on the data, as the rest of the app and
+ * eps.js expect a plain array of signed 16 bit ints.
+ */
 class EPSChart {
+
+    /***
+     * Wires a pair of sample rate selects: a short one holding the rates most
+     * people want plus an "Other rate" entry, and a second one holding every
+     * rate the EPS can represent, hidden until it is asked for.
+     *
+     * onChange is called with the chosen rate in Hz whenever either changes.
+     */
+    static mountRateSelects(mainEl, allEl, rate, onChange = () => {}){
+        if(!mainEl || !allEl) return rate
+        const option = (code) =>
+            `<option value="${WaveGen.rateFromCode(code)}">${WaveGen.rateLabel(code)}</option>`
+        mainEl.innerHTML = WaveGen.COMMON_RATE_CODES.map(option).join("")
+            + `<option value="other">Other rate ...</option>`
+        allEl.innerHTML = WaveGen.allRateCodes().map(option).join("")
+
+        mainEl.addEventListener('change', () => {
+            if(mainEl.value == 'other'){
+                allEl.style.display = ''
+                onChange(parseInt(allEl.value))
+            }else{
+                allEl.style.display = 'none'
+                onChange(parseInt(mainEl.value))
+            }
+        })
+        allEl.addEventListener('change', () => onChange(parseInt(allEl.value)))
+        return EPSChart.selectRate(mainEl, allEl, rate)
+    }
+
+    /***
+     * Points a mounted pair of selects at a rate, opening the full list if the
+     * rate is not one of the common ones. Returns the rate as the hardware can
+     * actually hold it.
+     */
+    static selectRate(mainEl, allEl, rate){
+        if(!mainEl || !allEl) return rate
+        const code = WaveGen.codeForRate(rate)
+        const hz = WaveGen.rateFromCode(code)
+        if(WaveGen.COMMON_RATE_CODES.includes(code)){
+            mainEl.value = hz
+            allEl.style.display = 'none'
+        }else{
+            mainEl.value = 'other'
+            allEl.value = hz
+            allEl.style.display = ''
+        }
+        return hz
+    }
+
+    /***
+     * Option list of MIDI notes, showing the note name and the number, because
+     * octave numbering differs between the EPS's display and MIDI convention
+     * and the number is the thing that actually goes over the wire.
+     */
+    static noteOptionsHtml(from = 0, to = 127){
+        let html = ""
+        for(let note=from; note<=to; note++){
+            html += `<option value="${note}">${WaveGen.noteToName(note)} (${note})</option>`
+        }
+        return html
+    }
+
+    /***
+     * Short names for the generated waveforms, for the default wavesample name.
+     * The EPS holds twelve characters, so "Saw (down)" cannot go in as it
+     * stands and still leave room for the note.
+     */
+    static WAVE_NAMES = {
+        sine: 'SINE',
+        triangle: 'TRI',
+        sawDown: 'SAW DN',
+        sawUp: 'SAW UP',
+        square: 'SQR',
+        pulse: 'PWM',
+        superSaw: 'SUPRSAW'
+    }
+
+    /***
+     * Turns a file name into a starting point for a wavesample name: no path,
+     * no extension. Underscores and the rest of the punctuation a file name
+     * collects become spaces in sanitizeName, so nothing else is needed here.
+     * Long names are cut at twelve characters, which is all the EPS keeps.
+     */
+    static nameFromFile(fileName){
+        const base = String(fileName || '').split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
+        return EPS16.sanitizeName(base)
+    }
 
     constructor(elementId, label, color, hasFileUpload, eps){
         this.wavesample = []
         this.eps = eps
         this.label = label
-        this.chart = new Chart(
-                document.getElementById(elementId + "_chart"),
-                {
-                type: 'line',
-                data: {
-                    labels:[0,1],
-                    datasets: [{
-                    data: [0,0],
-                    label: label,
-                    fill: false,
-                    borderColor: color,
-                    tension: 0.1,
-                    pointRadius: 0,
-                    borderWidth: 1
-                }]
+        this.color = color
+        this.elementId = elementId
+        this.sampleRate = WaveGen.DEFAULT_SAMPLE_RATE
+        // Name written into the wavesample's parameter block on upload. Empty
+        // means "leave whatever the EPS already calls it alone".
+        this.name = ''
+        // Set once the user types in the name field, so importing a file or
+        // generating a waveform stops proposing names over the top of theirs.
+        this.nameEdited = false
+        this.nameInputId = null
+        // The MIDI note this wavesample plays back at its own pitch. For a
+        // generated waveform that is the fundamental it was generated at.
+        this.rootKey = WaveGen.DEFAULT_NOTE
+        // Cents of correction sent with the wavesample, cancelling whatever
+        // pitch error the EPS's rate quantisation leaves behind.
+        this.fineTune = 0
+        this.preview = new WavePreview()
+
+        const canvas = document.getElementById(elementId + "_chart")
+        const toolbar = document.createElement("div")
+        canvas.parentNode.insertBefore(toolbar, canvas)
+
+        this.editor = new WaveEditor(canvas, toolbar, {
+            color: color,
+            onChange: (data) => {
+                this.wavesample = data
+                this.refreshPreview()
+            }
+        })
+        this.mountPreviewButton()
+
+        if(hasFileUpload){
+            let self = this;
+            document.getElementById(elementId).addEventListener('change', function(){
+                // Read off the input, not off the FileReader, which never sees
+                // the name.
+                const fileName = this.files[0] ? this.files[0].name : ''
+                let reader = new FileReader();
+                reader.onload = function() {
+                    let arrayBuffer = this.result;
+                    self.importWav(self.eps.parseWavFile(arrayBuffer), fileName)
                 }
-            }
-    );
-    if(hasFileUpload){
-        let self = this;
-        document.getElementById(elementId).addEventListener('change', function(){
-            let reader = new FileReader();
-            reader.onload = function() {
-                let arrayBuffer = this.result;
-                self.wavesample = self.eps.parseWavFile(arrayBuffer)
-                self.chart.data.labels = Array.from( {length: self.wavesample.length}, (value, index) => index),
-                self.chart.data.datasets = [
-                            {
-                                data: self.wavesample.map( a => a/32767),
-                                label: label,
-                                fill: false,
-                                borderColor: color,
-                                tension: 0.1,
-                                pointRadius: 0,
-                                borderWidth: 1
-                            }
-                            ]
-                self.chart.update()
+                reader.readAsArrayBuffer(this.files[0]);
 
-
-            }
-            reader.readAsArrayBuffer(this.files[0]);
-
-        }, false);
+            }, false);
+        }
     }
-}
+
+    /***
+     * Wires the twelve character name field for this slot.
+     *
+     * Typing is filtered as it happens, to the set the EPS can display, so what
+     * is on screen is what will appear on the synth. The alternative is worse
+     * than it sounds: the EPS takes any character without complaint and reads
+     * it straight back, so a name that is quietly unreadable on the front panel
+     * looks correct everywhere else. Trailing spaces are left alone until the
+     * field is, because stripping them per keystroke fights anyone trying to
+     * type a space in the middle of a name.
+     */
+    mountNameInput(inputId){
+        this.nameInputId = inputId
+        const el = document.getElementById(inputId)
+        if(!el) return
+        el.maxLength = EPS16.NAME_LENGTH
+        el.value = this.name
+
+        el.addEventListener('input', () => {
+            const caret = el.selectionStart
+            const clean = el.value
+                .toUpperCase()
+                .replace(/#/g, '+')
+                .replace(EPS16.NAME_DISALLOWED, '')
+                .slice(0, EPS16.NAME_LENGTH)
+            if(clean != el.value){
+                const removed = el.value.length - clean.length
+                el.value = clean
+                // Rejected characters shift everything after the caret left, so
+                // move it by as many as were dropped or the cursor jumps to the
+                // end on every filtered keystroke.
+                el.setSelectionRange(Math.max(0, caret - removed), Math.max(0, caret - removed))
+            }
+            this.name = clean
+            this.nameEdited = clean.length > 0
+        })
+        el.addEventListener('change', () => this.setName(el.value, true))
+        el.addEventListener('blur', () => this.setName(el.value, true))
+    }
+
+    /***
+     * Stores the name for this slot and shows it in the field. `fromUser` marks
+     * it as chosen deliberately, which suggestName then respects.
+     */
+    setName(name, fromUser = false){
+        this.name = EPS16.sanitizeName(name)
+        if(fromUser) this.nameEdited = this.name.length > 0
+        const el = this.nameInputId ? document.getElementById(this.nameInputId) : null
+        if(el && el.value != this.name) el.value = this.name
+        return this.name
+    }
+
+    /***
+     * Offers a name derived from what was just loaded or generated, without
+     * overwriting one the user typed.
+     */
+    suggestName(name){
+        if(this.nameEdited) return this.name
+        return this.setName(name)
+    }
+
+    /***
+     * Takes a parsed WAV file, picks the closest EPS rate for it and loads it.
+     *
+     * Hardly any file will land exactly on an EPS rate, so a mismatch is
+     * reported as a plain note with the pitch offset rather than as a problem.
+     * The synth tunes the wavesample to key anyway, and the offset is the number
+     * you would tune by.
+     */
+    importWav(wav, fileName = ''){
+        if(!wav) return
+        this.suggestName(EPSChart.nameFromFile(fileName))
+        const nearest = WaveGen.nearestSampleRate(wav.sampleRate)
+        this.sampleRate = nearest
+        EPSChart.selectRate(
+            document.getElementById(`${this.elementId}_genRate`),
+            document.getElementById(`${this.elementId}_genRateAll`),
+            nearest)
+
+        const pitch = PitchDetect.detect(wav.audio, wav.sampleRate)
+        this.setWavesample(wav.audio,
+            pitch.confident ? { periodSamples: pitch.period } : {})
+
+        let note = wav.truncated
+            ? `Note: WAV holds ${wav.available} samples, over the ${EPS16.MAX_IMPORT_SAMPLES} limit.`
+                + ` Imported the first ${wav.audio.length}`
+            : `Success: Imported ${wav.audio.length} samples`
+        note += `. File is ${(wav.sampleRate / 1000).toFixed(1)} kHz, set to nearest EPS rate `
+            + `${(nearest / 1000).toFixed(1)} kHz`
+
+        const rateCents = Math.round(WaveGen.centsBetween(wav.sampleRate, nearest))
+        if(pitch.confident){
+            // The detected period is a count of samples, so the pitch the synth
+            // will actually sound is the EPS rate over that period. Deriving
+            // the tuning from it covers the rate quantisation as well, which is
+            // why nothing is added for rateCents here.
+            const sounding = nearest / pitch.period
+            const tuning = PitchDetect.tuningFor(sounding)
+            this.rootKey = tuning.rootKey
+            const rootEl = document.getElementById(`${this.elementId}_genRoot`)
+            if(rootEl) rootEl.value = this.rootKey
+            const applied = this.setFineTune(tuning.fineTune)
+            note += `. Detected ${WaveGen.noteToName(tuning.rootKey)} `
+                + `(${sounding.toFixed(2)} Hz on the EPS), root key set to `
+                + `${WaveGen.noteToName(tuning.rootKey)} with `
+                + `${applied > 0 ? '+' : ''}${applied} cents of fine tune`
+        }else{
+            // No usable pitch, so fall back to cancelling the rate mismatch
+            // alone and leave the root key where the user had it.
+            const applied = this.setFineTune(-rateCents)
+            note += rateCents == 0 ? ' (exact)'
+                : ` (${rateCents > 0 ? '+' : ''}${rateCents} cents, fine tune set to `
+                    + `${applied > 0 ? '+' : ''}${applied} to cancel it)`
+            note += `. No root key detected: ${pitch.reason}`
+        }
+        this.eps.successCallback(note)
+    }
+
+    /***
+     * Records the fine tune for this slot, clamped to what the EPS accepts, and
+     * shows it on the generator panel if there is one. Returns the value that
+     * was actually stored.
+     */
+    setFineTune(cents){
+        this.fineTune = Math.max(-EPS16.FINE_TUNE_LIMIT,
+            Math.min(EPS16.FINE_TUNE_LIMIT, Math.round(cents) || 0))
+        const fineEl = document.getElementById(`${this.elementId}_genFine`)
+        if(fineEl) fineEl.value = this.fineTune
+        return this.fineTune
+    }
+
+    /***
+     * Single place that owns the wavesample and redraws it. The editor holds the
+     * live array so edits are visible through `wavesample` without a copy back.
+     */
+    setWavesample(wavesample, options = {}){
+        if(!wavesample) return
+        this.editor.setData(wavesample, options)
+        this.wavesample = this.editor.getData()
+        this.refreshPreview()
+    }
+
+    /***
+     * Swap the audio under a running preview so edits are audible straight away
+     * rather than needing a stop and start.
+     */
+    refreshPreview(){
+        if(this.preview.isPlaying){
+            this.preview.play(this.wavesample, this.sampleRate)
+        }
+    }
+
+    /***
+     * Preview lives on the editor toolbar rather than in the generator panel, so
+     * slots without a generator can still audition their wavesample.
+     */
+    mountPreviewButton(){
+        if(!this.editor.extraEl) return
+        const button = document.createElement("button")
+        button.className = "btn btn-outline-secondary"
+        button.title = "Preview (loops the whole wavesample)"
+        button.innerHTML = '<i class="fa-solid fa-play"></i>'
+        this.editor.extraEl.appendChild(button)
+
+        this.preview.onStateChange = (playing) => {
+            button.innerHTML = playing
+                ? '<i class="fa-solid fa-stop"></i>'
+                : '<i class="fa-solid fa-play"></i>'
+            button.classList.toggle("btn-secondary", playing)
+            button.classList.toggle("btn-outline-secondary", !playing)
+        }
+        button.addEventListener("click", async () => {
+            await this.preview.toggle(this.wavesample, this.sampleRate)
+        })
+    }
+
+    /***
+     * Injects the waveform generator controls into the given container. Kept off
+     * the constructor so each slot can opt in without changing how it is built.
+     */
+    mountGenerator(containerId){
+        const container = document.getElementById(containerId)
+        if(!container) return
+        const id = this.elementId
+
+        const typeOptions = WaveGen.TYPES.map(
+            type => `<option value="${type.value}">${type.label}</option>`).join("")
+        let noteOptions = ""
+        for(let note=24; note<=96; note++){
+            noteOptions += `<option value="${note}">${WaveGen.noteToName(note)} (${WaveGen.noteToFrequency(note).toFixed(2)} Hz)</option>`
+        }
+        const rootOptions = EPSChart.noteOptionsHtml()
+
+        container.innerHTML = `
+            <div class="card mb-2">
+                <div class="card-header py-1"><small><i class="fa-solid fa-wave-square"></i> Generate Waveform</small></div>
+                <div class="card-body py-2">
+                    <div class="form-row">
+                        <div class="col-6 mb-2">
+                            <label class="mb-0"><small>Waveform</small></label>
+                            <select id="${id}_genType" class="custom-select custom-select-sm">${typeOptions}</select>
+                        </div>
+                        <div class="col-6 mb-2">
+                            <label class="mb-0"><small>Sample Rate</small></label>
+                            <select id="${id}_genRate" class="custom-select custom-select-sm"></select>
+                            <select id="${id}_genRateAll" class="custom-select custom-select-sm mt-1" style="display:none"></select>
+                        </div>
+                        <div class="col-8 mb-2">
+                            <label class="mb-0"><small>Fundamental</small></label>
+                            <select id="${id}_genNote" class="custom-select custom-select-sm">${noteOptions}</select>
+                        </div>
+                        <div class="col-4 mb-2">
+                            <label class="mb-0"><small>Periods</small></label>
+                            <input type="number" id="${id}_genPeriods" class="form-control form-control-sm" value="1" min="1">
+                        </div>
+                        <div class="col-6 mb-2">
+                            <label class="mb-0"><small>Root Key</small></label>
+                            <select id="${id}_genRoot" class="custom-select custom-select-sm">${rootOptions}</select>
+                        </div>
+                        <div class="col-6 mb-2">
+                            <label class="mb-0"><small>Fine Tune (cents)</small></label>
+                            <input type="number" id="${id}_genFine" class="form-control form-control-sm"
+                                value="0" min="-99" max="99" step="1">
+                        </div>
+                        <div class="col-6 mb-2" id="${id}_genPulseGroup" style="display:none">
+                            <label class="mb-0"><small><span id="${id}_genPulseTitle">Pulse Width</span>: <span id="${id}_genPulseLabel">50%</span></small></label>
+                            <input type="range" id="${id}_genPulse" class="custom-range" min="5" max="95" value="50">
+                        </div>
+                        <div class="col-6 mb-2">
+                            <label class="mb-0"><small>Amplitude: <span id="${id}_genAmpLabel">99%</span></small></label>
+                            <input type="range" id="${id}_genAmp" class="custom-range" min="10" max="100" value="99">
+                        </div>
+                    </div>
+                    <div class="form-row align-items-center">
+                        <div class="col-auto">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="${id}_genBandLimited" checked>
+                                <label class="form-check-label" for="${id}_genBandLimited">
+                                    <small>Band limited (no aliasing)</small>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col">
+                            <button id="${id}_genBtn" class="btn btn-sm btn-info btn-block">
+                                <i class="fa-solid fa-bolt"></i> Generate
+                            </button>
+                        </div>
+                    </div>
+                    <small class="text-muted" id="${id}_genInfo"></small>
+                </div>
+            </div>
+        `
+
+        const typeEl = document.getElementById(`${id}_genType`)
+        const pulseEl = document.getElementById(`${id}_genPulse`)
+        const ampEl = document.getElementById(`${id}_genAmp`)
+        const rateEl = document.getElementById(`${id}_genRate`)
+        const noteEl = document.getElementById(`${id}_genNote`)
+        const periodsEl = document.getElementById(`${id}_genPeriods`)
+        const groupEl = document.getElementById(`${id}_genPulseGroup`)
+        const titleEl = document.getElementById(`${id}_genPulseTitle`)
+        const labelEl = document.getElementById(`${id}_genPulseLabel`)
+
+        const rootEl = document.getElementById(`${id}_genRoot`)
+        const fineEl = document.getElementById(`${id}_genFine`)
+        noteEl.value = WaveGen.DEFAULT_NOTE
+        rootEl.value = this.rootKey
+        fineEl.value = this.fineTune
+
+        const spreadLabel = () => {
+            labelEl.innerHTML = WaveGen.usesDetune(typeEl.value)
+                ? `&plusmn;${pulseEl.value} cents`
+                : `${pulseEl.value}%`
+        }
+
+        /***
+         * Detune only survives cycle quantisation on a long enough buffer, so
+         * raise the periods field to the minimum that expresses it rather than
+         * quietly generating a plain saw. Never suggests more than fits inside
+         * the generator's size limit, and never lowers what the user set.
+         */
+        const raisePeriodsForDetune = () => {
+            if (!WaveGen.usesDetune(typeEl.value)) return
+            const periodSamples = this.sampleRate / WaveGen.noteToFrequency(parseInt(noteEl.value))
+            const fits = Math.max(1, Math.floor(WaveGen.MAX_SAMPLES / periodSamples))
+            const needed = Math.min(fits, WaveGen.periodsForDetune(parseInt(pulseEl.value)))
+            if ((parseInt(periodsEl.value) || 1) < needed) periodsEl.value = needed
+        }
+
+        /***
+         * The pulse width slider doubles as the super saw detune control, so it
+         * gets a new title, range and units when the waveform changes.
+         */
+        const configureSpread = () => {
+            if (WaveGen.usesDetune(typeEl.value)) {
+                groupEl.style.display = ''
+                titleEl.innerHTML = 'Detune Spread'
+                pulseEl.min = 0
+                pulseEl.max = 100
+                pulseEl.value = 25
+            } else if (typeEl.value === 'pulse') {
+                groupEl.style.display = ''
+                titleEl.innerHTML = 'Pulse Width'
+                pulseEl.min = 5
+                pulseEl.max = 95
+                pulseEl.value = 50
+            } else {
+                groupEl.style.display = 'none'
+            }
+            spreadLabel()
+            raisePeriodsForDetune()
+        }
+        typeEl.addEventListener('change', configureSpread)
+        configureSpread()
+
+        pulseEl.addEventListener('input', () => {
+            spreadLabel()
+            raisePeriodsForDetune()
+        })
+        // A generated waveform plays back at its own pitch when the key played
+        // is the fundamental it was generated at, so the root key follows the
+        // fundamental. Change it afterwards to transpose the sample on the
+        // keyboard, or to give an imported WAV a sensible home key.
+        noteEl.addEventListener('change', () => {
+            raisePeriodsForDetune()
+            rootEl.value = noteEl.value
+            this.rootKey = parseInt(noteEl.value)
+        })
+        rootEl.addEventListener('change', () => {
+            this.rootKey = parseInt(rootEl.value)
+        })
+        fineEl.addEventListener('change', () => {
+            this.fineTune = this.setFineTune(parseInt(fineEl.value) || 0)
+        })
+        ampEl.addEventListener('input', () => {
+            document.getElementById(`${id}_genAmpLabel`).innerHTML = `${ampEl.value}%`
+        })
+
+        // Changing the rate changes the pitch the buffer plays back at, so keep
+        // preview and WAV export in step even before the next Generate.
+        this.sampleRate = EPSChart.mountRateSelects(
+            rateEl,
+            document.getElementById(`${id}_genRateAll`),
+            this.sampleRate,
+            (hz) => {
+                this.sampleRate = hz
+                raisePeriodsForDetune()
+                this.refreshPreview()
+            })
+
+        document.getElementById(`${id}_genBtn`).addEventListener('click', () => {
+            this.generate()
+        })
+    }
+
+    /***
+     * Reads the generator controls and replaces this slot's wavesample.
+     */
+    generate(){
+        const id = this.elementId
+        const note = parseInt(document.getElementById(`${id}_genNote`).value)
+        this.rootKey = parseInt(document.getElementById(`${id}_genRoot`).value) || note
+        const type = document.getElementById(`${id}_genType`).value
+        // Waveform and pitch, the two things you would want to read off the
+        // display: "PWM C3".
+        this.suggestName(`${EPSChart.WAVE_NAMES[type] || type} ${WaveGen.noteToName(note)}`)
+        // One slider, read as a percentage for pulse and as cents for super saw.
+        const spread = parseInt(document.getElementById(`${id}_genPulse`).value)
+        const result = WaveGen.generate({
+            type: type,
+            frequency: WaveGen.noteToFrequency(note),
+            sampleRate: this.sampleRate,
+            periods: parseInt(document.getElementById(`${id}_genPeriods`).value) || 1,
+            pulseWidth: spread / 100,
+            detuneCents: spread,
+            amplitude: parseInt(document.getElementById(`${id}_genAmp`).value) / 100,
+            bandLimited: document.getElementById(`${id}_genBandLimited`).checked
+        })
+        this.setWavesample(result.data, { periodSamples: result.periodSamples })
+        document.getElementById(`${id}_genPeriods`).value = result.periods
+
+        // The buffer holds a whole number of samples, so the pitch it really
+        // loops at is a shade off the note asked for. Cancel that too, the same
+        // way an imported file's rate mismatch is cancelled.
+        const drift = WaveGen.centsBetween(WaveGen.noteToFrequency(note), result.actualFrequency)
+        this.setFineTune(-drift)
+
+        let info = `${result.totalSamples} samples, ${result.periods} period(s) of `
+            + `${result.periodSamples.toFixed(1)} samples, plays at `
+            + `${result.actualFrequency.toFixed(2)} Hz on `
+            + `${WaveGen.noteToName(this.rootKey)}`
+        if(this.fineTune != 0){
+            info += ` with ${this.fineTune > 0 ? '+' : ''}${this.fineTune} cents of fine tune`
+        }
+        if(result.harmonics) info += `, ${result.harmonics} harmonics`
+        if(result.clamped){
+            info += `. Reduced to fit the ${WaveGen.MAX_SAMPLES} sample generator limit.`
+        }
+        if(result.detune){
+            const detune = result.detune
+            info += `. ${WaveGen.SUPER_SAW_VOICES} saws detuned &plusmn;`
+                + `${detune.achievedCents.toFixed(1)} cents`
+            // Voices snap to whole cycles, so a short buffer can land either
+            // side of the request, or flatten it to nothing entirely.
+            const tolerance = Math.max(0.5, detune.requestedCents * 0.1)
+            if(Math.abs(detune.achievedCents - detune.requestedCents) > tolerance){
+                info += ` rather than the &plusmn;${detune.requestedCents} asked for`
+                    + ` (${detune.requiredPeriods} periods would land closer)`
+            }
+            if(detune.distinctVoices < WaveGen.SUPER_SAW_VOICES){
+                info += `. Only ${detune.distinctVoices} distinct pitches at this length;`
+                    + ` a lower sample rate or wider spread separates them`
+            }
+        }
+        document.getElementById(`${id}_genInfo`).innerHTML = info
+        return result
+    }
 }
