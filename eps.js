@@ -23,13 +23,22 @@ class EPS16 {
     static COMMAND_TIMER_MS = 2000
 
     /***
-     * Samples per PUT/GET WAVESAMPLE DATA block. 256 samples is 773 bytes on
-     * the wire, a quarter of a second at the full MIDI rate and around half a
-     * second through a slow USB adapter, so it clears the two second timer with
-     * plenty of room. Raise it for a fast interface, lower it if blocks are
-     * still being refused.
+     * Samples per PUT/GET WAVESAMPLE DATA block, and the value the Block Size
+     * field starts at. Change it here.
+     *
+     * 1000 samples is 3005 bytes on the wire, 0.96 s at the full MIDI rate, so
+     * it clears the two second command timer with room to spare on an interface
+     * that keeps up. It does not clear it on one that does not: the throughput
+     * measured while this program was being written was 1353 bytes per second,
+     * 43% of nominal, at which 1000 samples takes 2.2 s and every block is
+     * NAKed. That is the whole of the original fault described in METHODS.md.
+     *
+     * So this is a default for a good interface rather than a safe one for any
+     * interface. Run the loopback test under Transfer settings, which measures
+     * the real rate and suggests a size from it, and lower this if blocks are
+     * being refused. The setting is remembered per browser once changed.
      */
-    static DEFAULT_CHUNK_SAMPLES = 256
+    static DEFAULT_CHUNK_SAMPLES = 800
     static MIN_CHUNK_SAMPLES = 32
     static MAX_CHUNK_SAMPLES = 2048
 
@@ -89,6 +98,80 @@ class EPS16 {
     static FINE_TUNE_PARAM = 0x0A
     static FINE_TUNE_WORD = 86
     static FINE_TUNE_LIMIT = 99
+
+    /***
+     * Pitch LFO Amount, section 9.7, on the same pitch page as the root key and
+     * fine tune above. Documented as -15.7 to +15.7 in 0.1 increments, and
+     * carrying neither a "*" nor a "**", so a single PUT PARAMETER reaches it.
+     *
+     * This is the front panel's Pitch / LFO AMOUNT. A wavesample arrives with
+     * it set to something non-zero, which the morphing soundscape has to undo:
+     * the LFO that sweeps the crossfade is the same LFO, so anything left here
+     * makes every layer wobble in pitch as it fades.
+     */
+    static PITCH_PAGE = 0x10
+    static PITCH_LFO_AMOUNT_PARAM = 0x02
+
+    /***
+     * Instruments the EPS holds at once, numbered 1 to 8 on the front panel and
+     * 0 to 7 in every sysex message. Section 7.1 gives the instrument block one
+     * pointer per slot.
+     */
+    static INSTRUMENT_COUNT = 8
+
+    /***
+     * How many layers a morphing soundscape can use. Section 7.1 gives the
+     * instrument eight layer pointers, and the mode puts one wavesample in
+     * each, so eight waveforms is the ceiling however many are loaded.
+     */
+    static MAX_MORPH_LAYERS = 8
+
+    /***
+     * Morphing soundscape crossfade geometry, section 9.9.
+     *
+     * Four breakpoints per layer say where that layer is heard across the
+     * modulator's 0-127 range: A fade in starts, B fade in complete, C fade out
+     * starts, D fade out complete. Laying them out comes down to a single
+     * number, the width of one fade ramp measured in layer spacings, and
+     * getCrossFadeBreakPoints derives the rest from it.
+     *
+     * MIN is the geometry the mode shipped with: a ramp half a spacing wide, so
+     * each layer spends half its turn alone at full volume and the other half
+     * handing over. That is the narrowest setting worth offering. At 1.0 the
+     * flat part has shrunk to nothing, the layers are triangles, and exactly two
+     * are sounding at every point of the sweep. MAX is 2.0, a ramp two spacings
+     * wide, at which three layers sound at once.
+     */
+    static MORPH_OVERLAP_MIN = 0.5
+    static MORPH_OVERLAP_MAX = 2
+
+    /***
+     * Where the overlap control starts, as a percentage of the way from MIN to
+     * MAX. Half way puts the ramps a little wider than the triangles, so two
+     * waveforms are always audible together and the sweep never lands on a
+     * single one.
+     */
+    static DEFAULT_MORPH_OVERLAP_PERCENT = 50
+
+    /***
+     * Vol Mod Crossfade Fadecurve, page 18 item 05, documented in section 9.9
+     * as "0-1 (CROSSFADE-LINEAR)".
+     *
+     * Section 9 spells enumerated ranges out in order — "0-1 (OFF-ON)",
+     * "0-2 (Reset Off-Reset On-Human)" — so 0 is CROSSFADE and 1 is LINEAR.
+     * The mode used to send 1. LINEAR is a straight ramp on the volume, and two
+     * unrelated waveforms passing each other on straight ramps lose level in
+     * the middle of the handover, which is heard as one wave stopping before
+     * the next arrives rather than as a morph. CROSSFADE is the curve that
+     * exists to hold the level up through exactly that region, and it is the
+     * one this mode wants.
+     *
+     * The parameter carries a "*", so per NOTE 3 the EPS may refuse to set it
+     * from a single PUT PARAMETER at all, in which case the refusal appears in
+     * the event log and the curve stays at whatever the front panel last chose.
+     * Set this to 1 to hear the old behaviour.
+     */
+    static MORPH_FADECURVE = 0
 
     /***
      * What to ask for when checking that the link works.
@@ -192,6 +275,10 @@ class EPS16 {
         this.inputs = []
         this.outputs = []
         this.chunkSize = EPS16.DEFAULT_CHUNK_SAMPLES
+        // Ramp width for the morphing soundscape, in layer spacings. Set from
+        // the interface as a percentage; see setMorphOverlap.
+        this.morphOverlap = EPS16.MORPH_OVERLAP_MIN
+        this.setMorphOverlap(EPS16.DEFAULT_MORPH_OVERLAP_PERCENT)
         // Sysex header nibble: the EPS's base channel minus one. Everything
         // is ignored by the synth if this does not match, with no error and
         // no clue, which is why the connection test can scan for it.
@@ -328,7 +415,15 @@ class EPS16 {
         ]
         await this.sendData(data) 
     }
-    async createInstrument(name = null){
+    /***
+     * CREATE INSTRUMENT in the currently selected slot.
+     *
+     * `quiet` suppresses the failure message only. The macros below use this
+     * command to *probe* for a free slot, where a refusal is the expected
+     * answer for an occupied instrument and not something the user needs told
+     * about seven times before the eighth attempt works.
+     */
+    async createInstrument(name = null, quiet = false){
         let message = this.createMIDIMessage(0x15)
         await this.sendData(message)
         let messages = await this.readMessages()
@@ -337,10 +432,38 @@ class EPS16 {
             await this.nameAfterCreate(EPS16.BLOCK_INSTRUMENT, name)
             return true
         }else{
-            this.errorCallback("Error: Unable to create instrument")
+            if(!quiet) this.errorCallback("Error: Unable to create instrument")
             return false
         }
 
+    }
+
+    /***
+     * Claims the next free instrument slot, searching upwards from the one
+     * currently selected, and leaves it selected on success.
+     *
+     * CREATE INSTRUMENT is the only way to ask whether a slot is free: it
+     * refuses if the slot is occupied, so a refusal here is an ordinary result
+     * rather than an error, which is why the probe is quiet.
+     *
+     * Two things this gets right that the three hand rolled copies it replaced
+     * did not. The instrument number is set **before** each attempt rather than
+     * after, so a search from slot 0 tries 0, 1, 2 ... 7; the old version set
+     * it afterwards, which made every attempt use the previous loop index — it
+     * tried slot 0 twice and stopped at slot 6. **Instrument 8 was therefore
+     * unreachable**, and a synth with the first seven loaded reported that it
+     * could not create an instrument while the eighth sat empty.
+     */
+    async createNextFreeInstrument(){
+        const start = Math.max(0, Math.min(EPS16.INSTRUMENT_COUNT - 1, this.instNum))
+        for(let slot = start; slot < EPS16.INSTRUMENT_COUNT; slot++){
+            this.setInstrumentNumber(slot)
+            if(await this.createInstrument(null, true)) return true
+        }
+        this.errorCallback(`Error: No free instrument between ${start + 1} and `
+            + `${EPS16.INSTRUMENT_COUNT}. Delete one on the EPS, or select a lower `
+            + "instrument number to search from.")
+        return false
     }
     async createLayer(name = null){
         let message = this.createMIDIMessage(0x16)
@@ -1444,26 +1567,64 @@ class EPS16 {
         this.wsBytes = this.convertTo12BitMidi([num],2)
         return true
     }
-    getCrossFadeBreakPoints(length, step){
-        const sectionLength = Math.floor( 128 / ((length -1)*2) )
-        const halfSectionLength = Math.floor(sectionLength/2)
-        
-        let breakPoints = { pointA:0, pointB:0, pointC:127, pointD:127}
-        if(step == 0){
-            breakPoints.pointC = halfSectionLength
-            breakPoints.pointD = halfSectionLength + sectionLength
-        }else if(step == (length-1)){
-            let prev = this.getCrossFadeBreakPoints(length, step -1)
-            breakPoints.pointA = prev.pointC
-            breakPoints.pointB = prev.pointD 
+    /***
+     * How wide the fades in a morphing soundscape are, from a 0 to 100 control.
+     *
+     * 0 is MORPH_OVERLAP_MIN, the layout the mode shipped with, and 100 is
+     * MORPH_OVERLAP_MAX. The stored value is a ramp width in layer spacings,
+     * which is what the geometry below is written in terms of; the percentage
+     * exists because "how much do the waves bleed into each other" is the
+     * question being asked, and it has no natural units.
+     */
+    setMorphOverlap(percent){
+        const pct = Math.max(0, Math.min(100, Number(percent)))
+        const span = EPS16.MORPH_OVERLAP_MAX - EPS16.MORPH_OVERLAP_MIN
+        this.morphOverlap = EPS16.MORPH_OVERLAP_MIN + (isNaN(pct) ? 0 : pct/100) * span
+        return this.morphOverlap
+    }
+
+    /***
+     * Where one layer of a morphing soundscape is heard, as the four crossfade
+     * breakpoints of section 9.9.
+     *
+     * The layers sit at evenly spaced centres across the modulator's 0-127
+     * range, one `spacing` apart. Each is a trapezoid: silent, ramping up over
+     * `ramp`, flat across `plateau`, ramping down over `ramp`, silent again.
+     * Only the ramp is chosen. The plateau is whatever is left of a spacing,
+     * and it runs out once the ramp reaches a full spacing.
+     *
+     * Deriving the plateau that way rather than choosing it separately is what
+     * keeps the handover aligned at every setting. With `plateau = spacing -
+     * ramp` the algebra gives A(n+1) == C(n) and B(n+1) == D(n) exactly, so a
+     * layer starts fading in at the instant the layer before it starts fading
+     * out, however wide the ramps are. Past an overlap of 1 the plateau is gone
+     * and the ramps simply keep widening, which is where layers more than one
+     * spacing apart start to sound together — three at once, then four.
+     *
+     * The two ends need no special case: the first layer's A and B fall below 0
+     * and the last layer's C and D above 127, and the clamp turns that into
+     * "full volume from the start" and "full volume to the end", which is what
+     * the previous version of this function spelled out by hand.
+     */
+    getCrossFadeBreakPoints(length, step, overlap = this.morphOverlap){
+        const spacing = 127 / Math.max(1, length - 1)
+        const ramp = overlap * spacing
+        const plateau = Math.max(0, spacing - ramp)
+        const centre = step * spacing
+        const clamp = (v) => Math.max(0, Math.min(127, Math.round(v)))
+
+        let breakPoints = {
+            pointA: clamp(centre - plateau/2 - ramp),
+            pointB: clamp(centre - plateau/2),
+            pointC: clamp(centre + plateau/2),
+            pointD: clamp(centre + plateau/2 + ramp)
         }
-        else{
-            let prev = this.getCrossFadeBreakPoints(length, step -1)
-            breakPoints.pointA = prev.pointC
-            breakPoints.pointB = prev.pointD 
-            breakPoints.pointC = breakPoints.pointB + sectionLength 
-            breakPoints.pointD = breakPoints.pointC + sectionLength
-        }
+        // Rounding can push two of these onto the same step but never past each
+        // other. The specification does not say what the EPS does with a set
+        // that arrives out of order, so it never finds out.
+        breakPoints.pointB = Math.max(breakPoints.pointA, breakPoints.pointB)
+        breakPoints.pointC = Math.max(breakPoints.pointB, breakPoints.pointC)
+        breakPoints.pointD = Math.max(breakPoints.pointC, breakPoints.pointD)
         return breakPoints
     }
 
@@ -1587,16 +1748,8 @@ class EPS16 {
     async uploadAsTranswave(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[]){
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
-        let isSuccess = false
-        for(let i=this.instNum; i<8; i++){
-            if(await this.createInstrument() && await this.createLayer() &&await this.createSqrWave()){
-                isSuccess = true
-                break;
-            }else{
-                this.setInstrumentNumber(i)
-            }
-        }
-        if(!isSuccess) {
+        if(!(await this.createNextFreeInstrument() && await this.createLayer()
+                && await this.createSqrWave())){
             this.errorCallback("Error: Could not create an instrument for the transwave")
             return
         }
@@ -1640,48 +1793,46 @@ class EPS16 {
     async uploadToDifferentInstruments(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[]){
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
-        let index =0
+        let index = 0
         for(let wave of arrayOfWaveTables){
-            //find an empty instrument
-            for(let i=this.instNum; i<8; i++){
-                if(await this.createInstrument() && await this.createLayer() && await this.createSqrWave()){
-                    await this.uploadWavToEPS(wave, arrayOfWaveTables.length, index, progressCallback,
-                        this.perWave(sampleRates, index), this.perWave(rootKeys, index),
-                        this.perWave(fineTunes, index), this.perWave(names, index))
-                    this.successCallback("Success: Adding new instrument")
-                    index++
-                    await this.sleep(500)
-                    break;
-                }else{
-                    this.setInstrumentNumber(i)
-                }
-
+            // Each wave takes the next free instrument. Running out of them
+            // used to end the search quietly and carry on around the outer
+            // loop, so the remaining waves went nowhere and the run still
+            // reported that it had completed.
+            if(!(await this.createNextFreeInstrument() && await this.createLayer()
+                    && await this.createSqrWave())){
+                this.errorCallback(`Error: Stopped after ${index} of `
+                    + `${arrayOfWaveTables.length} samples, with no instrument left to upload into`)
+                return
             }
+            await this.uploadWavToEPS(wave, arrayOfWaveTables.length, index, progressCallback,
+                this.perWave(sampleRates, index), this.perWave(rootKeys, index),
+                this.perWave(fineTunes, index), this.perWave(names, index))
+            this.successCallback("Success: Adding new instrument")
+            index++
+            await this.sleep(500)
         }
         this.successCallback("Complete: Uploading samples")
     }
     async createMorphingWaveTable(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[]){
         //enable all patche
-        let isSuccess = false
-        for(let i=this.instNum; i<8; i++){
-            if(await this.createInstrument()){
-                isSuccess = true
-                break;
-            }else{
-                this.setInstrumentNumber(i)
-            }
-
-        }
-        if(!isSuccess){
-            this.errorCallback("Error:  Unable to create instrument for morphing wave forms")
+        if(!await this.createNextFreeInstrument()){
+            this.errorCallback("Error: Unable to create instrument for morphing wave forms")
             return false
         }
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
         await this.setParameter(0x28, 0x00, 0xFF) // enable all patches
+        // Only eight layers ever get uploaded, so the breakpoints have to be
+        // spread over eight as well. Computing them for the full count and then
+        // stopping at eight leaves the top of the sweep with no layer assigned
+        // to it, which is silence.
+        const layerCount = Math.min(arrayOfWaveTables.length, EPS16.MAX_MORPH_LAYERS)
+        this.debugCallback(`Soundscape: ${layerCount} layers, fade ramp `
+            + `${this.morphOverlap.toFixed(2)} of a layer spacing`)
         for(let i=0; i< arrayOfWaveTables.length; i++){
-            if(i==8) break
-            const bp = this.getCrossFadeBreakPoints(arrayOfWaveTables.length,i)
+            if(i == EPS16.MAX_MORPH_LAYERS) break
+            const bp = this.getCrossFadeBreakPoints(layerCount, i)
             let wave = arrayOfWaveTables[i]
             this.setLayerNumber(i)
             //this.setWavesampleNumber(1)
@@ -1692,7 +1843,14 @@ class EPS16 {
                 return false
             }
             await this.sleep(500)
-            await this.setParameter(0x18,0x05, 1) // crossfade to linier
+            // The same LFO that sweeps the crossfade is wired to pitch by
+            // default, so without this every layer wobbles in pitch as it
+            // fades and eight of them together are chaos. Section 9.7 gives
+            // Pitch LFO Amount its own address and no "*" marker, so a single
+            // PUT PARAMETER reaches it; this is the front panel's
+            // Pitch / LFO AMOUNT set to zero, per layer.
+            await this.setParameter(EPS16.PITCH_PAGE, EPS16.PITCH_LFO_AMOUNT_PARAM, 0)
+            await this.setParameter(0x18,0x05, EPS16.MORPH_FADECURVE) // fade curve: CROSSFADE, not LINEAR
             await this.setParameter(0x18,0x03, bp.pointA)
             await this.setParameter(0x18,0x0B, bp.pointB)
             await this.setParameter(0x18,0x04, bp.pointC)

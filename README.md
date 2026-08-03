@@ -1,9 +1,11 @@
 ![](eps16plus.jpg)
 ![Project Logo](icon-192x192.png)
-### Ensoniq EPS16+ Wavesample Utility
+### EPSWave: Ensoniq EPS16+ Wavesample Utility
 This a a browser-based utility to upload and download samples to and from the Ensoniq EPS16+ sampling sythesizer. In addition to loading and downloading samples, this version also allows for waveforms to be edited and basic waveforms to be synthesized within the browser, including the "Super Saw" found on the Roland JD-8000. 
 
 Wavefiles loaded in will be analyzed for pitch and sample rates and should upload with these parameters set correctly such that you can begin playing the sample right away. 
+
+![Screenshot of wave editing](screenshots/wave_gen.png)
 
 ### How to get started
 [Navigate here to use the lastest version.](https://eliggett.github.io/EnsoniqEPS16Plus/)
@@ -15,7 +17,7 @@ If you use Chrome, you can clone the repo and open the index.html file directly.
 ### How to use
 To be able to upload a wav file to the EPS16+ you need to: 
 1. Enable web midi in your browser. When this works, you'll be able to select your midi hardware. 
-2. Turn on MIDI Sysex support on the Ensoniq. You have to do this every time you power on -- Edit-->System-->many arrow keys --> MIDI SYSEX --> ON
+2. Turn on MIDI Sysex support on the Ensoniq. You have to do this every time you power on -- Edit-->System-->many (15) arrow keys --> MIDI SYSEX --> ON (up)
 3. Within the app's page, press "Create Instrument", "Create Layer", and then "Create Wavesample". You must do each one, in this order, or, you must load an existing instrument in that you wish to modify. These buttons are at the top of the page for your convenience. 
 4. Press "Generate" to generate a starting wave for editing, or, press "Browse" and select a short sampled waveform. 
 5. Edit the waveform for length and to remove clicks. The Edit menu has a lot of tools for this purpose. A one second wavesample at 44 KHz will take a minute or so to upload, so keep that in mind. Playback the waveform and verify it sounds as you expect. 

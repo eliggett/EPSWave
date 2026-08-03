@@ -93,10 +93,15 @@ has not arrived.
 MIDI runs at 31250 baud, 8N1, so ten bits per byte: **3125 bytes per second**,
 0.32 ms per byte. A block of *n* samples is `3n + 5` bytes on the wire.
 
-The default block is 256 samples, 773 bytes, **0.247 s** at the full MIDI rate,
-which leaves room for an interface running at a fraction of it. `MIN` is 32 and
-`MAX` is 2048 samples, and the interface exposes the setting because the right
-value depends on the adapter, not on the sample.
+The default block is 1000 samples, 3005 bytes, **0.96 s** at the full MIDI rate.
+`MIN` is 32 and `MAX` is 2048 samples, and the interface exposes the setting
+because the right value depends on the adapter, not on the sample.
+
+**This default assumes an interface that keeps up.** It clears the timer with
+room to spare at the full rate and does not clear it at all at the 1353 bytes
+per second measured below, where 1000 samples takes 2.2 s. It is set in
+`DEFAULT_CHUNK_SAMPLES`, and the loopback test exists to find the right value
+for a particular adapter rather than to guess at one.
 
 This is what the original fault was. The old code sent anything under 5000
 samples as a single message. On the interface it was tested with, the measured
@@ -205,6 +210,35 @@ import, the waveform and pitch for a generated wave ("PWM C3"), and
 `UNNAMED INST` / `UNNAMED LAYR` / `UNNAMED WS` for the create buttons. "UNNAMED
 LAYER" is thirteen characters and does not fit.
 
+## Finding a free instrument
+
+Implemented in `EPS16.createNextFreeInstrument()`, shared by the transwave, the
+morphing soundscape and the one-sample-per-instrument upload.
+
+**There is no way to ask whether an instrument slot is occupied.** Nothing in
+section 9 reports it and there is no "instrument exists" query, so the only
+test is to try: `CREATE INSTRUMENT` (`15`) refuses when the slot is taken. A
+refusal during this search is therefore an ordinary answer rather than an
+error, which is why the probe is quiet — the search used to put a failure in
+the event log for every occupied slot it walked past on its way to a working
+one.
+
+The search starts at the instrument currently selected and works upwards to 8.
+It does not wrap, so the selector is a "start here" rather than a "use this",
+and none of the three macros can be pointed at an existing instrument: they
+always create their own.
+
+Two bugs lived in the three hand written copies of this loop that it replaced.
+The instrument number was set **after** each attempt rather than before, so
+every attempt used the previous loop index: a search from slot 1 tried 1, 1, 2,
+3, 4, 5, 6, 7 — the first attempt twice, and **instrument 8 never at all**. A
+synth with the first seven loaded reported that it could not create an
+instrument while the eighth sat empty. Separately, in
+`uploadToDifferentInstruments`, exhausting the search ended the inner loop
+quietly and carried on around the outer one, so once the instruments ran out
+the remaining samples went nowhere and the run still reported that it had
+completed. Both now fail loudly and say how far they got.
+
 ## Transwave
 
 Implemented in `EPS16.uploadAsTranswave()`.
@@ -220,8 +254,8 @@ instead of packing it into one wavesample.
 
 ### Building it
 
-1. Find a free instrument by trying `CREATE INSTRUMENT` from the currently
-   selected number upwards, then `CREATE LAYER` and `CREATE WAVESAMPLE`.
+1. Claim a free instrument as in *Finding a free instrument* above, then
+   `CREATE LAYER` and `CREATE WAVESAMPLE`.
 2. Concatenate every wavetable into one buffer and upload it as a single
    wavesample, exactly as in *Writing a wavesample*.
 3. Write four parameters on the wavesample page `20`:
@@ -276,8 +310,7 @@ note in the interface.
 
 ### Building it
 
-1. Find a free instrument by trying `CREATE INSTRUMENT` from the currently
-   selected number upwards until one succeeds.
+1. Claim a free instrument as in *Finding a free instrument* above.
 2. Set the instrument's Patch to `0xFF` (page `28`, item `00`), so all eight
    layer bits are active in the current patch. Each bit is one layer; a set bit
    means that layer sounds.
@@ -298,44 +331,93 @@ range:
 | C | page `18`, item `04` | fade out starts |
 | D | page `18`, item `0C` | fade out complete, layer silent |
 
-`getCrossFadeBreakPoints(count, index)` chains them so that **each layer's fade
-in region is exactly the previous layer's fade out region**. Only two layers are
-ever in transition at once, and their contributions sum to roughly constant
-loudness through the handover. The first layer begins at full volume, the last
-one stays at full to the end of the sweep.
-
-The width of one region is
+`getCrossFadeBreakPoints(count, step, overlap)` places the layers at evenly
+spaced centres across the range, `spacing = 127 / (count - 1)` apart, and makes
+each one a trapezoid: silent, ramping up over `ramp`, flat across `plateau`,
+ramping down over `ramp`, silent again.
 
 ```
-section = floor(128 / ((count - 1) * 2))
+ramp    = overlap * spacing
+plateau = max(0, spacing - ramp)
+centre  = step * spacing
+
+A = centre - plateau/2 - ramp        C = centre + plateau/2
+B = centre - plateau/2               D = centre + plateau/2 + ramp
 ```
 
-Worked example for four wavesamples, `section = floor(128 / 6) = 21`:
+**Only the ramp is chosen. The plateau is whatever is left of a spacing**, and
+that is the whole trick. Substituting `plateau = spacing - ramp` into the two
+expressions gives `A(n+1) = C(n)` and `B(n+1) = D(n)` identically, so a layer
+begins fading in at the exact instant the one before it begins fading out — at
+every overlap setting, without the chained recursion the first version of this
+function used to guarantee it.
 
-| layer | A | B | C | D | behaviour |
-|-------|---|---|---|---|-----------|
-| 0 | 0 | 0 | 10 | 31 | full from the start, hands over to layer 1 |
-| 1 | 10 | 31 | 52 | 73 | |
-| 2 | 52 | 73 | 94 | 115 | |
-| 3 | 94 | 115 | 127 | 127 | full to the end |
+The two ends need no special case either. The first layer's A and B fall below
+0 and the last layer's C and D above 127, and clamping to the range turns that
+into "full volume from the start of the sweep" and "full volume to the end",
+which is what the old version spelled out by hand.
 
-Other counts:
+### The overlap control
 
-| count | section | first layer | last layer |
-|-------|---------|-------------|------------|
-| 2 | 64 | `[0, 0, 32, 96]` | `[32, 96, 127, 127]` |
-| 3 | 32 | `[0, 0, 16, 48]` | `[80, 112, 127, 127]` |
-| 5 | 16 | `[0, 0, 8, 24]` | `[104, 120, 127, 127]` |
-| 8 | 9 | `[0, 0, 4, 13]` | `[112, 121, 127, 127]` |
+`overlap` is the ramp width **in layer spacings**, and it is the one number
+that decides how much of the sound is a blend and how much is a single
+waveform. The interface exposes it as a 0-100% slider that runs between
+`MORPH_OVERLAP_MIN` and `MORPH_OVERLAP_MAX`.
+
+| overlap | slider | geometry | layers sounding at once |
+|---------|--------|----------|-------------------------|
+| 0.5 | 0% | ramp and plateau equal | 1 or 2 |
+| 1.0 | 33% | plateau gone, layers are triangles | always 2 |
+| 1.25 | 50%, the default | | 2 or 3 |
+| 2.0 | 100% | | 3 or 4 |
+
+0.5 is where the mode started, and it is the floor rather than the default
+because it is the setting that prompted the control: at half a spacing each
+wave spends half its turn alone, and the handover is brief enough that the
+morph reads as one wave stopping and the next starting.
+
+Four wavesamples, for comparison against the table this replaces:
+
+| slider | L0 | L1 | L2 | L3 |
+|--------|----|----|----|----|
+| 0% | `0/0/11/32` | `11/32/53/74` | `53/74/95/116` | `95/116/127/127` |
+| 33% | `0/0/0/42` | `0/42/42/85` | `42/85/85/127` | `85/127/127/127` |
+| 100% | `0/0/0/85` | `0/42/42/127` | `0/85/85/127` | `42/127/127/127` |
+
+Above 1.0 there is no plateau left to give back, so the ramps simply keep
+widening and layers more than one spacing apart start to sound together. The
+ceiling of 2.0 is a judgement rather than a limit — the formula keeps working
+up to `count - 1`, at which every layer is audible everywhere and only its
+position in the sweep differs, which is mush.
+
+**Resolution is the real constraint at eight layers.** A spacing is then only
+18 of the modulator's 128 steps, so the whole slider moves the ramp across a
+range of 9 to 36 steps. Below the bottom of the slider the fade would be short
+enough to click, which is the other reason 0.5 is the floor.
 
 ### Parameters written per layer
 
-Page `18` is AMP (VOLUME), page `1C` is LFO, per section 9 of the External
-Command Specification.
+Page `10` is PITCH, page `18` is AMP (VOLUME), page `1C` is LFO, per section 9
+of the External Command Specification.
+
+**Pitch LFO Amount has to be zeroed on every layer**, and this was not obvious.
+There is one LFO, and the mode uses it to sweep the crossfade — but a wavesample
+arrives with that same LFO already routed to pitch by a non-zero amount, so
+every layer wobbles in pitch as it fades and eight of them at once is chaos.
+Setting page `10` item `02` to zero is the front panel's Pitch / LFO AMOUNT,
+which is where this was first found by hand.
+
+Note that the four breakpoints and the fadecurve belong
+to the **wavesample**, not to the layer: section 7.3 puts them at words 101 to
+104 and in the low byte of word 80. Since this mode gives every layer exactly
+one wavesample the distinction never bites, but it is why the parameters are
+written after the upload, while the wavesample number still points at the one
+just created.
 
 | page/item | parameter | value written | documented range |
 |-----------|-----------|---------------|------------------|
-| `18` / `05` | Vol Mod Crossfade Fadecurve | `1` (LINEAR) | 0-1 `*` |
+| `10` / `02` | Pitch LFO Amount | `0` | -15.7 to +15.7 |
+| `18` / `05` | Vol Mod Crossfade Fadecurve | `0` (CROSSFADE) | 0-1 `*` |
 | `18` / `03` | Crossfade-In Point A | breakpoint | 0-127 |
 | `18` / `0B` | Crossfade-In Point B | breakpoint | 0-127 |
 | `18` / `04` | Crossfade-Out Point C | breakpoint | 0-127 |
@@ -369,13 +451,28 @@ when something misbehaves.
   marker. Running a soundscape with the event log open will show which of them
   this particular machine actually refuses.
 
-- **Above eight wavesamples the top of the sweep falls silent.** The layer loop
-  stops at eight, but the breakpoints are still computed for the full count, so
-  the remaining span of the modulator has no layer assigned to it. With nine
-  wavesamples the last uploaded layer finishes fading out at 124 of 127, leaving
-  3 steps silent; with ten it finishes at 108, leaving 19. Clamping the count to
-  eight before computing the breakpoints would spread the layers over the whole
-  range instead.
+- **The fade curve was the wrong one of the two.** Section 9.9 gives the
+  fadecurve as `0-1 (CROSSFADE-LINEAR)`, and section 9 lists enumerated values
+  in order elsewhere — `0-1 (OFF-ON)`, `0-2 (Reset Off-Reset On-Human)` — so
+  `0` is CROSSFADE and `1` is LINEAR. The mode sent `1`. LINEAR is a straight
+  ramp on the volume, and two unrelated waveforms passing each other on straight
+  ramps lose level in the middle of the handover; CROSSFADE is the curve that
+  exists to hold the level up through exactly that region. This is the more
+  likely explanation for a soundscape that sounds like one wave stopping before
+  the next arrives, and it was fixed at the same time as the overlap control was
+  added, so the two changes have not been heard separately. `MORPH_FADECURVE`
+  is a constant for that reason: set it back to `1` to compare. The parameter
+  carries a `*`, so the EPS may refuse to set it from a single PUT PARAMETER at
+  all, in which case the refusal shows up in the event log and the curve stays
+  at whatever the front panel last chose.
+
+- **Above eight wavesamples the top of the sweep used to fall silent.** The
+  layer loop stops at eight, but the breakpoints were computed for the full
+  count, so the remaining span of the modulator had no layer assigned to it —
+  with nine wavesamples the last uploaded layer finished fading out at 124 of
+  127, with ten at 108. The count is now clamped to `MAX_MORPH_LAYERS` before
+  the geometry is computed, so the layers that do get uploaded spread over the
+  whole range. The extra wavesamples are still silently dropped.
 
 - **Table 2, the modulation source list, is damaged by OCR in the reference
   copy** in `reference/`. Entry `00` is used here as the LFO, which agrees with

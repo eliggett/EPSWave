@@ -514,6 +514,20 @@
                                 </div>
                             </div>
                         </div>
+                        <div class="row" id="morphOverlapRow" style="display:none">
+                            <div class="col-sm">
+                                <label for="morphOverlap" class="mb-1"><small>Layer Overlap:
+                                    <b><span id="morphOverlapValue">50%</span></b></small></label>
+                                <input type="range" class="custom-range" id="morphOverlap" min="0" max="100"
+                                    step="1" value="50">
+                                <i><small><b>Note:</b> How far the waves bleed into one another as the sound
+                                    scape sweeps. At 0% each wave is alone at full volume for half its turn,
+                                    which is the narrowest crossfade the mode offers. Around a third of the way
+                                    up the flat part disappears and two waves are sounding together at every
+                                    point in the sweep; at the top three overlap at once, for a thicker morph
+                                    in which the individual waves are less distinct.</small></i>
+                            </div>
+                        </div>
                         <div class="row">
                             <div class="col-sm">
                                 <button id="uploadSoundScape" class="btn btn-info btn-block"><i
@@ -542,7 +556,7 @@
                                         <label class="input-group-text" for="blockSize">Block Size</label>
                                     </div>
                                     <input type="number" class="form-control" id="blockSize" min="32" max="2048"
-                                        step="32" value="256">
+                                        step="8" value="1000">
                                     <div class="input-group-append">
                                         <span class="input-group-text">samples</span>
                                     </div>
@@ -1020,6 +1034,20 @@
             $("#renameWS").click(async () => {
                 await eps.renameWavesample($("#wsName").val())
             })
+            // The overlap slider only means anything to the morphing sound
+            // scape, so it follows the mode radios rather than sitting there
+            // doing nothing during a plain upload or a transwave.
+            const syncMorphOverlap = () => {
+                const percent = Number($("#morphOverlap").val())
+                $("#morphOverlapValue").html(`${percent}%`)
+                eps.setMorphOverlap(percent)
+            }
+            $("#morphOverlap").on("input", syncMorphOverlap)
+            $('input[name="flexRadioDefault"]').change(() => {
+                const mode = $('input[name="flexRadioDefault"]:checked').val()
+                $("#morphOverlapRow").toggle(mode == "morph")
+            })
+            syncMorphOverlap()
             $("#uploadSoundScape").click(async() => {
                 $("#percentAllComplete").html(`0%`)
                 let waves = waveScapes.map(ws => ws.wavesample)
