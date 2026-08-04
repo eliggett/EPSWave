@@ -608,39 +608,199 @@ Only when nothing answers on any channel does the test conclude that something
 is actually wrong, and it then names the three things worth checking: cable
 direction, port selection, and Edit / System·MIDI / Sysex-MIDI.
 
-## Whole instrument backup and restore (preliminary)
+## Reading an instrument's contents
 
-**Nothing below is implemented.** This is a design study written against the
-specification and the code that already exists, recorded so the next person does
-not have to re-derive it. Every figure quoted is either from the specification or
-computed from the measured transfer rate in *Blocks and the two second command
-timer* above.
+`getInstrumentInventory` in `eps.js` reports what an instrument contains: its
+parameters, every layer, every wavesample, and which wavesamples each layer
+plays on which keys. No wavedata moves, so it costs one GET per object rather
+than the tens of minutes a backup of the same instrument would.
+
+The decoding lives in `epsBlocks.js`, which takes an array of 16 bit words and
+returns plain objects. It talks to nothing — no MIDI, no DOM — because the same
+blocks arrive by two routes and both need the same parser.
+
+### The MIDI block and the disk format are the same layout
+
+An Ensoniq `.EFE` file is a 512 byte header followed by the EPS's own memory
+image. Each object in that image opens with five words of allocator bookkeeping
+that Appendix B calls block size, self pointer and the list links, and those five
+words are not transmitted over MIDI. **Skip them and the rest of the object is
+byte for byte the block described in sections 7.1 to 7.3.**
+
+That was established against a real EPS-16 PLUS instrument file rather than
+assumed. Slicing each object at its offset plus five words puts `$FFFF` exactly
+on word 25, which section 7.1 names as the field identifying an EPS-16 PLUS;
+puts a sensible key range on words 26 and 27; puts the pointer tables at word 29;
+and puts a wavesample's Copy Number on word 12 naming a wavesample that does hold
+the audio. The physical distance between wavesample objects also matches the
+sample count each block declares, to within the 16 byte chunking.
+
+So EFE import is not a second implementation of anything. It is the same decoder
+pointed at a file, and `epsEfe.js` — the whole of it — only opens the envelope:
+check the signature, read the name and the block count, hand the image over as
+words. `EPSEfe.readInstrument` and `getInstrumentInventory` return the same
+shape, so the librarian page renders either without knowing which it has.
+
+Reading an EFE needs no synth and no Web MIDI, so it works in any browser and on
+a page opened straight from disk. It is also the only part of this that can be
+tested without hardware, which is why it was built early.
+
+### Where this lives
+
+The librarian is a second page, `librarian.html`. A transfer of a large
+instrument runs for tens of minutes and dies the moment someone navigates away,
+so it has to own the whole job rather than share a page with the editor.
+
+That split is what pushed the theme out of `index.html` into `epswave.css`, and
+the event log, the MIDI port pickers, the connection test and the About box into
+`epswave.js`. Two pages each carrying their own copy of a hand written dark theme
+drift apart within about a week. The shared functions are markup driven: each one
+looks for a set of element ids and does nothing if they are absent, so a page
+opts into the log by having a `#log` and opts out by not having one, with no
+flags to keep in step.
+
+### The inventory comes free
+
+Most of the instrument block is a directory. Section 7.1 words 29 to 317 hold the
+offsets of the eight pitch tables, the eight layers, the 128 wavesamples and the
+effect, packed two words each, and **a zero offset means the object does not
+exist**. One `GET INSTRUMENT` therefore settles the entire inventory before
+anything else is asked for.
+
+The offset values themselves are RAM addresses valid only at the moment of the
+dump, so only the zero test survives the trip. Appendix B's packing is verified
+against its own worked example: `$00123450` packs as `$2300 $4510`.
+
+Section 7.2 word 19-106 then gives each layer's key map, one wavesample number
+per key. A wavesample is addressed through the layer that owns it, so the maps
+are read first and used to select the right layer before each
+`GET WAVESAMPLE PARAMETERS`.
+
+### Two things the specification does not say
+
+**Where the layer map starts.** Section 7.2 gives 88 entries and never says which
+key the first one is. Measured against the seven instrument files in
+`reference/disks`: **the map starts at MIDI key 21**, which is what an 88 entry
+map should start at, 21 to 108 being the 88 keys of a piano.
+
+Every one of the 20 wavesamples in those files begins exactly where the map says
+it does, including one that covers the full 21 to 108. Seventeen of the 20 end
+there too. The three that do not are described next, and they are not a problem
+with the base key.
+
+**The layer map outranks the declared key range.** Wavesample words 132 and 133
+give a key range, and the layer map gives one key per wavesample. They are two
+views of the same thing, and in real instruments they do not always agree:
+
+| File           | WS | Map gives | Block declares |
+|----------------|----|-----------|----------------|
+| `DIGIPIAN.EFE` | 1  | 36-53     | 36-**55**      |
+| `DIGIPIAN.EFE` | 2  | 54-66     | 54-**67**      |
+| `GRAND-PN.EFE` | 2  | 52-63     | 52-**64**      |
+
+In each case the declared range runs one or two keys past where the next
+wavesample's declared range begins, and the map hands those overlapping keys to
+the higher numbered wavesample. Every low end agrees; only the overlaps differ.
+So the ranges are what the editor was last told, and **the map is what actually
+sounds**.
+
+This decides a question for restore. Writing the key ranges and letting the EPS
+regenerate the map from them would come back with different splits than the
+original for any instrument like these three. The map has to be written, or the
+ranges written and then the map checked and corrected.
+
+**Total Instrument Size in Blocks is not maintained on disk.** Section 7.1 word
+15 is the obvious pre-flight test for whether an instrument will fit in free
+memory. In a 517 block instrument on disk it reads 1, and words 13 through 16 all
+read the same `0x0100`, which is what an unmaintained field looks like. It is
+presumably filled in when the instrument is loaded into RAM, so the value may
+well be right over MIDI — untested, no hardware to hand. For a file, count the
+image.
+
+## Whole instrument backup and restore
+
+**Restore is implemented and works on hardware.** `uploadInstrument` in `eps.js`
+sends an instrument opened from an `.EFE` file to the synth: its layers, its
+wavesamples, all of the audio and every parameter block. Backup — reading the
+audio *off* the synth — is not built yet; the notes below describe it.
 
 The goal: copy an entire instrument — its parameters, every layer, every
 wavesample and all of the audio — to a file on the computer, and put it back.
 
+### The thing that cost a week: you do not choose wavesample numbers
+
+Section 4.3 documents `CREATE WAVESAMPLE` (`19`) as taking a "New WaveSample
+number, # = [1..127]", and `CREATE LAYER` (`16`) and `COPY WAVESAMPLE` (`1B`)
+likewise. **The number is ignored.** The EPS assigns the next free slot, counting
+from 1, and acknowledges the command as though it had done what was asked.
+
+Asked for wavesample 17 in a layer already holding wavesample 1, a real EPS-16
+PLUS created wavesample **2** and returned ACK. Every later command addressed to
+17 was then refused, and the refusals were the confusing part: `PUT WAVESAMPLE
+DATA` said "Invalid Wavesample" — accurate — while a parameter write to the same
+place said **"Insert System Disk"**, which sent the investigation chasing OS
+overlays and memory pressure for two days. The proof is the instrument's own
+pointer table read straight back after the create: slots 1 and 2 occupied, and
+slot 2 holding the 128 sample single-cycle square wave that `CREATE WAVESAMPLE`
+supplies.
+
+So an instrument's original wavesample numbering **cannot be reproduced**, and
+any restore that tries will work by luck whenever the file happens to number its
+wavesamples 1, 2, 3 … and fail whenever it does not. Of the 37 EPS-16 PLUS
+instruments in `reference/disks`, exactly one — `CS-80STR.EFE`, numbered 1, 2,
+17, 18 — does not, which is why this stayed hidden for so long.
+
+**The numbers are learned instead.** Each object is created, the instrument's
+pointer table is read before and after, and whatever slot appeared is what the
+EPS decided to call it. That builds a map from the file's numbering onto the
+synth's, and everything that refers to a wavesample goes through it:
+
+- which wavesample the audio is sent to
+- which wavesample a copy is taken from
+- wavesample block word 12, the *Copy Number*
+- layer block words 19-106, the key map, translated key by key
+
+One extra `GET INSTRUMENT` per created object, about a second each against a
+transfer measured in minutes. Unlike inferring the rule, it cannot be wrong — and
+it stays correct if the rule turns out to be different on another machine or
+another OS version.
+
+### Two more things creates do that the specification does not mention
+
+**`CREATE LAYER` does not reliably produce the wavesample it promises.** Section
+4.3 says it defines "a new layer with one WaveSample". On hardware a restore of a
+one-layer, one-wavesample instrument was acknowledged and then answered "Invalid
+Wavesample" to the very next command addressing it. So every wavesample is
+created explicitly, and whatever `CREATE LAYER` may or may not have left behind
+is discovered by the same before-and-after read rather than assumed. A layer of
+nothing but copies sometimes ends up with a spare wavesample it has no use for;
+that gets deleted, because a created wavesample is handed a key range across the
+whole layer and would otherwise sound.
+
+**Creating a wavesample seizes the layer's key map.** Immediately after creating
+a second wavesample, the layer map read back as naming only the new one across
+all 88 keys. This is why the layer parameter blocks are written *after* every
+create, not before: anything written earlier is thrown away.
+
 ### The inventory comes free
 
 The question that decides whether any of this is practical is how to find out
-what is *inside* an instrument. It turns out not to be a problem. Most of the
-instrument parameter block of section 7.1 is a directory:
+what is *inside* an instrument, and it turned out not to be a problem. See
+*Reading an instrument's contents* above, which is implemented: one
+`GET INSTRUMENT` yields the complete inventory before anything is transferred.
+
+The pointer tables it walks are these, section 7.1, two words per entry:
 
 | Words     | Contents                                    |
 |-----------|---------------------------------------------|
-| 29-44     | 8 pitch table offsets, two words each       |
+| 29-44     | 8 pitch table offsets                       |
 | 45-60     | 8 layer offsets                             |
 | 61-316    | **128 wavesample offsets**                  |
 | 317-318   | effect offset                               |
 
 Appendix B confirms this against the RAM structure it documents:
 `inst_ptable_ptrs ds 8*2`, `inst_layer_ptrs ds 8*2`, `inst_ws_ptrs ds 128*2`,
-`inst_effect_ptr ds.l 1`. A zero pointer means the object does not exist, so a
-single `GET INSTRUMENT` (command `03`) yields the complete inventory before
-anything is transferred. Section 7.2 word 19-106, the layer map of 88 keys, then
-says which wavesamples belong to which layer.
-
-This is the same command that would answer the separate "query the instrument"
-idea in `TODO.md`, and it is worth building on its own first.
+`inst_effect_ptr ds.l 1`.
 
 ### Backing up
 
@@ -667,33 +827,68 @@ pressure mode, MIDI status, the four patch bitmaps, key-down and key-up layers,
 key range and transposition. Layers are worse, or better: 7 parameter words and
 a name, with words 19-106 being the layer map.
 
-So restore is structural, and it ends with the read, modify, write that
-`setBlockName` already performs:
+So restore is structural, and it ends with a read, modify, write of the
+instrument block:
 
-1. `CREATE INSTRUMENT` (`15`).
-2. `CREATE LAYER` (`16`) and `CREATE WAVESAMPLE` (`19`) for each object.
-   Both commands take an **explicit number**, so the original numbering can be
-   reproduced exactly.
-3. Upload the audio per wavesample, which is mechanically what `uploadWavToEPS`
-   already does: sample end to 1, truncate, then chunked `PUT WAVESAMPLE DATA`.
-4. Per block, `GET` the **freshly created** block, overlay the saved parameter
-   words onto the pointer words the EPS just wrote itself, and `PUT` it back.
+1. `CREATE INSTRUMENT` (`15`), searching upward from the selected slot.
+2. Per layer: `CREATE LAYER` (`16`), then `CREATE WAVESAMPLE` (`19`) for each
+   wavesample holding audio, learning the assigned number for each.
+3. Upload the audio per wavesample, addressed by the assigned number.
+4. `COPY WAVESAMPLE` (`1B`) per copy, learning its assigned number too.
+5. Write the wavesample blocks, then the layer blocks, with every wavesample
+   number inside them translated.
+6. `GET` the freshly created instrument block, overlay the 29 parameter words
+   onto the pointer words the EPS wrote itself, and `PUT` it back.
 
-Preserving the numbering in step 2 is what makes step 4 safe: the layer maps and
-the copy references restore verbatim, so there is never any need to resolve the
-disagreement between section 7.2, which calls a layer map entry a wavesample
-number in the high byte, and Appendix B, which calls it a 12 bit offset into the
-instrument's wavesample pointer table.
+The order is forced at four points. Audio precedes the wavesample block, because
+words 115-130 are offsets into wavedata that does not exist yet. Copies follow
+the audio they share. Layer blocks follow every create, because a create rewrites
+the key map. And the instrument block is last because it is the only one that
+must be merged rather than written.
 
-Two orderings matter. Wavesample words 132 and 133, the key range, and the layer
-map are two views of the same thing on this machine, and setting either
-regenerates the other; restore the key ranges and then check the map rather than
-writing both and hoping. And the data offsets in words 115-130 only mean
-anything once the audio is in, so the wavesample parameter block goes last.
+Section 7.2 and Appendix B used to disagree about what a layer map entry is — a
+wavesample number in the high byte, or a 12 bit offset into the instrument's
+wavesample pointer table. A real instrument settles it in favour of section 7.2.
+Its maps hold `01` and `11` in one layer and `02` and `12` in the other, and the
+occupied slots of the pointer table are exactly 1, 2, 17 and 18. Appendix B's
+comment is the misleading one.
 
-Pre-flight is cheap. Instrument word 15 is *Total Instrument Size in Blocks*, and
-Free System Blocks is already read by `ping()`, so whether the instrument fits
-can be settled before spending twenty minutes finding out that it does not.
+Pre-flight is cheap. Free System Blocks is already read by `ping()`, and an
+`.EFE` header gives the instrument's true size, so whether it fits is settled
+before spending twenty minutes finding out that it does not. Instrument word 15,
+*Total Instrument Size in Blocks*, is **not** usable for this from a file — see
+*Two things the specification does not say* above.
+
+### "Not now" is not "no"
+
+Four status codes mean the EPS is busy rather than refusing, and every one of
+them cost a debugging session before it was recognised:
+
+| Code | Name | Why it appears mid-restore |
+|------|------|----------------------------|
+| `01` | WAIT | Section 3.2: acknowledge it and allow 30 seconds. Treating it as success meant firing commands into a machine that had asked for time. |
+| `14` | DISK ACCESS IN PROGRESS | The synth is still working after a large upload. |
+| `02` | INSERT SYSTEM DISK | Also seen when the addressed wavesample does not exist, so not always transient — see above. |
+| `17` | NAK | Section 5 calls this a bad data transfer, but section 3.1 also has the receiver send it "if another message is received during processing". A `CREATE` carries no data, so for those only the second meaning is possible: too soon. |
+
+All four are retried, five attempts three seconds apart, for any command that
+carries no data block. Genuine refusals — "Instrument in Use", "Invalid
+Parameter Value" — fail on the first attempt as they should.
+
+This matters beyond the librarian. `createLayer`, `createSqrWave` and
+`deleteInstrument` are the editor page's transwave and multi-sample upload path,
+and all three used to report a bare "Unable to create layer" with no status code
+and no retry.
+
+### One thing not to acknowledge
+
+`GET PARAMETER` returns an ACK followed by a `PUT PARAMETER` carrying the value.
+Section 8's worked example ends with "if the data was successfully received, the
+ACK status code should be sent", and following that here is wrong: send an ACK
+and the EPS answers **"Invalid Instrument"**. That example is a WaveData
+transfer, a multi-message exchange where the ACK keeps the next part coming. A
+parameter value arrives complete in one message and there is nothing left to ask
+for.
 
 ### What cannot be captured: effects
 
@@ -709,10 +904,23 @@ problems:
   parameters are all printed with low byte `00`.
 
 So the effect parameters can be saved for the algorithm that happens to be
-loaded, but not the choice of algorithm. Either prompt the user to select it by
-hand before restoring, or drive the front panel with `VIRTUAL BUTTON PRESS`
-(`40`) — button `11` is Effect·Select·Bypass and `18` is Effects — which works
-but depends on what is already on the display.
+loaded, but not the choice of algorithm.
+
+Driving the front panel with `VIRTUAL BUTTON PRESS` (`40`) does not help either,
+because **no command in section 4 reads the display back**. The button could be
+pressed; there is no way to see what it selected. The algorithm has to be read
+off the synth by a human.
+
+What is reachable is item `00` of page `30`, which is *Variation* in all
+thirteen algorithm tables and so has a known meaning without knowing the
+algorithm, plus items `01` to `09`, which carry no `*` or `**` marker. Those are
+reported as raw numbers rather than labelled: item `03` is Decay Time in a reverb
+and something else entirely in a delay, and naming them without knowing which
+algorithm is loaded would be inventing information.
+
+Whether an instrument on the synth even has an effect to read is untested. None
+of the 41 instrument files in `reference/disks` contains an effect block, which
+suggests the effect may belong to the bank rather than the instrument.
 
 ### Time is the real constraint
 
