@@ -1,0 +1,111 @@
+/***
+ * The EPSWave theme, shared by every page.
+ *
+ * This used to be a <style> block inside index.html. It moved out when the
+ * librarian became a second page, because two pages carrying their own copy of
+ * a hand written dark theme drift apart within about a week.
+ *
+ * Bootstrap 4 has no dark theme, so what follows is a set of explicit
+ * overrides for the components in use. If you add a Bootstrap component to any
+ * page, check it against body.dark before calling it done.
+ */
+
+/* Everything below is scoped to body.dark.
+
+   color-scheme covers the parts the browser draws itself and no rule of
+   ours can reach: scrollbars, number input spinners, and in Firefox the
+   popup list of a <select>. Without it Firefox leaves all of those
+   white on the dark page. */
+body.dark { color-scheme: dark; background-color: #12151a; color: #c8ced6; }
+body.dark h2, body.dark h5, body.dark h6,
+body.dark b, body.dark strong { color: #e6ebf1; }
+body.dark .modal-content { background-color: #1b1f26; border-color: #2b323c; }
+body.dark .modal-header, body.dark .modal-footer { border-color: #2b323c; }
+body.dark .modal-body hr { border-top-color: #2b323c; }
+/* Bootstrap's close button is a black glyph with a white text-shadow,
+   which on a dark panel leaves a faint smudge and nothing else. */
+body.dark .close { color: #e6ebf1; text-shadow: none; opacity: .7; }
+body.dark .close:hover { color: #ffffff; opacity: 1; }
+body.dark .card { background-color: #1b1f26; border-color: #2b323c; }
+body.dark .card-header { background-color: #232830; border-color: #2b323c; color: #e6ebf1; }
+body.dark .form-control,
+body.dark .custom-select,
+body.dark textarea.form-control { background-color: #0f1319; color: #d5dbe3; border-color: #333b47; }
+body.dark .form-control:focus,
+body.dark .custom-select:focus { background-color: #0f1319; color: #eef2f6; border-color: #4a5568; }
+body.dark .form-control::placeholder { color: #6b7482; }
+body.dark .input-group-text { background-color: #232830; color: #c8ced6; border-color: #333b47; }
+body.dark .custom-file-label { background-color: #0f1319; color: #a9b2bd; border-color: #333b47; }
+body.dark .custom-file-label::after { background-color: #232830; color: #d5dbe3; border-color: #333b47; }
+body.dark .dropdown-menu { background-color: #1b1f26; border-color: #333b47; }
+body.dark .dropdown-item { color: #c8ced6; }
+body.dark .dropdown-item:hover, body.dark .dropdown-item:focus { background-color: #2a303a; color: #ffffff; }
+body.dark .dropdown-item.disabled { color: #5d6673; }
+body.dark .dropdown-divider { border-top-color: #333b47; }
+body.dark .btn-outline-secondary { color: #aeb6c0; border-color: #3c4553; }
+body.dark .btn-outline-secondary:hover { background-color: #2f3640; color: #ffffff; border-color: #4a5568; }
+body.dark .btn-secondary { background-color: #4a5568; border-color: #4a5568; }
+body.dark .alert-warning { background-color: #3a3320; color: #f0d9a0; border-color: #5c4f2c; }
+body.dark .alert-secondary { background-color: #232830; color: #c8ced6; border-color: #333b47; }
+body.dark .alert-success { background-color: #1c3323; color: #a7dbb4; border-color: #2f5b3c; }
+body.dark .alert-danger { background-color: #3a2124; color: #eda9ae; border-color: #5f3238; }
+body.dark .text-muted { color: #8b95a1 !important; }
+body.dark .custom-control-label { color: #c8ced6; }
+body.dark a { color: #6fb8ff; }
+
+/* Wavesample name fields, dressed as the synth's own display.
+
+   The EPS shows upper case only, so the field is upper cased here as
+   well as in the JS that feeds it: the CSS keeps what is on screen
+   honest even for a keystroke the input handler has not seen yet.
+   Letter spacing and tabular figures keep the twelve character cells
+   roughly even, since the font is not strictly monospaced. Swapping the
+   face out later means changing the url and the family name here and
+   nothing else. */
+@font-face {
+    font-family: 'LCD14';
+    src: url('./fonts/lcd-font/otf/LCD14.otf') format('opentype');
+    font-display: swap;
+}
+.eps-name {
+    font-family: 'LCD14', monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+/* Qualified with .form-control so it outranks Bootstrap's
+   .form-control-sm, which the fields under the Create buttons carry and
+   which would otherwise set the size back to 0.875rem. The field height
+   is an em calculation in Bootstrap, so the box grows to suit. */
+.eps-name.form-control { font-size: 1.25rem; }
+/* Light mode: a passive LCD, dark segments on a grey green panel. */
+.eps-name.form-control {
+    background-color: #cfd8b9;
+    color: #1e2416;
+    border-color: #9aa585;
+}
+.eps-name.form-control:focus {
+    background-color: #d9e2c2;
+    color: #1e2416;
+    border-color: #7c8869;
+    box-shadow: none;
+}
+/* Dark mode: the vacuum fluorescent display it actually is. The glow is
+   a text-shadow rather than a filter so the characters stay crisp. */
+body.dark .eps-name.form-control,
+body.dark .eps-name.form-control:focus {
+    background-color: #000000;
+    color: #3dff9e;
+    border-color: #26463a;
+    text-shadow: 0 0 6px rgba(61, 255, 158, 0.55);
+}
+body.dark .eps-name.form-control:focus { border-color: #3dff9e; box-shadow: none; }
+body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: none; }
+.eps-name.form-control::placeholder { color: #7b8768; }
+
+/* Expanded event log. The height is the viewport less the room the card
+   header, the checkbox row and the page margins take, so the textarea
+   fills what is left of the screen and the whole card still fits
+   without the page itself scrolling. rows= on the textarea loses to
+   this, which is the point. */
+#log.log-expanded { height: calc(100vh - 13rem); min-height: 12rem; }
