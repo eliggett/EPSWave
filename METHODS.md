@@ -945,33 +945,85 @@ from a `.epswave` puts **byte-for-byte the same traffic on the wire** as one
 driven from the `.EFE` it was made from. A `.epswave` runs about 1.34× the size
 of the equivalent `.EFE`, which is base64.
 
-### Why not write .EFE, yet
+## Writing .EFE
 
-Because writing one means reproducing the EPS's allocator, and reading one does
-not. Each object carries five words of bookkeeping ahead of the block in
-section 7, and those five words have to be synthesised rather than copied.
+Writing one means reproducing the EPS's allocator, which reading does not: each
+object carries five words of bookkeeping ahead of the block in section 7, and
+those five words have to be produced rather than copied. All of it was measured
+against the 42 files here.
 
-One of them is now solved. **The allocator's block size is
-`(word1 << 8) | (word0 >> 4)`**, giving the allocated size in bytes — which
-holds for all 181 objects across all 42 files: every value is a multiple of 16,
-none overlaps the next object, and the instrument's own figure is exactly the
-image length. Copies read 288, which is the `$120` byte wavesample header with
-no audio after it, and layers read 224.
+**`EPSEfe.write` is implemented and untested on hardware.** Everything that can
+be checked without a synth has been; only the synth can say the rest.
 
-What is not solved is the rest: word 2 is the byte offset of the pointer that
-points at this object, times 16 — that one is derivable — but words 3 and 4 are
-doubly linked list pointers whose ordering rules are not obvious from the files,
-and the allocator leaves gaps between objects that follow no pattern yet found.
+### Byte-for-byte reproduction is the wrong test
 
-None of that has to be settled now, because **a `.epswave` holds everything an
-`.EFE` would**, and an `.EFE` can be generated from a saved backup later,
-offline, without going near the synth again. That ordering is deliberate: the
-twenty minute part is reading the audio off the hardware, and it should not have
-to be repeated because the container was decided wrongly.
+This was tried first and it was a mistake worth recording. A real file's object
+order, and the gaps between its objects, are a record of how the instrument was
+edited on the synth — wavesample 2 sitting 400 bytes after wavesample 1 in one
+file and immediately after it in another says nothing about the format. Laying
+objects out contiguously shifts every following byte, so a byte diff reports the
+whole file as wrong and hides whether any field is actually wrong.
 
-There is also a decisive test available whenever it is worth writing: parse each
-of the 42 files, write it back out, and compare byte for byte. If all 42
-reproduce exactly, the allocator is understood. No hardware required.
+The test that means something is: write a file, read it back with the same
+decoder that reads Ensoniq's own files, and require that it says exactly what
+the original said. **All 42 pass** — every parameter block identical, every
+sample identical, every pointer resolving to the right object.
+
+### The five header words
+
+**Words 0-1, the allocated size in bytes**, are a 24 bit value split across two
+words with each half shifted left 4 — the same "low three bits of every word are
+unusable" habit as the packed offsets, with the halves in the opposite order:
+
+```
+value = (word1 << 8) | (word0 >> 4)
+```
+
+That reads correctly for **all 181 objects in all 42 files**: every result is a
+multiple of 16, none overlaps the next object, a copy reads 288 (the `$120`
+header with no audio after it), a layer reads 224, and the instrument's own
+figure is exactly the length of the image.
+
+**Word 2** is the byte offset, times 16, of the pointer that points at this
+object: 100 + 4·layer for a layer, 132 + 4·n for a wavesample, counted from the
+start of the instrument object.
+
+**Words 3 and 4 are a doubly linked list of the wavesamples in each layer**, in
+the high bytes — on a layer, the first and last wavesample it plays; on a
+wavesample, the next and previous. Walking that chain from every layer's head
+reproduces exactly the set of wavesamples that layer's key map plays, with the
+back links agreeing, in **all 63 layers**.
+
+### The header
+
+473 of its 512 bytes are identical in every file. What varies is the signature,
+the name, the block count at `$34` — repeated at `$36`, which is the only reason
+to notice it — and byte `$38`, which is **0 in all 38 EPS-16 PLUS files and 2 in
+all 4 original EPS ones**.
+
+### What is still guessed
+
+Three things, and they are the whole of what hardware has to settle.
+
+| Field | Written as | Why |
+|-------|-----------|-----|
+| `inst_self_ptr`, instrument word 2 | `0` | Holds a RAM address between `$C900` and `$CCC0`, different in every file. Appendix B calls it "used for relocation", and a pointer for relocation cannot survive being loaded at a different address. |
+| Low bytes of the two list words | `0` | They vary, their meaning is unknown, and they are zero throughout `CS-80STR.EFE`. |
+| The padding after a wavesample's audio | `0` | Real files have stale RAM there — one ends with the bytes of a name fragment. |
+
+Reproducing the two closest files leaves **21 and 22 differing bytes**, and every
+one of them is in that table. Nothing else in either file differs.
+
+### What a written file drops
+
+Pitch tables and the effect. Neither is captured by a backup — there is no PUT
+for an effect and nothing yet reads a pitch table — so their pointer tables are
+written empty rather than pointing at nothing, and the caller is told. It is why
+`JUCOSMOP.EFE` comes back 2048 bytes shorter: that is its effect block.
+
+Instrument word 15 is written with the true block count rather than copied. On
+an original EPS file that reproduces what was there; on an EPS-16 PLUS file it
+differs, because the EPS-16 PLUS leaves `0x0100` in a field it does not maintain.
 
 ### Restoring, and the one sharp edge
 

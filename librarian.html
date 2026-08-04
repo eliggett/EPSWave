@@ -162,8 +162,14 @@
                                     <i class="fa-solid fa-folder-open"></i> Read instrument from disk (EFE)
                                 </button>
                                 <input type="file" id="efeFile" accept=".efe,.EFE" style="display:none">
-                                <button id="saveToEfe" class="btn btn-outline-secondary btn-block btn-sm">
+                                <button id="saveToEfe" class="btn btn-success btn-block btn-sm"
+                                    title="Untested on hardware. The writer reproduces the EPS's
+                                        own allocator from measurements of 42 of its files; only
+                                        the synth can say whether it agrees.">
                                     <i class="fa-solid fa-file-export"></i> Save instrument to EFE
+                                    <span class="badge badge-warning">untested</span>
+                                    <span id="saveToEfeSpinner" class="spinner-border spinner-border-sm"
+                                        role="status" aria-hidden="true" style="display:none"></span>
                                 </button>
                             </div>
                             <div class="col-md-4 mb-3">

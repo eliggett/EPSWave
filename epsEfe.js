@@ -178,6 +178,278 @@ class EPSEfe {
     }
 
     /***
+     * WRITING AN .EFE
+     *
+     * Reading one needs to understand the objects. Writing one needs to
+     * understand the EPS's allocator as well, because every object carries five
+     * words of bookkeeping ahead of the block in section 7 and those five words
+     * have to be produced rather than copied. All of it was measured against
+     * the 42 instrument files here rather than taken from a description.
+     *
+     * THE FIVE HEADER WORDS
+     *
+     * Words 0-1, the allocated size in bytes, are a 24 bit value split across
+     * two words with each half shifted left 4 — the same "low three bits of
+     * every word are unusable" habit as the packed offsets, with the halves in
+     * the opposite order:
+     *
+     *     value = (word1 << 8) | (word0 >> 4)
+     *
+     * That reads correctly for **all 181 objects in all 42 files**: every
+     * result is a multiple of 16, none overlaps the next object, a copy reads
+     * 288 (the $120 header with no audio after it), a layer reads 224, and the
+     * instrument's own figure is exactly the length of the image.
+     *
+     * Word 2 is the byte offset, times 16, of the pointer that points at this
+     * object — so a layer's is 100 + 4*layer and a wavesample's is 132 + 4*n,
+     * both counted from the start of the instrument object. For the instrument
+     * itself Appendix B calls it `inst_self_ptr`, "used for relocation", and it
+     * holds a RAM address between $C900 and $CCC0 that differs in every file.
+     * **It is the one field here that is written blind**, on the reasoning that
+     * a pointer the specification says is for relocation cannot survive being
+     * loaded at a different address and must be rebuilt.
+     *
+     * Words 3 and 4 are a doubly linked list of the wavesamples in each layer,
+     * in the high bytes: on a layer, the first and last wavesample it plays; on
+     * a wavesample, the next and previous. Walking that chain from every
+     * layer's head reproduces exactly the set of wavesamples that layer's key
+     * map plays, with the back links agreeing, in all 63 layers here. The low
+     * bytes hold something else that varies and is zero throughout CS-80STR, so
+     * zero is what gets written.
+     *
+     * THE HEADER
+     *
+     * 473 of the 512 bytes are identical in every file. What varies is the
+     * signature, the name, the block count at $34 — repeated at $36, which is
+     * the only reason to notice it — and byte $38, which is 0 in all 38
+     * EPS-16 PLUS files and 2 in all 4 original EPS ones.
+     *
+     * WHAT IS NOT WRITTEN
+     *
+     * Pitch tables and the effect. Neither is captured by a backup — there is
+     * no PUT for an effect and nothing yet reads a pitch table — so their
+     * pointer tables are left empty rather than pointing at nothing. The caller
+     * is told when this loses something.
+     */
+
+    /***
+     * The inverse of unpackOffset. Appendix B's worked example is the test:
+     * 0x123450 must pack as 0x2300 0x4510.
+     */
+    static packOffset(words, at, value){
+        words[at] = ((value >> 12) & 0xFF) << 8
+        words[at + 1] = (((value >> 4) & 0xFF) << 8) | (((value >> 20) & 0x0F) << 4)
+    }
+
+    /***
+     * The allocator's block size, read and written. See the note above.
+     */
+    static unpackBlockSize(words, at){
+        return (words[at + 1] << 8) | (words[at] >> 4)
+    }
+    static packBlockSize(words, at, value){
+        words[at] = (value & 0x0FFF) << 4
+        words[at + 1] = ((value >> 12) & 0x0FFF) << 4
+    }
+
+    /***
+     * Where the pointer to an object sits inside the instrument object, in
+     * bytes: the five word header, then the word offset section 7.1 prints.
+     */
+    static pointerAt(word){ return EPSBlocks.OBJECT_HEADER_WORDS * 2 + word * 2 }
+
+    /***
+     * Every object begins on a 16 byte boundary — Appendix B's "16 byte chunky"
+     * — and the image is a whole number of 512 byte disk blocks.
+     */
+    static align(value, to){ return Math.ceil(value / to) * to }
+
+    /***
+     * The instrument object's own five words. Words 3 and 4 are constant in all
+     * 42 files; word 2 is the relocation pointer described above.
+     */
+    static INSTRUMENT_SELF_PTR = 0
+    static INSTRUMENT_LINK_WORDS = [0xFFD0, 0xFFF8]
+
+    /***
+     * Header layout. Everything not named here is zero in every file.
+     */
+    static SIGNATURE_AT = 0x02
+    static SIGNATURE_BYTES = 16
+    static SIGNATURE_16_PLUS = "Eps File:"
+    static SIGNATURE_ORIGINAL = "EPS-16 File:"
+    static SIZE_BLOCKS_REPEAT_AT = 0x36
+    static MACHINE_AT = 0x38
+    static MACHINE_16_PLUS = 0
+    static MACHINE_ORIGINAL = 2
+
+    /***
+     * Writes an instrument out as an .EFE image.
+     *
+     * `audio` is a Map from wavesample number to samples, the same shape
+     * downloadAudio returns and EPSWaveFile carries. Returns the bytes and a
+     * list of anything that could not be represented, which the caller is
+     * expected to show rather than swallow.
+     */
+    static write(inventory, audio = new Map(), options = {}){
+        const lost = []
+        const instrument = inventory.instrument
+        const layers = inventory.layers
+        const wavesamples = inventory.wavesamples
+        if(layers.length == 0 || wavesamples.length == 0){
+            throw new Error("An instrument needs at least one layer and one wavesample")
+        }
+
+        // --- how long is each object, and where does it go -------------------
+        const samplesFor = (ws) => {
+            if(ws.isCopy) return 0
+            const held = audio.get(ws.number)
+            // The block's own end offset and the audio in hand should agree.
+            // Where they do not the longer wins, so nothing is truncated, and
+            // the disagreement is reported.
+            if(held && held.length != ws.sampleEnd){
+                lost.push(`Wavesample ${ws.number}: the parameters say ${ws.sampleEnd} `
+                    + `samples and ${held.length} are in hand`)
+            }
+            return Math.max(ws.sampleEnd, held ? held.length : 0)
+        }
+
+        let at = EPSBlocks.INSTRUMENT_OBJECT_BYTES
+        const placed = new Map()
+        for(const layer of layers){
+            placed.set(`layer${layer.number}`, at)
+            at += EPSEfe.align(
+                (EPSBlocks.OBJECT_HEADER_WORDS + EPSBlocks.LAYER_BLOCK_WORDS) * 2, 16)
+        }
+        for(const ws of wavesamples){
+            placed.set(`ws${ws.number}`, at)
+            at += EPSEfe.align(
+                EPSEfe.WAVESAMPLE_HEADER_BYTES + samplesFor(ws) * 2, 16)
+        }
+        const imageBytes = EPSEfe.align(at, EPSEfe.BLOCK_BYTES)
+        const image = new Uint8Array(imageBytes)
+        const words = new Uint16Array(imageBytes >> 1)
+        const put = (byteOffset, block) => {
+            const from = (byteOffset >> 1) + EPSBlocks.OBJECT_HEADER_WORDS
+            for(let i = 0; i < block.length; i++) words[from + i] = block[i] & 0xFFFF
+        }
+
+        // --- the instrument --------------------------------------------------
+        const instBlock = Array.from(instrument.words)
+        // Pitch tables and the effect are not carried by a backup, so their
+        // pointers are cleared rather than left pointing into nothing.
+        for(let i = 0; i < EPSBlocks.PITCH_TABLE_COUNT; i++){
+            const at = EPSBlocks.INST_PITCH_TABLE_PTRS + i * 2
+            if(instBlock[at] || instBlock[at + 1]) lost.push(`Pitch table ${i + 1} is not saved`)
+            instBlock[at] = 0
+            instBlock[at + 1] = 0
+        }
+        if(instrument.hasEffect) lost.push("The effect is not saved: it cannot be read "
+            + "back off the synth, so a backup does not hold one")
+        instBlock[EPSBlocks.INST_EFFECT_PTR] = 0
+        instBlock[EPSBlocks.INST_EFFECT_PTR + 1] = 0
+        // Section 7.1 word 15, which the original EPS maintains and the
+        // EPS-16 PLUS does not. Written correctly either way.
+        instBlock[15] = Math.min(0xFFFF, Math.round(imageBytes / EPSEfe.BLOCK_BYTES))
+        for(let i = 0; i < EPSBlocks.LAYER_COUNT; i++){
+            EPSEfe.packOffset(instBlock, EPSBlocks.INST_LAYER_PTRS + i * 2,
+                placed.has(`layer${i}`) ? placed.get(`layer${i}`) : 0)
+        }
+        for(let n = 0; n < EPSBlocks.WAVESAMPLE_COUNT; n++){
+            EPSEfe.packOffset(instBlock, EPSBlocks.INST_WAVESAMPLE_PTRS + n * 2,
+                placed.has(`ws${n}`) ? placed.get(`ws${n}`) : 0)
+        }
+        EPSEfe.packBlockSize(words, 0, imageBytes)
+        words[2] = EPSEfe.INSTRUMENT_SELF_PTR
+        words[3] = EPSEfe.INSTRUMENT_LINK_WORDS[0]
+        words[4] = EPSEfe.INSTRUMENT_LINK_WORDS[1]
+        put(0, instBlock)
+
+        // --- layers, and the wavesample chain each one owns -------------------
+        for(const layer of layers){
+            const offset = placed.get(`layer${layer.number}`)
+            const chain = wavesamples
+                .filter(ws => (ws.layer == null ? layers[0].number : ws.layer) == layer.number)
+                .map(ws => ws.number)
+                .sort((a, b) => a - b)
+            const word = offset >> 1
+            EPSEfe.packBlockSize(words, word,
+                (EPSBlocks.OBJECT_HEADER_WORDS + EPSBlocks.LAYER_BLOCK_WORDS) * 2)
+            words[word + 2] = EPSEfe.pointerAt(EPSBlocks.INST_LAYER_PTRS + layer.number * 2) * 16
+            words[word + 3] = (chain.length ? chain[0] : 0) << 8
+            words[word + 4] = (chain.length ? chain[chain.length - 1] : 0) << 8
+            put(offset, layer.words)
+
+            for(let i = 0; i < chain.length; i++){
+                const ws = placed.get(`ws${chain[i]}`) >> 1
+                words[ws + 3] = (i + 1 < chain.length ? chain[i + 1] : 0) << 8
+                words[ws + 4] = (i > 0 ? chain[i - 1] : 0) << 8
+            }
+        }
+
+        // --- wavesamples, and the audio that follows each ---------------------
+        for(const ws of wavesamples){
+            const offset = placed.get(`ws${ws.number}`)
+            const word = offset >> 1
+            const samples = samplesFor(ws)
+            EPSEfe.packBlockSize(words, word,
+                EPSEfe.align(EPSEfe.WAVESAMPLE_HEADER_BYTES + samples * 2, 16))
+            words[word + 2] =
+                EPSEfe.pointerAt(EPSBlocks.INST_WAVESAMPLE_PTRS + ws.number * 2) * 16
+            // Words 3 and 4 were set by the layer walk above.
+            put(offset, ws.words)
+            if(ws.isCopy) continue
+            const held = audio.get(ws.number)
+            if(!held || held.length == 0){
+                lost.push(`Wavesample ${ws.number} has no audio and is written silent`)
+                continue
+            }
+            const from = (offset + EPSEfe.WAVESAMPLE_HEADER_BYTES) >> 1
+            for(let i = 0; i < held.length; i++) words[from + i] = held[i] & 0xFFFF
+        }
+
+        // Motorola byte order throughout, per Appendix B.
+        for(let i = 0; i < words.length; i++){
+            image[i * 2] = (words[i] >> 8) & 0xFF
+            image[i * 2 + 1] = words[i] & 0xFF
+        }
+
+        // --- the 512 byte header ---------------------------------------------
+        const header = new Uint8Array(EPSEfe.HEADER_BYTES)
+        const write = (from, text, length, pad = " ") => {
+            const padded = String(text).slice(0, length).padEnd(length, pad)
+            for(let i = 0; i < length; i++) header[from + i] = padded.charCodeAt(i) & 0xFF
+        }
+        const original = !instrument.isEps16Plus
+        header[0] = 0x0D
+        header[1] = 0x0A
+        write(EPSEfe.SIGNATURE_AT,
+            original ? EPSEfe.SIGNATURE_ORIGINAL : EPSEfe.SIGNATURE_16_PLUS,
+            EPSEfe.SIGNATURE_BYTES, original ? "_" : " ")
+        // 16 bytes rather than 12: the four that follow the name are part of
+        // the same space padded field in every file.
+        write(EPSEfe.NAME_AT, options.name || instrument.name || "", 16,
+            original ? "_" : " ")
+        write(EPSEfe.TYPE_NAME_AT, "Instrument", 13, original ? "_" : " ")
+        header[0x2F] = 0x0D
+        header[0x30] = 0x0A
+        header[0x31] = 0x1A
+        header[EPSEfe.TYPE_AT] = EPSEfe.TYPE_INSTRUMENT
+        const blocks = imageBytes / EPSEfe.BLOCK_BYTES
+        header[EPSEfe.SIZE_BLOCKS_AT] = (blocks >> 8) & 0xFF
+        header[EPSEfe.SIZE_BLOCKS_AT + 1] = blocks & 0xFF
+        header[EPSEfe.SIZE_BLOCKS_REPEAT_AT] = (blocks >> 8) & 0xFF
+        header[EPSEfe.SIZE_BLOCKS_REPEAT_AT + 1] = blocks & 0xFF
+        header[EPSEfe.MACHINE_AT] = original
+            ? EPSEfe.MACHINE_ORIGINAL : EPSEfe.MACHINE_16_PLUS
+
+        const out = new Uint8Array(EPSEfe.HEADER_BYTES + imageBytes)
+        out.set(header, 0)
+        out.set(image, EPSEfe.HEADER_BYTES)
+        return { bytes: out, lost, blocks }
+    }
+
+    /***
      * The effect, which a file can answer and the synth cannot.
      *
      * THE ALGORITHM NAME IS NOT READABLE OVER MIDI BY ANY ROUTE — see readEffect

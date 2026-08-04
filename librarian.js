@@ -28,13 +28,7 @@ const LIBRARIAN_BYTES_PER_SECOND = 1353
  * What each unbuilt button is waiting on. Shown as its tooltip, so the roadmap
  * lives on the thing it describes rather than in a document nobody opens.
  */
-const LIBRARIAN_NOT_YET = {
-    saveToEfe: "Not built yet. Writing an EFE means reproducing the EPS's own allocator: "
-        + "where each object sits, how much slack follows it, and five words of bookkeeping "
-        + "per object of which two are linked list pointers whose rules are not yet known. "
-        + "A .epswave backup holds everything an EFE would, so one can be generated from a "
-        + "saved backup later without going near the synth again."
-}
+const LIBRARIAN_NOT_YET = {}
 
 const librarian = {
     eps: null,
@@ -324,39 +318,9 @@ const librarian = {
         const button = $("#saveOwn")
         button.prop("disabled", true)
         $("#saveOwnSpinner").show()
-        const started = Date.now()
         try{
             if(!librarian.hasAllAudio(inventory)){
-                const seconds = inventory.wireBytes / LIBRARIAN_BYTES_PER_SECOND
-                const estimate = seconds < 90 ? `${Math.round(seconds)} seconds`
-                    : `about ${(seconds / 60).toFixed(0)} minutes`
-                if(!window.confirm(`Read the audio of "${inventory.instrument.name}" `
-                        + `off the EPS?\n\n`
-                        + `${inventory.audioSamples.toLocaleString()} samples, which takes `
-                        + `${estimate}. Leave the synth alone while it runs.\n\n`
-                        + `The parameters are already in hand; this is the wavedata.`)){
-                    return
-                }
-                const result = await librarian.eps.downloadAudio(inventory,
-                    (percent, what) => {
-                        const gone = (Date.now() - started) / 1000
-                        const left = percent > 2 ? ` — about ${Math.max(1,
-                            Math.round((gone / percent) * (100 - percent) / 60))} min left` : ""
-                        $("#librarianStatus").removeClass("alert-danger alert-success")
-                            .addClass("alert-secondary")
-                            .html(`Reading: ${escapeHtml(what)} … ${percent}%${left}`).show()
-                    })
-                window.log(result.message)
-                // A partial read is kept and offered rather than discarded. It
-                // took twenty minutes to get and it is still most of an
-                // instrument; what is missing is named in the file and in the
-                // log, and the WAV buttons will show what did arrive.
-                inventory.audio = result.audio
-                if(!result.ok && !window.confirm(`${result.message}\n\n`
-                        + `Save what did come back anyway?`)){
-                    librarian.render(inventory)
-                    return
-                }
+                if(!await librarian.fetchAudio(inventory)) return
             }
 
             const clean = (text) => String(text).replace(/[^A-Za-z0-9._-]+/g, "-")
@@ -387,6 +351,100 @@ const librarian = {
             $("#saveOwnSpinner").hide()
             button.prop("disabled", false)
         }
+    },
+
+    /***
+     * Save instrument to an Ensoniq .EFE.
+     *
+     * UNTESTED ON HARDWARE, and the button says so, because there is no way to
+     * test it here: the writer reproduces the EPS's allocator from measurements
+     * of 42 of its own files, and only the synth can say whether it agrees.
+     * Everything that can be checked without it has been — see epsEfe.js.
+     *
+     * Like saving a .epswave, this fetches the audio first if it is not already
+     * in hand.
+     */
+    async saveToEfe(){
+        const inventory = librarian.current
+        if(!inventory){
+            $("#librarianStatus").removeClass("alert-secondary alert-success")
+                .addClass("alert-danger").html("Open an instrument first.").show()
+            return
+        }
+        const button = $("#saveToEfe")
+        button.prop("disabled", true)
+        $("#saveToEfeSpinner").show()
+        try{
+            if(!librarian.hasAllAudio(inventory)){
+                if(!await librarian.fetchAudio(inventory)) return
+            }
+            const audio = new Map()
+            for(const ws of inventory.wavesamples){
+                const samples = librarian.audioFor(inventory, ws.number)
+                if(samples) audio.set(ws.number, samples)
+            }
+            const written = EPSEfe.write(inventory, audio)
+            // Ensoniq disk names are eight characters and upper case.
+            const stem = String(inventory.instrument.name || "INST")
+                .toUpperCase().replace(/[^A-Z0-9-]+/g, "").slice(0, 8) || "INST"
+            const name = `${stem}.EFE`
+            EPSWaveUI.download(new Blob([written.bytes],
+                { type: "application/octet-stream" }), "application/octet-stream", name)
+            for(const note of written.lost) window.log(`Note: ${note}`)
+            const message = `Saved ${name}: ${written.blocks} blocks, `
+                + `${written.bytes.length.toLocaleString()} bytes`
+            window.log(message)
+            librarian.render(inventory)
+            $("#librarianStatus").removeClass("alert-secondary alert-danger")
+                .addClass("alert-success")
+                .html(`${escapeHtml(message)}. <b>This has not been tested on hardware
+                    yet</b> — please report whether the EPS loads it.`
+                    + (written.lost.length
+                        ? `<br><small>${written.lost.map(escapeHtml).join("<br>")}</small>`
+                        : "")).show()
+        }catch(error){
+            window.log(`Error: ${error.message}`)
+            $("#librarianStatus").removeClass("alert-secondary alert-success")
+                .addClass("alert-danger").html(escapeHtml(error.message)).show()
+        }finally{
+            $("#saveToEfeSpinner").hide()
+            button.prop("disabled", false)
+        }
+    },
+
+    /***
+     * Reads the audio off the synth onto an inventory, asking first, because it
+     * is the twenty minute part. Shared by both save buttons. Returns whether
+     * there is now enough to write a file.
+     */
+    async fetchAudio(inventory){
+        const seconds = inventory.wireBytes / LIBRARIAN_BYTES_PER_SECOND
+        const estimate = seconds < 90 ? `${Math.round(seconds)} seconds`
+            : `about ${(seconds / 60).toFixed(0)} minutes`
+        if(!window.confirm(`Read the audio of "${inventory.instrument.name}" off the EPS?\n\n`
+                + `${inventory.audioSamples.toLocaleString()} samples, which takes `
+                + `${estimate}. Leave the synth alone while it runs.\n\n`
+                + `The parameters are already in hand; this is the wavedata.`)){
+            return false
+        }
+        const started = Date.now()
+        const result = await librarian.eps.downloadAudio(inventory, (percent, what) => {
+            const gone = (Date.now() - started) / 1000
+            const left = percent > 2 ? ` — about ${Math.max(1,
+                Math.round((gone / percent) * (100 - percent) / 60))} min left` : ""
+            $("#librarianStatus").removeClass("alert-danger alert-success")
+                .addClass("alert-secondary")
+                .html(`Reading: ${escapeHtml(what)} … ${percent}%${left}`).show()
+        })
+        window.log(result.message)
+        // A partial read is kept and offered rather than discarded. It took
+        // twenty minutes to get and it is still most of an instrument.
+        inventory.audio = result.audio
+        if(!result.ok && !window.confirm(`${result.message}\n\nSave what did come back anyway?`)){
+            librarian.render(inventory)
+            return false
+        }
+        return true
     },
 
     /***
@@ -718,6 +776,7 @@ $(document).ready(function(){
         this.value = ""
     })
     $("#saveOwn").click(() => librarian.saveToOwn())
+    $("#saveToEfe").click(() => librarian.saveToEfe())
     $("#readOwn").click(() => $("#ownFile").click())
     $("#ownFile").change(function(){
         if(this.files && this.files[0]) librarian.readFromOwn(this.files[0])
