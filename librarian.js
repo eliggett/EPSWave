@@ -144,7 +144,22 @@ const librarian = {
         // — so saying where to find it beats leaving a blank that looks like a
         // bug. Only the MIDI path has any of this; an EFE carries an effect
         // block but there is nothing yet that decodes it.
-        if(inventory.effect && inventory.effect.readable){
+        if(inventory.source == "efe" && inventory.effect){
+            // The one thing a file can say and the synth cannot. Worth showing
+            // prominently: it is the only way to know which algorithm to
+            // reselect by hand after sending the instrument across.
+            const fx = inventory.effect
+            html += `<div class="alert alert-secondary py-2 mb-3"><small>
+                <b>Effect &mdash; ${escape(fx.name)}.</b>
+                Effects are not sent to the synth: the algorithm cannot be selected over
+                MIDI. Set it by hand at <i>Edit &rarr; Effect</i> after the transfer.
+                ${fx.innerNames.length ? `<br>The block also names
+                    ${fx.innerNames.map(n => `<b>${escape(n)}</b>`).join(", ")}
+                    &mdash; probably its variations, though the specification counts four
+                    and there are ${fx.innerNames.length} &mdash; and is currently on
+                    setting ${fx.currentVariation}.` : ""}
+            </small></div>`
+        }else if(inventory.effect && inventory.effect.readable){
             const raw = inventory.effect.parameters
                 .map(p => `<code>${p.item.toString(16).padStart(2, "0")}</code>:${p.value}`)
                 .join(" &nbsp;")

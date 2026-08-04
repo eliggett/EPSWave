@@ -178,6 +178,92 @@ class EPSEfe {
     }
 
     /***
+     * The effect, which a file can answer and the synth cannot.
+     *
+     * THE ALGORITHM NAME IS NOT READABLE OVER MIDI BY ANY ROUTE — see readEffect
+     * in eps.js for the two places the specification says so. On disk it is
+     * simply there: the effect is an object like any other, and word 5 onwards
+     * is its name in the usual one character per high byte.
+     *
+     * Of the 42 instrument files here exactly one, JUCOSMOP.EFE, carries an
+     * effect block, so everything below rests on a single specimen. It reads
+     * cleanly and every field lands where Appendix B's `effect definition` says
+     * it should, which is why it is here at all — but one specimen is one
+     * specimen, and anything that does not look right is dropped rather than
+     * shown.
+     *
+     * Byte offsets from the start of the object, per Appendix B:
+     *
+     *   0   effect_block_size, effect_ptr_offset, effect_ptr_more,
+     *       effect_version_num — the same five words of header every object has
+     *   10  effect_name, 12 characters
+     *   34  effect_size, a 32 bit byte count "incl. ucode"
+     *   38  the microcode and parameter page pointers, of no use here
+     *   60  effect_fx1_name, effect_fx2_name, effect_fx3_name, 13 bytes each,
+     *       NUL terminated plain ASCII rather than the high byte encoding
+     *   99  effect_current_var
+     */
+    static EFFECT_NAME_WORD = 5
+    static EFFECT_SIZE_AT = 34
+    static EFFECT_INNER_NAMES_AT = 60
+    static EFFECT_INNER_NAME_BYTES = 13
+    static EFFECT_INNER_NAME_COUNT = 3
+    static EFFECT_CURRENT_VARIATION_AT = 99
+    static EFFECT_OBJECT_BYTES = 100
+
+    static readEffect(file, instrument){
+        if(!instrument.hasEffect) return null
+        const at = instrument.effectOffset
+        if(at + EPSEfe.EFFECT_OBJECT_BYTES > file.image.length) return null
+
+        const words = file.words.subarray(at >> 1)
+        const name = EPSBlocks.readName(words, EPSEfe.EFFECT_NAME_WORD)
+        // An offset that survived the bounds check but points at audio would
+        // still give a "name". Requiring it to be printable and non-empty is
+        // what tells the two apart.
+        if(!/^[\x20-\x7E]+$/.test(name) || name.trim() == "") return null
+
+        const byte = (i) => file.image[at + i]
+        const text = (from, length) => {
+            let out = ""
+            for(let i = 0; i < length; i++){
+                const code = byte(from + i)
+                if(code == 0) break
+                out += (code >= 0x20 && code <= 0x7E) ? String.fromCharCode(code) : " "
+            }
+            return out.trim()
+        }
+        const inner = []
+        for(let i = 0; i < EPSEfe.EFFECT_INNER_NAME_COUNT; i++){
+            const one = text(EPSEfe.EFFECT_INNER_NAMES_AT
+                + i * EPSEfe.EFFECT_INNER_NAME_BYTES, EPSEfe.EFFECT_INNER_NAME_BYTES)
+            if(one) inner.push(one)
+        }
+        return {
+            name: name.trim(),
+            // Appendix B: "total size in bytes, incl. ucode".
+            sizeBytes: (byte(EPSEfe.EFFECT_SIZE_AT) << 24)
+                | (byte(EPSEfe.EFFECT_SIZE_AT + 1) << 16)
+                | (byte(EPSEfe.EFFECT_SIZE_AT + 2) << 8) | byte(EPSEfe.EFFECT_SIZE_AT + 3),
+            /***
+             * The three names inside the block, reported as what they are and
+             * not as what they look like.
+             *
+             * In the one file to hand they are "JUST REVERB", "MORE REVERB" and
+             * "ALSO REVERB" inside an effect called "HALL REVERB", which reads
+             * exactly like a list of variations. But section 9 gives the
+             * Variation parameter as "0-3 (Variations 1-4)" and there are three
+             * of these, so either the algorithm's own name is the fourth or
+             * they are not the variations at all. One specimen cannot settle
+             * it, so they are shown verbatim and left unlabelled.
+             */
+            innerNames: inner,
+            currentVariation: byte(EPSEfe.EFFECT_CURRENT_VARIATION_AT),
+            offset: at
+        }
+    }
+
+    /***
      * Everything inside an instrument file, in the shape getInstrumentInventory
      * returns for the same instrument read over MIDI, so one renderer serves
      * both.
@@ -217,6 +303,7 @@ class EPSEfe {
             .reduce((sum, ws) => sum + ws.sampleEnd, 0)
 
         return { source: "efe", file, instrument, layers, wavesamples, audioSamples,
+            effect: EPSEfe.readEffect(file, instrument),
             // Three MIDI bytes carry one 16 bit sample, section 2.3. Only of
             // interest here as an estimate of what sending this to the synth
             // would cost.

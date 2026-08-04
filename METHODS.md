@@ -1010,9 +1010,40 @@ reported as raw numbers rather than labelled: item `03` is Decay Time in a rever
 and something else entirely in a delay, and naming them without knowing which
 algorithm is loaded would be inventing information.
 
-Whether an instrument on the synth even has an effect to read is untested. None
-of the 41 instrument files in `reference/disks` contains an effect block, which
-suggests the effect may belong to the bank rather than the instrument.
+### Off MIDI it is all readable, and this was wrong for a while
+
+None of the above applies to a file. **An `.EFE` carries the effect as an object
+like any other, and its name is simply there** — word 5 onwards, one character
+per high byte, the same encoding as every instrument, layer and wavesample name.
+`EPSEfe.readEffect` reads it.
+
+This section previously said no file here contained an effect block. That was
+true of the files here at the time and is no longer: `JUCOSMOP.EFE` carries one,
+and every field lands where Appendix B's `effect definition` says it should.
+
+```
+HALL REVERB        the object's name, at byte 10
+1654 bytes         effect_size at byte 34, "total size in bytes, incl. ucode"
+JUST REVERB        effect_fx1_name at byte 60, 13 bytes, plain NUL terminated ASCII
+MORE REVERB        effect_fx2_name
+ALSO REVERB        effect_fx3_name
+0                  effect_current_var at byte 99
+```
+
+Those three inner names read exactly like a list of variations, and they are
+still not labelled as such: section 9 gives the Variation parameter as "0-3
+(Variations 1-4)" and there are three of them, so either the algorithm's own name
+is the fourth or they are something else. **One file with an effect is one
+specimen.** The name is shown because it is the object's name field and that
+convention is not in doubt; the rest is shown verbatim and left to the reader.
+
+So the algorithm a patch was built with *can* be recovered — from the disk file,
+never from the synth. Which is enough, because it is only needed to reselect the
+effect by hand after a restore.
+
+Whether an instrument on the synth even has an effect to read is still untested,
+and 41 of the 42 files here having none still suggests the effect usually belongs
+to the bank rather than the instrument.
 
 ### Time is the real constraint
 
