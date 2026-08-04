@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>EPSWave Librarian: Ensoniq EPS-16+ instrument backup</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.3.0/css/regular.min.css"
+        integrity="sha512-3YMBYASBKTrccbNMWlnn0ZoEOfRjVs9qo/dlNRea196pg78HaO0H/xPPO2n6MIqV6CgTYcWJ1ZB2EgWjeNP6XA=="
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.3.0/js/all.min.js"
+        integrity="sha512-2bMhOkE/ACz21dJT8zBOMgMecNxx0d37NND803ExktKiKdSzdwn+L7i9fdccw/3V06gM/DBWKbYmQvKMdAA9Nw=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.2.1/dist/css/bootstrap.min.css"
+        integrity="sha384-GJzZqFGwb1QTTN6wy59ffF1BuGJpLSa9DkKMp0DgiMDm4iYMj70gZWKYbI706tWS" crossorigin="anonymous">
+    <link rel="stylesheet" href="./epswave.css">
+    <script src="./epsBlocks.js"></script>
+    <script src="./epsEfe.js"></script>
+    <script src="./eps.js"></script>
+    <script src="./waveGen.js"></script>
+    <script src="./about.js"></script>
+    <script src="./epswave.js"></script>
+    <script>
+        // Settled before the first paint, and in plain DOM, so the theme cannot
+        // be taken out by anything else on the page failing.
+        EPSWaveUI.bootTheme()
+    </script>
+</head>
+
+<body class="dark">
+    <script>EPSWaveUI.applyBootTheme()</script>
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-sm d-flex align-items-center">
+                <button type="button" class="btn btn-outline-info btn-sm mr-3 flex-shrink-0"
+                    data-toggle="modal" data-target="#aboutModal">
+                    <i class="fa-solid fa-circle-info"></i> About
+                </button>
+                <!-- Deliberately destructive, so it is styled as such and
+                     confirms before doing anything. -->
+                <button type="button" id="deleteAll" class="btn btn-outline-danger btn-sm mr-3 flex-shrink-0"
+                    title="Delete every instrument on the EPS and select slot 1. For testing.">
+                    <i class="fa-regular fa-trash-can"></i> Clear synth
+                    <span id="deleteAllSpinner" class="spinner-border spinner-border-sm"
+                        role="status" aria-hidden="true" style="display:none"></span>
+                </button>
+                <h5 class="mb-0">Patch Librarian</h5>
+            </div>
+            <div class="col-sm-auto">
+                <a href="./index.html" class="btn btn-outline-secondary btn-sm">
+                    <i class="fa-solid fa-wave-square"></i> Wavesample editor
+                </a>
+            </div>
+            <div class="col-sm-auto">
+                <div class="custom-control custom-switch">
+                    <input type="checkbox" class="custom-control-input" id="darkMode" checked>
+                    <label class="custom-control-label" for="darkMode">Dark mode</label>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-sm">
+                <div class="alert alert-secondary mt-2 mb-0 py-2">
+                    <small>
+                        Copies a whole instrument &mdash; its parameters, every layer, every
+                        wavesample and all of the audio &mdash; between the EPS-16 PLUS, an
+                        Ensoniq <code>.EFE</code> disk file and a file on this computer.
+                        Enable sysex on the synth first:
+                        <i>Edit &rarr; System-MIDI &rarr; Sysex-MIDI</i>, set to ON.
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <div class="row" id="midiUnsupported" style="display:none">
+            <div class="col-sm">
+                <div class="alert alert-warning mt-3" role="alert">
+                    <b>This browser does not support Web MIDI</b>, so nothing can be read from
+                    or written to the EPS16+ here. Use Chrome or another Chromium based browser
+                    for that. Opening and inspecting <code>.EFE</code> disk files still works.
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-3">
+            <div class="col-sm">
+                <div class="card">
+                    <div class="card-header">Select MIDI Ports:</div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-sm">
+                                <div class="input-group mb-3">
+                                    <div class="input-group-prepend">
+                                        <label class="input-group-text" for="midiIn">Midi Input</label>
+                                    </div>
+                                    <select id="midiIn" class="custom-select"></select>
+                                </div>
+                            </div>
+                            <div class="col-sm">
+                                <div class="input-group mb-3">
+                                    <div class="input-group-prepend">
+                                        <label class="input-group-text" for="midiOut">Midi Output</label>
+                                    </div>
+                                    <select id="midiOut" class="custom-select"></select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-sm-4">
+                                <button id="testConnection" class="btn btn-primary btn-block"><i
+                                        class="fa-solid fa-plug-circle-check"></i> Test Connection
+                                    <span id="testConnectionSpinner" class="spinner-border spinner-border-sm"
+                                        role="status" aria-hidden="true" style="display:none"></span>
+                                </button>
+                            </div>
+                            <div class="col-sm">
+                                <div id="testConnectionResult" class="alert alert-secondary mb-0 py-2"
+                                    style="display:none"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- The six actions, grouped by what is on the other end. Four of them
+             are disabled; librarian.js gives each one a tooltip saying what it
+             is waiting on. They are shown rather than hidden because "what is
+             not built yet" is useful information on a page like this. -->
+        <div class="row mt-3">
+            <div class="col-sm">
+                <div class="card">
+                    <div class="card-header">Move an instrument</div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-4 mb-3">
+                                <h6><i class="fa-solid fa-keyboard"></i> EPS-16 PLUS</h6>
+                                <div class="input-group input-group-sm mb-2">
+                                    <div class="input-group-prepend">
+                                        <label class="input-group-text" for="instNum">Instrument</label>
+                                    </div>
+                                    <select id="instNum" class="custom-select"></select>
+                                </div>
+                                <button id="readFromEps" class="btn btn-primary btn-block btn-sm mb-2">
+                                    <i class="fa-solid fa-download"></i> Read instrument from EPS
+                                    <span id="readFromEpsSpinner" class="spinner-border spinner-border-sm"
+                                        role="status" aria-hidden="true" style="display:none"></span>
+                                </button>
+                                <button id="saveToEps" class="btn btn-warning btn-block btn-sm">
+                                    <i class="fa-solid fa-upload"></i> Save instrument to EPS
+                                    <span id="saveToEpsSpinner" class="spinner-border spinner-border-sm"
+                                        role="status" aria-hidden="true" style="display:none"></span>
+                                </button>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <h6><i class="fa-solid fa-floppy-disk"></i> Ensoniq disk file</h6>
+                                <p class="text-muted mb-2"><small><code>.EFE</code>, the format
+                                    Ensoniq disk images and the existing library tools use.</small></p>
+                                <button id="readFromEfe" class="btn btn-primary btn-block btn-sm mb-2">
+                                    <i class="fa-solid fa-folder-open"></i> Read instrument from disk (EFE)
+                                </button>
+                                <input type="file" id="efeFile" accept=".efe,.EFE" style="display:none">
+                                <button id="saveToEfe" class="btn btn-outline-secondary btn-block btn-sm">
+                                    <i class="fa-solid fa-file-export"></i> Save instrument to EFE
+                                </button>
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <h6><i class="fa-solid fa-file-code"></i> EPSWave file</h6>
+                                <p class="text-muted mb-2"><small>Our own format, so that a backup
+                                    can hold everything even where the hardware format is not yet
+                                    fully understood. Undecided; likely JSON.</small></p>
+                                <button id="readOwn" class="btn btn-outline-secondary btn-block btn-sm mb-2">
+                                    <i class="fa-solid fa-file-import"></i> Read instrument from EPSWave file
+                                </button>
+                                <button id="saveOwn" class="btn btn-outline-secondary btn-block btn-sm">
+                                    <i class="fa-solid fa-file-arrow-down"></i> Save instrument to EPSWave file
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Diagnostics. Sends deliberately altered copies of the
+                             instrument that is open, each changing one thing, so
+                             that a failure can be pinned on a single variable in
+                             seconds rather than in five minute transfers. -->
+                        <hr>
+                        <p class="mb-1"><small><b>Test patches</b> &mdash; built from the
+                            instrument opened above, each changing one thing. Use these to
+                            work out why a particular instrument will not restore.</small></p>
+                        <div class="btn-group btn-group-sm mb-2" role="group">
+                            <button class="btn btn-outline-secondary testVariant" data-variant="dense"
+                                title="Same audio, but wavesamples renumbered 1, 2, 3 ... instead of whatever the file uses. Tests whether a gap in the numbering is the problem.">
+                                Dense numbering
+                            </button>
+                            <button class="btn btn-outline-secondary testVariant" data-variant="short"
+                                title="Same wavesample numbers, but every wavesample cut to 2000 samples. Tests whether the size of the earlier uploads is the problem.">
+                                Short audio
+                            </button>
+                            <button class="btn btn-outline-secondary testVariant" data-variant="both"
+                                title="Dense numbering and short audio together. This one should restore; if it does not, neither variable is the cause.">
+                                Both
+                            </button>
+                        </div>
+                        <div id="librarianStatus" class="alert alert-secondary mb-0 py-2"
+                            style="display:none"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-3" id="inventoryCard" style="display:none">
+            <div class="col-sm">
+                <div class="card">
+                    <div class="card-header">Instrument contents</div>
+                    <div class="card-body">
+                        <div id="inventory"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row mt-3">
+            <div class="col-sm">
+                <div class="card">
+                    <div class="card-header">Event Log</div>
+                    <div class="card-body">
+                        <div class="form-row mb-2">
+                            <div class="col-auto">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="logMidi">
+                                    <label class="form-check-label" for="logMidi">
+                                        Show MIDI traffic (<code>-&gt;</code> sent, <code>&lt;-</code> received)
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="logDebug">
+                                    <label class="form-check-label" for="logDebug">Debug output</label>
+                                </div>
+                            </div>
+                            <div class="col-auto">
+                                <button id="clearLog" class="btn btn-outline-secondary btn-sm py-0"><i
+                                        class="fa-regular fa-trash-can"></i> Clear Log</button>
+                            </div>
+                            <div class="col-auto">
+                                <button id="expandLog" class="btn btn-outline-secondary btn-sm py-0"><span
+                                        id="expandLogIcon"><i
+                                            class="fa-solid fa-up-right-and-down-left-from-center"></i></span>
+                                    <span id="expandLogLabel">Expand</span></button>
+                            </div>
+                            <div class="col-auto">
+                                <button id="exportLog" class="btn btn-outline-secondary btn-sm py-0"><i
+                                        class="fa-solid fa-file-arrow-down"></i> Export...</button>
+                            </div>
+                        </div>
+                        <div class="form-group mb-0">
+                            <textarea class="form-control" id="log" rows="9"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- About. Only the frame lives here; everything inside comes from
+         about.js, so that is the one file to edit to change what it says. -->
+    <div class="modal fade" id="aboutModal" tabindex="-1" role="dialog"
+        aria-labelledby="aboutModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title mb-0" id="aboutModalLabel">About EPSWave</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body" id="aboutBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Same versions and the same CDN as index.html. librarian.js comes after
+         them because it wires everything up on $(document).ready. -->
+    <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"
+        integrity="sha384-q8i/X+965DzO0rT7abK41JStQIAqVgRVzpbzo5smXKp4YfRvH+8abtTE1Pi6jizo"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/popper.js@1.14.6/dist/umd/popper.min.js"
+        integrity="sha384-wHAiFfRlMFy6i5SRaxvfOCifBUQy1xHdJ/yoi7FRNXMRBu5WHdZYu1hA6ZOblgut"
+        crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.2.1/dist/js/bootstrap.min.js"
+        integrity="sha384-B0UglyR+jN6CkvvICOB2joaf5I4l3gm9GU6Hc1og6Ls7i6U/mkkaduKaBhlAXv9k"
+        crossorigin="anonymous"></script>
+    <script src="./librarian.js"></script>
+</body>
+
+</html>
