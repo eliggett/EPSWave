@@ -239,18 +239,30 @@ class EPSBlocks {
             midiChannel: EPSBlocks.hi(words, 12),
             midiProgram: EPSBlocks.hi(words, 13),
             pressureMode: EPSBlocks.hi(words, 14),
-            // Section 7.1: "1 Block = 256 words". The same block as the free
-            // memory figure ping() reads, which is what would make this the
-            // pre-flight test for whether an instrument fits before spending
-            // twenty minutes finding out that it does not.
-            //
-            // DO NOT TRUST IT FROM A FILE. In a 517 block instrument on disk
-            // this field reads 1, and words 13 through 16 all read the same
-            // 0x0100, which is what an unmaintained field looks like. The size
-            // is presumably filled in when the instrument is loaded into RAM,
-            // so the value may well be right over MIDI — untested, no hardware
-            // here. For a file, count the image instead.
-            sizeBlocks: EPSBlocks.hi(words, 15),
+            /***
+             * Section 7.1: "1 Block = 256 words". The same block as the free
+             * memory figure ping() reads, which is what would make this the
+             * pre-flight test for whether an instrument fits before spending
+             * twenty minutes finding out that it does not.
+             *
+             * THE WHOLE WORD, NOT THE HIGH BYTE, WHICH IS THE ONE EXCEPTION
+             * IN THE BLOCK. Appendix B's group header says "use high byte" and
+             * this field sits under it, so it was read that way at first and
+             * gave 1 for a 517 block instrument. Arensburger's library reads
+             * it as a full word, and the original EPS files settle it: four of
+             * them hold 264, 296, 288 and 304 against file sizes of 268, 301,
+             * 295 and 307 blocks. The few blocks of difference are the object
+             * headers the field does not count. As a high byte those same four
+             * would read 1, 1, 1 and 1.
+             *
+             * STILL DO NOT TRUST IT FROM AN EPS-16 PLUS FILE. There it is
+             * right in some files (227 against 224) and 0x0100 in others whose
+             * real size is 133 or 517 — an unmaintained field, presumably
+             * filled in when the instrument is loaded into RAM. The original
+             * EPS maintains it; the EPS-16 PLUS does not. For a file, count
+             * the image instead.
+             */
+            sizeBlocks: words[15],
             midiStatus: EPSBlocks.hi(words, 16),
             patches: [EPSBlocks.hi(words, 17), EPSBlocks.hi(words, 18),
                       EPSBlocks.hi(words, 19), EPSBlocks.hi(words, 20)],
@@ -337,6 +349,83 @@ class EPSBlocks {
     }
 
     /***
+     * ORIGINAL EPS INSTRUMENTS, AND WHY ALMOST NOTHING HAS TO BE TRANSLATED
+     *
+     * Word 25 of the instrument block is $FFFF on an EPS-16 PLUS and something
+     * else on an original EPS, and an .EFE written by either machine will turn
+     * up in the file picker. The obvious fear is that the two machines lay
+     * their blocks out differently, in which case reading an original EPS file
+     * with these decoders would be nonsense that happens to parse.
+     *
+     * It is not. Three independent things say the layout is the same:
+     *
+     * 1. Appendix B names the EPS-16 PLUS additions. Every field it added is a
+     *    `wsp_` or `layer_..._modamt` byte sharing a word with an older `ws_`
+     *    field, and the layer's delay is marked "This is a WORD in EPS-16 PLUS
+     *    ONLY". Nothing was inserted, moved or resized; the additions all went
+     *    into low bytes the original EPS left empty.
+     *
+     * 2. Arensburger's library, written for an original EPS in 1992, reads and
+     *    writes 323, 107 and 139 word blocks for both machines from one code
+     *    path, differing only in which halves of a handful of words it looks
+     *    at.
+     *
+     * 3. Every original EPS file to hand agrees with itself. Across both
+     *    families, 5398 layer map entries name a wavesample whose own declared
+     *    key range contains the key the map entry stands for — with the map at
+     *    word 19 and the first entry at MIDI key 21, exactly as on the EPS-16
+     *    PLUS. A layout that had shifted by even one word could not do that.
+     *
+     * And in all 13 original EPS wavesamples examined, every low byte of every
+     * word is zero. So the EPS-16 PLUS reads its own additions as 0, which is
+     * "off", "none" or "centre" for each of them. That is the right answer.
+     *
+     * Which leaves exactly one field that means different things on the two
+     * machines, below.
+     */
+
+    /***
+     * Section 7.3 word 105, whose two halves belong to two different machines.
+     *
+     * The specification calls it "high byte = unused; low byte = Pan Position".
+     * Appendix B is more forthcoming: `ws_pan` in the high byte, commented "old
+     * m2 pan", and `wsp_pan` in the low byte. The original EPS's pan lives in
+     * the high byte and the EPS-16 PLUS ignores it.
+     *
+     * So an original EPS block sent unchanged to an EPS-16 PLUS arrives with a
+     * pan of 0. That is centre — section 9 gives the range as -99 to +99 — so
+     * nothing is broken either way, and in these four files the high byte is 3
+     * in all 13 wavesamples, which is centre in anything. The high byte is 3 in
+     * all 62 EPS-16 PLUS wavesamples too, so it is equally possible that it is
+     * simply a constant neither machine writes.
+     *
+     * Copying it across regardless is what Arensburger does — putws.c sends
+     * `(pan_pos << 8) | pan_pos`, the same value in both halves, from someone
+     * who had the hardware to check on. It is right if the scales match, and
+     * off by a rounding error against a centre of 0 if they do not.
+     */
+    static WS_PAN_WORD = 105
+
+    /***
+     * Rewrites one original EPS wavesample block as an EPS-16 PLUS one, in
+     * place. Returns what it changed, or null if there was nothing to do.
+     *
+     * The high byte is left where it is rather than cleared. The EPS-16 PLUS
+     * does not read it, and leaving it means the block still says what the
+     * original EPS meant.
+     */
+    static adaptWavesampleToEps16Plus(block){
+        const at = EPSBlocks.WS_PAN_WORD
+        const original = (block[at] >> 8) & 0xFF
+        // Only fills a gap. A low byte that already holds something was not
+        // written by an original EPS, whatever word 25 says, and guessing over
+        // the top of it would be worse than leaving it alone.
+        if(original == 0 || (block[at] & 0xFF) != 0) return null
+        block[at] = (block[at] & 0xFF00) | original
+        return { word: at, pan: original }
+    }
+
+    /***
      * Section 7.3. Only the fields an inventory needs are decoded; the envelopes
      * of words 14 to 79 are left alone, since nothing yet displays them and a
      * backup keeps the raw block anyway.
@@ -358,7 +447,9 @@ class EPSBlocks {
             fineTune: EPSBlocks.signedHi(words, 86),
             volume: EPSBlocks.hi(words, 99),
             outputBus: EPSBlocks.lo(words, 99),
-            pan: EPSBlocks.lo(words, 105),
+            pan: EPSBlocks.lo(words, EPSBlocks.WS_PAN_WORD),
+            // The other machine's pan. See WS_PAN_WORD.
+            originalPan: EPSBlocks.hi(words, EPSBlocks.WS_PAN_WORD),
             loopMode: EPSBlocks.hi(words, 114),
             sampleStart: EPSBlocks.readSampleOffset(words, 115) >>> 9,
             sampleEnd: EPSBlocks.readSampleOffset(words, 119) >>> 9,

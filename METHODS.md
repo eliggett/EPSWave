@@ -679,14 +679,15 @@ are read first and used to select the right layer before each
 ### Two things the specification does not say
 
 **Where the layer map starts.** Section 7.2 gives 88 entries and never says which
-key the first one is. Measured against the seven instrument files in
-`reference/disks`: **the map starts at MIDI key 21**, which is what an 88 entry
-map should start at, 21 to 108 being the 88 keys of a piano.
+key the first one is. Measured against the instrument files in `reference/disks`:
+**the map starts at MIDI key 21**, which is what an 88 entry map should start at,
+21 to 108 being the 88 keys of a piano.
 
-Every one of the 20 wavesamples in those files begins exactly where the map says
-it does, including one that covers the full 21 to 108. Seventeen of the 20 end
-there too. The three that do not are described next, and they are not a problem
-with the base key.
+Across all 42 files, both machines, **5398 map entries name a wavesample whose
+own declared key range contains the key that entry stands for**. Every wavesample
+begins exactly where the map says it does, including one that covers the full 21
+to 108. Three of them end elsewhere; that is described next, and it is not a
+problem with the base key.
 
 **The layer map outranks the declared key range.** Wavesample words 132 and 133
 give a key range, and the layer map gives one key per wavesample. They are two
@@ -709,13 +710,104 @@ regenerate the map from them would come back with different splits than the
 original for any instrument like these three. The map has to be written, or the
 ranges written and then the map checked and corrected.
 
-**Total Instrument Size in Blocks is not maintained on disk.** Section 7.1 word
-15 is the obvious pre-flight test for whether an instrument will fit in free
-memory. In a 517 block instrument on disk it reads 1, and words 13 through 16 all
-read the same `0x0100`, which is what an unmaintained field looks like. It is
-presumably filled in when the instrument is loaded into RAM, so the value may
-well be right over MIDI — untested, no hardware to hand. For a file, count the
-image.
+**Total Instrument Size in Blocks is a whole word, and the EPS-16 PLUS does not
+maintain it.** Section 7.1 word 15 is the obvious pre-flight test for whether an
+instrument will fit in free memory, and it was misread twice.
+
+It is not a high byte. Appendix B's group header says "use high byte" and word 15
+sits under it, so it was read that way and gave 1 for a 517 block instrument.
+Arensburger's library reads it as a full 16 bit word, and the original EPS files
+settle it: four of them hold 264, 296, 288 and 304 against file sizes of 268,
+301, 295 and 307 blocks, the few blocks of difference being the object headers
+the field does not count. Read as high bytes those four would all be 1.
+
+Even read correctly it cannot be trusted from an EPS-16 PLUS file. There it is
+right in some — 227 against 224 — and `0x0100` in others whose real size is 133
+or 517. The original EPS maintains the field and the EPS-16 PLUS does not. For a
+file, count the image.
+
+## Original EPS instruments
+
+Instrument files written by the original EPS turn up in the same file picker as
+EPS-16 PLUS ones, and they restore to an EPS-16 PLUS through the same code.
+Almost nothing has to be translated, which was not the expectation.
+
+### The two machines lay their blocks out identically
+
+The fear was that the block layouts differ, in which case reading an original EPS
+file with these decoders would produce nonsense that happens to parse. Three
+independent things say otherwise.
+
+**Appendix B names every EPS-16 PLUS addition.** They follow a convention the
+specification never explains: an older field is `ws_something`, and the field the
+EPS-16 PLUS added beside it is `wsp_something` — `ws_volume` and `wsp_bus_select`
+in word 99, `ws_pan` and `wsp_pan` in word 105, `ws_lfo_wave` and `wsp_boost` in
+word 107. The layer's is spelt out in words: `layer_delay`, "This is a WORD in
+EPS-16 PLUS ONLY". **Every addition went into a low byte the original EPS left
+empty. Nothing was inserted, moved or resized.**
+
+**Arensburger's library agrees.** Written for an original EPS in 1992, it reads
+and writes 323, 107 and 139 word blocks for both machines from one code path,
+differing only in which halves of a handful of words it looks at.
+
+**The files agree with themselves.** Across all 42 instrument files here, both
+families, **5398 layer map entries name a wavesample whose own declared key range
+contains the key that map entry stands for** — with the map at word 19 and the
+first entry at MIDI key 21, exactly as on the EPS-16 PLUS. A layout that had
+shifted by one word could not do that once, let alone 5398 times.
+
+And in all 13 original EPS wavesamples here, **every low byte of every word is
+zero**. So the EPS-16 PLUS reads its own additions as 0, which is "off", "none"
+or "centre" for each of them — the right answer in every case.
+
+### The one field that means two things
+
+Section 7.3 word 105 is "high byte = unused; low byte = Pan Position". Appendix B
+says what the unused half used to be: `ws_pan`, commented "old m2 pan". **The
+original EPS keeps its pan in the high byte and the EPS-16 PLUS ignores it.**
+
+Sent unchanged, an original EPS block would arrive with a pan of 0, which is
+centre — section 9 gives the range as -99 to +99 — so nothing would be broken.
+It is carried across anyway, into the low byte, because that is what Arensburger
+does: `putws.c` sends `(pan_pos << 8) | pan_pos`, the same value in both halves,
+from the one person here with the hardware to check on.
+
+Worth knowing: the high byte is 3 in all 13 original EPS wavesamples **and in all
+62 EPS-16 PLUS ones**. So it is equally possible that it is a constant neither
+machine writes and the whole question is moot.
+
+### The audio needs nothing
+
+Appendix B describes the original EPS as 13 bit. Its samples are stored left
+justified in 16 bit words with the low three bits zero — in every original EPS
+wavesample checked, **not one sample in 20,000 has a low bit set** — which is
+exactly the form the EPS-16 PLUS wants. Send it unchanged and it plays as a
+quieter 13 bits of a 16 bit machine. No scaling, no dithering, no conversion.
+
+### What does have to change
+
+One word. Section 7.1 word 25 is the Instrument ID Field, `$FFFF` for an EPS-16
+PLUS. A restore builds an EPS-16 PLUS instrument in an EPS-16 PLUS whatever wrote
+the file, so **the synth's own answer is kept and the file's is dropped**. Every
+other one of the 29 parameter words is overlaid from the file as before.
+
+What is lost is what the original EPS never had: no effect, and no values for the
+mixer and pan modulators, the boost switch, the LFO rate modulation or the layer
+delay. All of that is also true of loading the instrument on the synth from a
+disk.
+
+### The header string does not identify the machine
+
+`reference/disks` is split into `EPS-16/` and `EPS-original/` by word 25, which
+is the field section 7.1 defines for the purpose. The printable string in the
+`.EFE` header sorts them the other way round: the original EPS files all say
+`EPS-16 File:` padded with underscores, and the EPS-16 PLUS files all say
+`Eps File:` padded with spaces.
+
+These files came off the Internet Archive, so the likeliest reading is that the
+header string is the signature of whichever PC utility extracted the disk image
+rather than anything the synth wrote. Either way it is not evidence about the
+machine. **Word 25 is.**
 
 ## Whole instrument backup and restore
 
@@ -746,9 +838,9 @@ supplies.
 
 So an instrument's original wavesample numbering **cannot be reproduced**, and
 any restore that tries will work by luck whenever the file happens to number its
-wavesamples 1, 2, 3 … and fail whenever it does not. Of the 37 EPS-16 PLUS
-instruments in `reference/disks`, exactly one — `CS-80STR.EFE`, numbered 1, 2,
-17, 18 — does not, which is why this stayed hidden for so long.
+wavesamples 1, 2, 3 … and fail whenever it does not. Of the 42 instruments in
+`reference/disks`, exactly one — `CS-80STR.EFE`, numbered 1, 2, 17, 18 — does
+not, which is why this stayed hidden for so long.
 
 **The numbers are learned instead.** Each object is created, the instrument's
 pointer table is read before and after, and whatever slot appeared is what the

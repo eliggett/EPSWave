@@ -468,6 +468,9 @@ class EPS16 {
      * instrument and only the 29 parameter words are overlaid.
      */
     static RESTORE_PARAMETER_WORDS = 29
+    // Section 7.1 word 25, the Instrument ID Field. The one word of those 29
+    // that is not overlaid; see the merge at the end of uploadInstrument.
+    static INSTRUMENT_ID_WORD = 25
     static RESTORE_SETTLE_MS = 2000
 
     /***
@@ -604,12 +607,34 @@ class EPS16 {
         const report = { ok: false, instrument: -1, message: "", uploaded: 0, copied: 0 }
         const say = (percent, what) => progressCallback(percent, what)
 
-        if(!inventory.instrument.isEps16Plus){
-            report.message = "This is an original EPS instrument, not an EPS-16 PLUS one. "
-                + "The command specification covers only the EPS-16 PLUS, and the layer "
-                + "block differs between them, so sending this has not been attempted."
-            return report
+        /***
+         * Original EPS instruments go the same way as EPS-16 PLUS ones.
+         *
+         * The two machines lay their parameter blocks out identically — see
+         * the long note above WS_PAN_WORD in epsBlocks.js for the evidence —
+         * and the EPS-16 PLUS's own additions all live in low bytes that an
+         * original EPS leaves at zero, which is the sensible default for every
+         * one of them. So the blocks need one field moved and nothing else.
+         *
+         * The audio needs nothing at all. Appendix B describes the original
+         * EPS as 13 bit, and its samples are stored left justified in 16 bit
+         * words with the low three bits zero, which is exactly what the
+         * EPS-16 PLUS wants: in every original EPS wavesample examined not one
+         * sample in 20,000 has a low bit set. Sending it unchanged is right,
+         * and it will simply be a quieter 13 bits of a 16 bit machine.
+         *
+         * What is lost is what the original EPS never had: no effect, and no
+         * value for any of the EPS-16 PLUS-only parameters. Both are also true
+         * of loading the instrument on the synth from a disk.
+         */
+        const original = !inventory.instrument.isEps16Plus
+        if(original){
+            this.successCallback("Success: This is an original EPS instrument. Its layers "
+                + "and wavesamples transfer as they are — the two machines use the same "
+                + "block layout — and the EPS-16 PLUS-only parameters take their default "
+                + "values.")
         }
+
         const layers = inventory.layers
         const sources = inventory.wavesamples.filter(ws => !ws.isCopy)
         const copies = inventory.wavesamples.filter(ws => ws.isCopy)
@@ -851,6 +876,14 @@ class EPS16 {
             if(ws.isCopy){
                 block[12] = (remap(ws.copyNumber) << 8) | (block[12] & 0x00FF)
             }
+            if(original){
+                const moved = EPSBlocks.adaptWavesampleToEps16Plus(block)
+                if(moved){
+                    this.debug(`wavesample ${ws.number}: carried the original EPS pan `
+                        + `${moved.pan} into the low byte of word ${moved.word}, which is `
+                        + `where the EPS-16 PLUS keeps it`)
+                }
+            }
             this.setLayerNumber(ws.layer == null ? layers[0].number : ws.layer)
             this.setWavesampleNumber(remap(ws.number))
             if(!await this.putParamBlock(EPS16.BLOCK_WAVESAMPLE, block)){
@@ -884,6 +917,15 @@ class EPS16 {
         if(fresh.length == 0) return await fail("Could not read the new instrument back.")
         const merged = Array.from(fresh)
         for(let word = 0; word < EPS16.RESTORE_PARAMETER_WORDS; word++){
+            // Word 25 is the one word of the instrument's parameters that
+            // describes the machine rather than the sound: section 7.1 calls
+            // it the Instrument ID Field, "$FFFF indicates EPS-16 PLUS". What
+            // is being built here is an EPS-16 PLUS instrument in an EPS-16
+            // PLUS, whatever wrote the file, so the synth's own answer is kept
+            // and the file's is dropped. Without this an original EPS file
+            // would stamp its instrument as an original EPS on a machine that
+            // is not one.
+            if(word == EPS16.INSTRUMENT_ID_WORD) continue
             merged[word] = inventory.instrument.words
                 ? inventory.instrument.words[word] : merged[word]
         }
@@ -895,7 +937,9 @@ class EPS16 {
         report.message = `Sent "${inventory.instrument.name}" to instrument `
             + `${report.instrument + 1}: ${report.uploaded} wavesample(s) uploaded`
             + (report.copied ? `, ${report.copied} copied` : "")
-            + ". Effects are not included and have to be set on the synth."
+            + (original ? ". It came from an original EPS, so it now holds the EPS-16 "
+                + "PLUS defaults for the parameters that machine did not have"
+              : ". Effects are not included and have to be set on the synth.")
         this.successCallback(`Success: ${report.message}`)
         return report
     }

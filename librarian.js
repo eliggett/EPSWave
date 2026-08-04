@@ -80,6 +80,21 @@ const librarian = {
             </div>
         </div>`
 
+        // Said once, on the instrument it applies to, rather than as a warning
+        // on a button that would then have to appear for every file. What it
+        // amounts to in practice is small — see the note above WS_PAN_WORD in
+        // epsBlocks.js — and saying so is more useful than a bare label.
+        if(!inst.isEps16Plus){
+            html += `<div class="alert alert-secondary py-2 mb-3"><small>
+                This was written by an <b>original EPS</b>, not an EPS-16 PLUS. It can still
+                be sent: both machines lay their layers and wavesamples out identically, and
+                the audio is 13 bit stored in the 16 bit words the EPS-16 PLUS expects.
+                The parameters the EPS-16 PLUS added and the original EPS never had &mdash;
+                the mixer and pan modulators, the boost switch, the LFO rate modulation,
+                the layer delay &mdash; arrive at their defaults.
+            </small></div>`
+        }
+
         html += `<div class="table-responsive"><table class="table table-sm mb-3">
             <thead><tr><th>Layer</th><th>Name</th><th>Velocity</th>
                 <th>Pitch table</th><th>WaveSamples</th></tr></thead><tbody>`
@@ -401,6 +416,9 @@ const librarian = {
                 + `This claims the first free instrument slot at or after the one selected `
                 + `above, and takes ${estimate}. Leave the synth alone while it runs, and `
                 + `stop the sequencer if it is playing.\n\n`
+                + (inventory.instrument.isEps16Plus ? ""
+                    : `This is an original EPS instrument. The EPS-16 PLUS parameters it `
+                        + `has no values for arrive at their defaults.\n\n`)
                 + `Effects are not sent — the algorithm cannot be selected over MIDI.`)){
             return
         }
