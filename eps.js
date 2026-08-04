@@ -485,6 +485,76 @@ class EPS16 {
     }
 
     /***
+     * Which layers the selected instrument currently holds, from its own
+     * pointer table. Null if the instrument cannot be read.
+     */
+    async occupiedLayers(){
+        const words = await this.getParamBlock(EPS16.BLOCK_INSTRUMENT)
+        if(words.length == 0) return null
+        return EPSBlocks.decodeInstrument(words).layers
+            .filter(slot => slot.exists).map(slot => slot.number)
+    }
+
+    /***
+     * Creates a layer and confirms that it is actually there.
+     *
+     * CREATE LAYER IS ACKNOWLEDGED WHETHER OR NOT IT DOES ANYTHING. This is the
+     * same failure as CREATE WAVESAMPLE ignoring the number it is given, in a
+     * second command: on a synth that had just refused CREATE INSTRUMENT with a
+     * NAK and accepted it on the retry, the CREATE LAYER that followed was
+     * acknowledged with a plain ACK, and the instrument's layer pointer table
+     * was still empty afterwards. Nothing noticed, so the restore carried on
+     * and asked for a wavesample in a layer that did not exist, which came back
+     * "Invalid Layer" — a true statement about a situation five commands old
+     * and no help at all in finding the cause.
+     *
+     * So the pointer table is read back and the command repeated until the
+     * layer appears. What the table said is logged either way, because this
+     * check is only trustworthy if a layer really does show up there as soon as
+     * it is created, and a log that says otherwise is how that gets found out.
+     */
+    async createLayerConfirmed(number, label){
+        for(let attempt = 1; attempt <= EPS16.PARAM_BLOCK_ATTEMPTS; attempt++){
+            const beforeLayers = await this.occupiedLayers()
+            const beforeWavesamples = await this.occupiedWavesamples()
+            if(beforeLayers === null || beforeWavesamples === null){
+                return { ok: false, reason: "could not read the instrument" }
+            }
+            // Already there. CREATE LAYER on an occupied layer would be refused,
+            // and on a retry after a lost acknowledgement it may well exist.
+            if(beforeLayers.includes(number)){
+                this.debug(`${label}: layer ${number + 1} is already there`)
+                return { ok: true, existed: true, wavesample: null }
+            }
+            const status = await this.sendCommand(
+                this.createMIDIMessage(EPS16.CMD_CREATE_LAYER), label)
+            if(status != 0x00){
+                return { ok: false, status, reason: this.statusText(status) }
+            }
+            const afterLayers = await this.occupiedLayers()
+            const afterWavesamples = await this.occupiedWavesamples()
+            if(afterLayers === null || afterWavesamples === null){
+                return { ok: false, reason: "could not read the instrument back" }
+            }
+            if(afterLayers.includes(number)){
+                // Section 4.3 says CREATE LAYER also produces a wavesample.
+                // Hardware does it sometimes, so whatever appeared is reported
+                // rather than assumed either way.
+                const added = afterWavesamples.filter(n => !beforeWavesamples.includes(n))
+                this.debug(`${label}: layers now [${afterLayers.map(n => n + 1).join(", ")}]`
+                    + (added.length ? `, and it brought wavesample ${added.join(", ")}` : ""))
+                return { ok: true, wavesample: added.length == 1 ? added[0] : null, added }
+            }
+            this.debug(`${label}: acknowledged, but the layer table is still `
+                + `[${afterLayers.map(n => n + 1).join(", ")}]; retrying in `
+                + `${EPS16.BUSY_RETRY_MS / 1000}s, attempt ${attempt + 1}`)
+            await this.sleep(EPS16.BUSY_RETRY_MS)
+        }
+        return { ok: false,
+            reason: "the EPS acknowledged the command but no layer ever appeared" }
+    }
+
+    /***
      * Runs a command that creates a wavesample and reports which number the EPS
      * gave it.
      *
@@ -697,6 +767,13 @@ class EPS16 {
             return report
         }
         report.instrument = this.instNum
+        // A synth that has just been asked to make an instrument is not ready
+        // for the next command. In the run that produced createLayerConfirmed,
+        // CREATE INSTRUMENT was refused with a NAK, accepted on the retry, and
+        // the CREATE LAYER that came half a second later was acknowledged and
+        // did nothing. Everything downstream retries; pausing here means it
+        // usually does not have to.
+        await this.sleep(EPS16.RESTORE_SETTLE_MS)
         say(0, `using instrument ${this.instNum + 1}`
             + (this.instNum != from ? ` (${from + 1} was taken)` : ""))
         this.successCallback(`Success: Restoring into instrument ${this.instNum + 1}`
@@ -734,14 +811,18 @@ class EPS16 {
             this.setWavesampleNumber(1)
             // CREATE LAYER may or may not bring a wavesample with it. Section
             // 4.3 says it does; hardware says otherwise more often than not, so
-            // rather than depend on either, whatever appears is noted.
-            const made = await this.createAndIdentify(
-                this.createMIDIMessage(EPS16.CMD_CREATE_LAYER),
+            // rather than depend on either, whatever appears is noted. It may
+            // also do nothing at all while acknowledging — see
+            // createLayerConfirmed, which is why this is checked rather than
+            // believed.
+            const layerMade = await this.createLayerConfirmed(layer.number,
                 `create layer ${layer.number + 1}`)
-            if(!made.ok && made.status !== undefined && made.status != 0x00){
+            if(!layerMade.ok){
                 return await fail(`Could not create layer ${layer.number + 1}: `
-                    + `${made.reason}.`)
+                    + `${layerMade.reason}.`)
             }
+            const made = { ok: layerMade.wavesample !== null && layerMade.wavesample !== undefined,
+                number: layerMade.wavesample }
             const sourcesHere = owned.filter(n => !copies.some(ws => ws.number == n))
             const pending = [...sourcesHere]
             if(made.ok){
@@ -1825,15 +1906,42 @@ class EPS16 {
     /***
      * Status code carried by a response command, or -1 if this is not one.
      */
+    /***
+     * The status code out of a response message, and what to do when the synth
+     * sends one the specification does not allow.
+     *
+     * Section 4.1 gives a response as the command byte `01` followed by two
+     * bytes: "Status Code hi byte, (always 0)" and the lo byte. The hi byte was
+     * simply ignored here, and a real EPS-16 PLUS does not always send 0 in it.
+     * Asked for an instrument that had been loaded from the machine's internal
+     * flash, one answered `F0 0F 03 00 01 36 16 F7` — hi byte `36`. Reading
+     * only the lo byte turned that into `16`, "Loop is too long", which is a
+     * real code and completely misleading: the command was GET INSTRUMENT and
+     * no loop was involved.
+     *
+     * So a non-zero hi byte is kept, folded into the returned value at a
+     * magnitude no documented code can reach — section 5 runs to `1E` — which
+     * means every existing `status != 0x00` test treats it as the failure it
+     * is, and statusText can say plainly that it is not in the table rather
+     * than naming the wrong fault.
+     */
     responseStatus(message){
         if(typeof message == 'undefined' || message.length != 3 || message[0] != 1) return -1
-        return message[2]
+        return message[1] == 0 ? message[2] : (message[1] << 8) | message[2]
     }
     /***
      * Plain text for a status code, borrowing the table used for logging.
      */
     statusText(code){
         if(code < 0) return "no response"
+        // A status the specification does not describe. Named as such, with
+        // both bytes, because the alternative is confidently reporting whatever
+        // the lo byte happens to collide with. See responseStatus.
+        if(code > 0xFF){
+            return `undocumented status ${((code >> 8) & 0xFF).toString(16).padStart(2, "0")} `
+                + `${(code & 0xFF).toString(16).padStart(2, "0")} (section 4.1 says the hi byte `
+                + `is always 0)`
+        }
         return this.getResponseMessage([0x01, 0x00, code])
             .replace(/^(Error|INFO|SUCCESS): /, '')
     }
@@ -2150,6 +2258,10 @@ class EPS16 {
         // longer is a data block, which must never be mistaken for an ACK just
         // because it happens to start with 1 and end with 0.
         if(typeof message == 'undefined' || message.length != 3 || message[0] != 1) return false
+        // The hi byte has to be zero for this to be a status at all: see
+        // responseStatus. Without this test a response of 36 00 counts as an
+        // ACK on the strength of its lo byte.
+        if(message[1] != 0) return false
         const status = message[message.length-1]
         if(status == 0x01){ /// WAIT message
             // Section 3.2: acknowledge the WAIT, restart the command timer with
