@@ -29,19 +29,45 @@ const LIBRARIAN_BYTES_PER_SECOND = 1353
  * lives on the thing it describes rather than in a document nobody opens.
  */
 const LIBRARIAN_NOT_YET = {
-    saveToEfe: "Not built yet. Writing an EFE means reproducing the EPS's own memory "
-        + "layout — object placement, 16 byte chunking and the packed offset tables — "
-        + "and two header fields whose meaning is still unclear. Reading one is solved; "
-        + "writing one is a project of its own.",
-    readOwn: "Not built yet. Waiting on the format, which is waiting on saving one.",
-    saveOwn: "Not built yet. The format is undecided: JSON or YAML holding the raw "
-        + "parameter blocks and the audio, so that a backup keeps everything even where "
-        + "we do not yet understand it."
+    saveToEfe: "Not built yet. Writing an EFE means reproducing the EPS's own allocator: "
+        + "where each object sits, how much slack follows it, and five words of bookkeeping "
+        + "per object of which two are linked list pointers whose rules are not yet known. "
+        + "A .epswave backup holds everything an EFE would, so one can be generated from a "
+        + "saved backup later without going near the synth again."
 }
 
 const librarian = {
     eps: null,
     current: null,
+
+    /***
+     * The audio of one wavesample, whatever the instrument was opened from.
+     *
+     * Three sources, one question. A disk image holds its samples inside the
+     * image and they are extracted on demand; a `.epswave` and a backup read
+     * off the synth both carry a Map. Copies are followed to whatever holds
+     * the samples in all three, so this answers for every wavesample that
+     * sounds, and null only when there is genuinely nothing.
+     */
+    audioFor(inventory, number){
+        if(!inventory) return null
+        if(inventory.audio && inventory.audio.has(number)) return inventory.audio.get(number)
+        if(inventory.source == "efe"){
+            return EPSEfe.readWavedata(inventory.file, inventory, number)
+        }
+        return null
+    },
+
+    /***
+     * Whether every wavesample that needs audio has it. What decides whether
+     * an instrument can be sent to the synth or written to a file.
+     */
+    hasAllAudio(inventory){
+        if(!inventory) return false
+        if(inventory.source == "efe") return true
+        return inventory.wavesamples.filter(ws => !ws.isCopy)
+            .every(ws => inventory.audio && inventory.audio.has(ws.number))
+    },
 
     /***
      * Draws an inventory, from either source.
@@ -70,6 +96,8 @@ const librarian = {
             <div class="text-muted small">
                 ${inventory.source == "efe"
                     ? `from ${escape(inventory.file.fileName || inventory.file.name + ".EFE")}`
+                    : inventory.source == "epswave"
+                    ? `from ${escape(inventory.fileName || "an EPSWave file")}`
                     : "read from the EPS over MIDI"}
                 &middot; ${inst.isEps16Plus ? "EPS-16 PLUS"
                     : `<b>original EPS</b> (id 0x${inst.id.toString(16).toUpperCase()})`}
@@ -107,10 +135,10 @@ const librarian = {
         }
         html += `</tbody></table></div>`
 
-        // Audio is only in hand for a file. Reading it from the synth is a
-        // transfer of its own and has not been built, so the column is left out
-        // rather than shown full of dead buttons.
-        const haveAudio = inventory.source == "efe"
+        // Reading the audio off the synth is a transfer of its own, so an
+        // instrument that has only been looked at does not have it yet. The
+        // column is left out rather than shown full of dead buttons.
+        const haveAudio = librarian.hasAllAudio(inventory)
 
         html += `<div class="table-responsive"><table class="table table-sm mb-3">
             <thead><tr><th>WS</th><th>Name</th><th>Layer</th><th>Keys</th><th>Root</th>
@@ -215,10 +243,13 @@ const librarian = {
      */
     saveWav(number){
         const inventory = librarian.current
-        if(!inventory || inventory.source != "efe") return false
+        if(!inventory) return false
         const ws = inventory.wavesamples.find(w => w.number == number)
         try{
-            const samples = EPSEfe.readWavedata(inventory.file, inventory, number)
+            const samples = librarian.audioFor(inventory, number)
+            if(!samples || samples.length == 0){
+                throw new Error(`No audio in hand for wavesample ${number}`)
+            }
             const clean = (text) => String(text).replace(/[^A-Za-z0-9._-]+/g, "-")
                 .replace(/^-+|-+$/g, "") || "instrument"
             const name = `${clean(inventory.instrument.name)}-ws${number}`
@@ -272,6 +303,123 @@ const librarian = {
             $("#readFromEpsSpinner").hide()
             button.prop("disabled", false)
         }
+    },
+
+    /***
+     * Save instrument to an EPSWave file.
+     *
+     * The only button that may have to go and fetch what it is about to save.
+     * An instrument read from the synth arrives as parameters alone, because
+     * looking at one should not cost the twenty minutes copying one does, so
+     * the audio is read here — once, and then kept, so saving a second time or
+     * exporting a WAV afterwards is instant.
+     */
+    async saveToOwn(){
+        const inventory = librarian.current
+        if(!inventory){
+            $("#librarianStatus").removeClass("alert-secondary alert-success")
+                .addClass("alert-danger").html("Open an instrument first.").show()
+            return
+        }
+        const button = $("#saveOwn")
+        button.prop("disabled", true)
+        $("#saveOwnSpinner").show()
+        const started = Date.now()
+        try{
+            if(!librarian.hasAllAudio(inventory)){
+                const seconds = inventory.wireBytes / LIBRARIAN_BYTES_PER_SECOND
+                const estimate = seconds < 90 ? `${Math.round(seconds)} seconds`
+                    : `about ${(seconds / 60).toFixed(0)} minutes`
+                if(!window.confirm(`Read the audio of "${inventory.instrument.name}" `
+                        + `off the EPS?\n\n`
+                        + `${inventory.audioSamples.toLocaleString()} samples, which takes `
+                        + `${estimate}. Leave the synth alone while it runs.\n\n`
+                        + `The parameters are already in hand; this is the wavedata.`)){
+                    return
+                }
+                const result = await librarian.eps.downloadAudio(inventory,
+                    (percent, what) => {
+                        const gone = (Date.now() - started) / 1000
+                        const left = percent > 2 ? ` — about ${Math.max(1,
+                            Math.round((gone / percent) * (100 - percent) / 60))} min left` : ""
+                        $("#librarianStatus").removeClass("alert-danger alert-success")
+                            .addClass("alert-secondary")
+                            .html(`Reading: ${escapeHtml(what)} … ${percent}%${left}`).show()
+                    })
+                window.log(result.message)
+                // A partial read is kept and offered rather than discarded. It
+                // took twenty minutes to get and it is still most of an
+                // instrument; what is missing is named in the file and in the
+                // log, and the WAV buttons will show what did arrive.
+                inventory.audio = result.audio
+                if(!result.ok && !window.confirm(`${result.message}\n\n`
+                        + `Save what did come back anyway?`)){
+                    librarian.render(inventory)
+                    return
+                }
+            }
+
+            const clean = (text) => String(text).replace(/[^A-Za-z0-9._-]+/g, "-")
+                .replace(/^-+|-+$/g, "") || "instrument"
+            const name = clean(inventory.instrument.name) + EPSWaveFile.EXTENSION
+            const text = EPSWaveFile.write(inventory, inventory.audio || new Map(), {
+                source: inventory.source,
+                sourceName: inventory.source == "midi"
+                    ? `EPS instrument ${librarian.eps.instNum + 1}`
+                    : (inventory.file ? inventory.file.fileName || inventory.file.name : "")
+            })
+            EPSWaveUI.download(new Blob([text], { type: "application/json" }),
+                "application/json", name)
+            const message = `Saved ${name}: ${inventory.layers.length} layer(s), `
+                + `${inventory.wavesamples.length} wavesample(s), `
+                + `${Math.round(text.length / 1024).toLocaleString()} KB`
+            window.log(message)
+            // Re-rendered because the WAV buttons appear the moment the audio
+            // is in hand, and it just arrived.
+            librarian.render(inventory)
+            $("#librarianStatus").removeClass("alert-secondary alert-danger")
+                .addClass("alert-success").html(escapeHtml(message)).show()
+        }catch(error){
+            window.log(`Error: ${error.message}`)
+            $("#librarianStatus").removeClass("alert-secondary alert-success")
+                .addClass("alert-danger").html(escapeHtml(error.message)).show()
+        }finally{
+            $("#saveOwnSpinner").hide()
+            button.prop("disabled", false)
+        }
+    },
+
+    /***
+     * Read instrument from an EPSWave file. No synth, no Web MIDI, same as
+     * opening an EFE.
+     */
+    readFromOwn(file){
+        const reader = new FileReader()
+        reader.onload = () => {
+            try{
+                const inventory = EPSWaveFile.read(reader.result)
+                inventory.fileName = file.name
+                const held = inventory.wavesamples.filter(ws => !ws.isCopy
+                    && inventory.audio.has(ws.number)).length
+                window.log(`Opened ${file.name}: "${inventory.instrument.name}", `
+                    + `${inventory.layers.length} layer(s), `
+                    + `${inventory.wavesamples.length} wavesample(s), `
+                    + `audio for ${held}`)
+                librarian.render(inventory)
+                $("#librarianStatus").removeClass("alert-secondary alert-danger")
+                    .addClass("alert-success").html(`Opened ${escapeHtml(file.name)}`).show()
+            }catch(error){
+                window.log(`Error: ${file.name}: ${error.message}`)
+                $("#librarianStatus").removeClass("alert-secondary alert-success")
+                    .addClass("alert-danger").html(escapeHtml(error.message)).show()
+            }
+        }
+        reader.onerror = () => {
+            window.log(`Error: could not read ${file.name}`)
+            $("#librarianStatus").removeClass("alert-secondary alert-success")
+                .addClass("alert-danger").html("Could not read that file").show()
+        }
+        reader.readAsText(file)
     },
 
     /***
@@ -346,7 +494,7 @@ const librarian = {
 
     variant(kind){
         const source = librarian.current
-        if(!source || source.source != "efe") return null
+        if(!source || !librarian.hasAllAudio(source)) return null
         // Deep enough to leave the opened instrument untouched: the blocks are
         // copied because they are about to be edited, and a failed experiment
         // should not change what a second experiment starts from.
@@ -364,6 +512,11 @@ const librarian = {
             // which name a wavesample per key, and the copy numbers.
             const renumber = new Map()
             inventory.wavesamples.forEach((ws, index) => renumber.set(ws.number, index + 1))
+            // Including the audio, which is keyed by wavesample number.
+            if(inventory.audio){
+                inventory.audio = new Map([...inventory.audio]
+                    .map(([number, samples]) => [renumber.get(number) || number, samples]))
+            }
             for(const ws of inventory.wavesamples){
                 ws.number = renumber.get(ws.number)
                 if(ws.isCopy){
@@ -383,8 +536,17 @@ const librarian = {
         }
 
         if(kind == "short" || kind == "both"){
+            // An EFE's audio is extracted from the image on demand and follows
+            // sampleEnd by itself. A Map does not, so it is cut here — and cut
+            // on a copy of the Map, or shortening a test variant would shorten
+            // the instrument it was built from.
+            if(inventory.audio) inventory.audio = new Map(inventory.audio)
             for(const ws of inventory.wavesamples){
                 if(ws.sampleEnd <= librarian.SHORT_SAMPLES) continue
+                if(inventory.audio && inventory.audio.has(ws.number)){
+                    inventory.audio.set(ws.number,
+                        inventory.audio.get(ws.number).slice(0, librarian.SHORT_SAMPLES))
+                }
                 ws.sampleEnd = librarian.SHORT_SAMPLES
                 EPSBlocks.writeSampleOffset(ws.words, 119, ws.sampleEnd)
                 // The loop has to stay inside the shortened data or the EPS
@@ -416,11 +578,15 @@ const librarian = {
                 .addClass("alert-danger").html("Open an instrument first.").show()
             return
         }
-        if(inventory.source != "efe"){
+        // What can be sent is what has audio, whatever it was opened from. An
+        // instrument read off the synth and not yet backed up is parameters
+        // only, and sending it would build something silent.
+        if(!librarian.hasAllAudio(inventory)){
             $("#librarianStatus").removeClass("alert-secondary alert-success")
-                .addClass("alert-danger").html("Only an instrument opened from an EFE file "
-                    + "can be sent: reading the audio back off the synth is not built yet, "
-                    + "so an instrument read over MIDI has no wavedata to send.").show()
+                .addClass("alert-danger").html("This instrument has no wavedata in hand. "
+                    + "Read it off the synth first with <b>Save instrument to EPSWave "
+                    + "file</b>, or open an EFE or EPSWave file that already holds it.")
+                .show()
             return
         }
         const seconds = inventory.wireBytes / LIBRARIAN_BYTES_PER_SECOND
@@ -444,7 +610,7 @@ const librarian = {
         const started = Date.now()
         try{
             const report = await librarian.eps.uploadInstrument(inventory,
-                (ws) => EPSEfe.readWavedata(inventory.file, inventory, ws.number),
+                (ws) => librarian.audioFor(inventory, ws.number),
                 (percent, what) => {
                     const gone = (Date.now() - started) / 1000
                     const left = percent > 2 ? ` — about ${Math.max(1,
@@ -549,6 +715,12 @@ $(document).ready(function(){
     $("#efeFile").change(function(){
         if(this.files && this.files[0]) librarian.readFromEfe(this.files[0])
         // Cleared so that choosing the same file twice in a row still fires.
+        this.value = ""
+    })
+    $("#saveOwn").click(() => librarian.saveToOwn())
+    $("#readOwn").click(() => $("#ownFile").click())
+    $("#ownFile").change(function(){
+        if(this.files && this.files[0]) librarian.readFromOwn(this.files[0])
         this.value = ""
     })
 

@@ -1093,6 +1093,99 @@ class EPS16 {
         }
     }
     /***
+     * Reads the audio of every wavesample in an inventory off the synth.
+     *
+     * This is the other half of a backup. `getInstrumentInventory` settles what
+     * an instrument contains in a handful of round trips; this is the part that
+     * takes twenty minutes, so it is deliberately a separate call. Looking at
+     * an instrument should not cost what copying one does.
+     *
+     * COPIES ARE NOT ASKED FOR. Section 7.3 word 12: a copy holds no audio of
+     * its own, and asking the EPS for its wavedata answers with status $11,
+     * "Wavesample is a copy". So only the sources are fetched, and a copy is
+     * served from whichever wavesample actually holds its samples — the same
+     * rule EPSEfe.readWavedata follows for a file, so a backup and a disk image
+     * agree about what a copy sounds like.
+     *
+     * Returns a Map from wavesample number to Int16Array, plus a note of
+     * anything that did not come back whole. A partial result is still returned
+     * rather than thrown away: nineteen wavesamples out of twenty is worth
+     * having, and the caller can decide.
+     */
+    async downloadAudio(inventory, progressCallback = () => {}){
+        const restore = { inst: this.instNum, layer: this.layerNum, ws: this.wsBytes }
+        const audio = new Map()
+        const short = []
+        const sources = inventory.wavesamples.filter(ws => !ws.isCopy)
+        const totalSamples = sources.reduce((sum, ws) => sum + ws.sampleEnd, 0)
+        let doneSamples = 0
+        try{
+            for(const ws of sources){
+                // A wavesample is addressed through the layer that owns it. A
+                // wavesample in no layer map is asked for under the first layer,
+                // which is the only guess available.
+                const layer = ws.layer == null
+                    ? (inventory.layers.length ? inventory.layers[0].number : 0) : ws.layer
+                this.setLayerNumber(layer)
+                this.setWavesampleNumber(ws.number)
+                const before = doneSamples
+                const samples = await this.getWavesampleDataChunked(this.chunkSize,
+                    (data, percent) => {
+                        // Rescaled to this wavesample's share of the whole, so
+                        // the bar means something across a multi-sample
+                        // instrument rather than restarting six times.
+                        const within = (Number(percent) || 0) / 100
+                        progressCallback(totalSamples
+                            ? Math.round(((before + within * ws.sampleEnd) / totalSamples) * 100)
+                            : 100, `wavesample ${ws.number}, ${Math.round(within * 100)}%`)
+                    })
+                // The length is the synth's own end offset, read again at the
+                // moment of the transfer, so a disagreement with the inventory
+                // is worth saying out loud rather than quietly trusting either.
+                if(samples.length != ws.sampleEnd){
+                    this.debug(`Wavesample ${ws.number}: the inventory says `
+                        + `${ws.sampleEnd} samples, the transfer gave ${samples.length}`)
+                }
+                if(samples.length == 0){
+                    short.push({ number: ws.number, got: 0, wanted: ws.sampleEnd })
+                }else{
+                    audio.set(ws.number, Int16Array.from(samples))
+                    if(samples.length < ws.sampleEnd){
+                        short.push({ number: ws.number, got: samples.length,
+                            wanted: ws.sampleEnd })
+                    }
+                }
+                doneSamples = before + ws.sampleEnd
+            }
+        }finally{
+            this.instNum = restore.inst
+            this.layerNum = restore.layer
+            this.wsBytes = restore.ws
+        }
+
+        // Copies point at the wavesample that holds their samples. Bounded,
+        // because a copy chain that loops would otherwise hang the page.
+        for(const ws of inventory.wavesamples.filter(w => w.isCopy)){
+            let at = ws
+            for(let hop = 0; at.isCopy && hop <= EPSBlocks.WAVESAMPLE_COUNT; hop++){
+                const source = inventory.wavesamples.find(w => w.number == at.copyNumber)
+                if(!source) break
+                at = source
+            }
+            if(!at.isCopy && audio.has(at.number)) audio.set(ws.number, audio.get(at.number))
+        }
+
+        const got = sources.length - short.filter(s => s.got == 0).length
+        const message = short.length == 0
+            ? `Read ${audio.size} wavesample(s), ${doneSamples.toLocaleString()} samples`
+            : `Read ${got} of ${sources.length} wavesample(s). Incomplete: `
+                + short.map(s => `${s.number} (${s.got} of ${s.wanted})`).join(", ")
+        if(short.length == 0) this.successCallback(`Success: ${message}`)
+        else this.errorCallback(`Error: ${message}`)
+        return { ok: short.length == 0, audio, short, message, samples: doneSamples }
+    }
+
+    /***
      * Commands used only by the restore. Section 4.3.
      *
      * All three take their numbers explicitly rather than operating on
@@ -1439,7 +1532,26 @@ class EPS16 {
         while(wavedata.length < offset){
             const start = wavedata.length
             const end = Math.min(start + size, offset)
-            const wavePart = await this.getWavesampleData(start, end)
+            /***
+             * One chunk, with the same patience as everything else that talks
+             * to this synth.
+             *
+             * A large wavesample is thousands of chunks and twenty minutes.
+             * Without this, a single "Disk Access in Progress" nineteen minutes
+             * in throws all of it away — and unlike a restore, there is nothing
+             * to inspect afterwards to work out how far it got. The retry is
+             * here rather than inside getWavesampleData because a chunk is the
+             * unit that can be safely asked for again: it names its own start
+             * and end, so a repeat is exactly the same request.
+             */
+            let wavePart = await this.getWavesampleData(start, end)
+            for(let attempt = 1; attempt < EPS16.PARAM_BLOCK_ATTEMPTS
+                    && wavePart.length == 0; attempt++){
+                this.debug(`No answer for samples ${start}-${end}; retrying in `
+                    + `${EPS16.BUSY_RETRY_MS / 1000}s, attempt ${attempt + 1}`)
+                await this.sleep(EPS16.BUSY_RETRY_MS)
+                wavePart = await this.getWavesampleData(start, end)
+            }
             if(wavePart.length == 0){
                 this.errorCallback(`Error: Download stopped at sample ${start} of ${offset}`)
                 break

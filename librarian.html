@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="./epswave.css">
     <script src="./epsBlocks.js"></script>
     <script src="./epsEfe.js"></script>
+    <script src="./epsWaveFile.js"></script>
     <script src="./eps.js"></script>
     <script src="./waveGen.js"></script>
     <script src="./about.js"></script>
@@ -167,14 +168,18 @@
                             </div>
                             <div class="col-md-4 mb-3">
                                 <h6><i class="fa-solid fa-file-code"></i> EPSWave file</h6>
-                                <p class="text-muted mb-2"><small>Our own format, so that a backup
-                                    can hold everything even where the hardware format is not yet
-                                    fully understood. Undecided; likely JSON.</small></p>
-                                <button id="readOwn" class="btn btn-outline-secondary btn-block btn-sm mb-2">
+                                <p class="text-muted mb-2"><small><code>.epswave</code>, JSON
+                                    holding the raw parameter blocks and the audio, so a backup
+                                    keeps everything &mdash; including the words we do not yet
+                                    decode.</small></p>
+                                <button id="readOwn" class="btn btn-primary btn-block btn-sm mb-2">
                                     <i class="fa-solid fa-file-import"></i> Read instrument from EPSWave file
                                 </button>
-                                <button id="saveOwn" class="btn btn-outline-secondary btn-block btn-sm">
+                                <input type="file" id="ownFile" accept=".epswave,.json" style="display:none">
+                                <button id="saveOwn" class="btn btn-success btn-block btn-sm">
                                     <i class="fa-solid fa-file-arrow-down"></i> Save instrument to EPSWave file
+                                    <span id="saveOwnSpinner" class="spinner-border spinner-border-sm"
+                                        role="status" aria-hidden="true" style="display:none"></span>
                                 </button>
                             </div>
                         </div>
