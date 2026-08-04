@@ -1,0 +1,69 @@
+# This is the top-level makefile for the EPS SysEx library.
+
+# This is the top-level directory containing the EPS SysEx library
+# sources
+TOP = proj:
+
+# This is the architecture that you are compiling for. If your compiler
+# defines such a symbol, you should probably use that symbol throughout.
+# If it doesn't, make one up, and be sure to add -D$(ARCH) to CFLAGS
+ARCH = AMIGA
+
+# This is the name of the EPS SysEx library file on your architecture.
+# Popular names include "eps.lib" and "libeps.a"
+EPSLIB = libeps.a
+
+# The C compiler you will be using. This has been tested with DICE and
+# GCC 2.1 .
+CC = gcc
+
+# If your compiler does not define an architecture symbol, be sure to add
+# -D$(ARCH) to CFLAGs
+# You can also add -DDEBUG here, if you like
+CFLAGS = -w -I$(TOP)include
+
+# Some common commands.
+## Uncomment the next five lines for the Amiga
+CD = cd
+CP = copy
+MAKE = dmake
+RM = delete
+UP = /
+##
+## Uncomment the next five lines for U*ix
+#CD = cd
+#CP = cp
+#MAKE = make
+#RM = rm
+#UP = ..
+##
+## Uncomment the next five lines for MS-DOS
+#CD = cd
+#CP = copy
+#MAKE = make
+#RM = del
+#UP = ..
+##
+
+all:	$(EPSLIB)
+
+# This rule builds the EPS SysEx library.
+# Uncomment the next five lines for the Amiga
+$(EPSLIB) :
+	$(CD) libsrc
+	$(MAKE) $(EPSLIB)
+	$(CD) $(UP)
+	$(CP) libsrc/$(EPSLIB) ""
+# Uncomment the next two lines for U*ix.
+#$(EPSLIB):
+#	(cd libsrc; $(MAKE) $(EPSLIB) )
+
+# Clean up the nonessential stuff.
+# Uncomment the next four lines for Amiga
+clean:
+	$(CD) libsrc
+	$(MAKE) clean
+	$(CD) $(UP)
+# Uncomment the next two lines for U*ix.
+#clean:
+#	(cd libsrc; $(MAKE) clean)

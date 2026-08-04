@@ -1,0 +1,134 @@
+# This is the DMakefile for the actual EPS SysEx library. Configure to taste.
+
+# A string defining the architecture for which you want to build the
+# library. If your C compiler automatically defines such a string, use
+# it.
+ARCH = AMIGA
+
+# Top of the source tree. This should be one directory level above the
+# directory containing this file.
+TOP = proj:
+
+# The compiler you want to use. This has been tested with DICE and GCC 2.1 .
+CC = gcc
+
+# Any flags to the C compiler. If your compiler does not define an archi-
+# tecture string, be sure to add -D$(ARCH) here.
+# You can also add -DDEBUG here, if you like.
+CFLAGS = -I$(TOP)include
+
+# Any additional libraries to include for the final compilation.
+LIBS = -lmidi -lamiga
+
+# A directory into which to put temporary files. This may or may not be
+# necessary, depending on your architecture and compiler.
+TMP = T:
+
+# Some common commands
+## Amiga
+RM = delete
+CP = copy
+## U*ix
+#RM = rm
+#CP = cp
+
+# Directory containing the system-dependent modules for the library
+SYSDEP = amiga/
+
+# System-dependent source and object files for the library
+SYSSRCS = $(SYSDEP)midi.c
+SYSOBJS = $(SYSDEP)midi.o
+
+# Name of the library on your system. This can vary by architecture and
+# compiler. Popular names include "eps.lib" and "libeps.a"
+EPSLIB = libeps.a
+
+# Where the library should be installed
+LIBDEST = lib:$(EPSLIB)
+
+# System-independent source and object files for the library.
+#
+# I had to break the source and object file lists into segments because
+# DMake apparently has a 255-character limitation on macros, or something
+LIBSRCS1 = button.c getinst.c getlayer.c getws.c \
+	getwsdata.c getpitch.c getparameter.c getwsover.c \
+	putinst.c putlayer.c putws.c putwsdata.c putpitch.c
+LIBSRCS2 = putparameter.c creinst.c delinst.c copyinst.c crelayer.c \
+	dellayer.c copylayer.c crews.c delws.c copyws.c auditws.c \
+	crepreset.c truncws.c clearwsdata.c copywsdata.c addwsdata.c
+LIBSRCS3 = scalewsdata.c invwsdata.c revwsdata.c repwsdata.c finwsdata.c \
+	foutwsdata.c mixwsdata.c volsmooth.c normgain.c \
+	eps.c $(SYSSRCS)
+# cfloop.c	# Still marginal
+LIBSRCS = $(LIBSRCS1) $(LIBSRCS2) $(LIBSRCS3)
+
+LIBOBJS1 = button.o getinst.o getlayer.o getws.o \
+	getwsdata.o getpitch.o getparameter.o getwsover.o \
+	putinst.o putlayer.o putws.o putwsdata.o putpitch.o
+LIBOBJS2 = putparameter.o creinst.o delinst.o copyinst.o crelayer.o \
+	dellayer.o copylayer.o crews.o delws.o copyws.o auditws.o \
+	crepreset.o truncws.o clearwsdata.o copywsdata.o addwsdata.o
+LIBOBJS3 = scalewsdata.o invwsdata.o revwsdata.o repwsdata.o finwsdata.o \
+	foutwsdata.o mixwsdata.o volsmooth.o normgain.o \
+	eps.o $(SYSOBJS)
+# cfloop.o	# Still marginal
+LIBOBJS = $(LIBOBJS1) $(LIBOBJS2) $(LIBOBJS3)
+
+all : $(EPSLIB) doc install
+
+# This is a DMake thing. If using make or something similar, replace these
+# rules with the standard .c.o: rule for your make.
+#$(OBJS) : $(SRCS)
+#	$(CC) $(CFLAGS) -o %(left) -c %(right)
+#
+#$(LIBOBJS) : $(LIBSRCS)
+#	$(CC) $(CFLAGS) -o %(left) -c %(right)
+
+# Syntactic sugar.
+$(EPSLIB) : $(ARCH)lib
+
+# The main rule for building the Amiga library with GCC
+AMIGAlib: $(LIBOBJS)
+	-$(RM) $(EPSLIB)
+	ar qv $(EPSLIB) $(LIBOBJS1)
+	ar qv $(EPSLIB) $(LIBOBJS2)
+	ar qv $(EPSLIB) $(LIBOBJS3)
+	ranlib $(EPSLIB)
+# The main rule for building the Amiga library with DICE
+#AMIGAlib: $(LIBOBJS)
+#	join $(LIBOBJS1) to epsl1
+#	join $(LIBOBJS2) to epsl2
+#	join $(LIBOBJS3) to epsl3
+#	join epsl1 epsl2 epsl3 to $(EPSLIB)
+#	$(RM) epsl1 epsl2 epsl3
+
+sun4lib:	$(LIBOBJS)
+	-$(RM) $(EPSLIB)
+	ar qv $(EPSLIB) $(LIBOBJS1)
+	ar qv $(EPSLIB) $(LIBOBJS2)
+	ar qv $(EPSLIB) $(LIBOBJS3)
+	ranlib $(EPSLIB)
+
+clean :
+	-$(RM) $(LIBOBJS1)
+	-$(RM) $(LIBOBJS2)
+	-$(RM) $(LIBOBJS3)
+
+# This creates the documentation files from the source, using the
+# Amiga tool 'autodoc'.
+doc :	$(ARCH)doc
+
+AMIGAdoc:
+	join $(LIBSRCS1) to $(TMP)epss1
+	join $(LIBSRCS2) to $(TMP)epss2
+	join $(LIBSRCS3) to $(TMP)epss3
+	join $(TMP)epss1 $(TMP)epss2 $(TMP)epss3 to $(TMP)epss
+	$(RM) $(TMP)epss1 $(TMP)epss2 $(TMP)epss3
+	execute /doc/makeauto $(TMP)epss
+
+sun4doc:
+	../doc/makeauto.pl $(LIBSRCS1) $(LIBSRCS2) $(LIBSRCS3) \
+	> ../doc/eps.doc.sun4
+
+install : $(EPSLIB)
+	$(CP) $(EPSLIB) $(LIBDEST)

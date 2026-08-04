@@ -1,0 +1,1692 @@
+TABLE OF CONTENTS
+
+eps.lib/CloseEPS
+eps.lib/EndPause
+eps.lib/epsAddWSData
+eps.lib/epsAuditionWS
+eps.lib/epsClearWSData
+eps.lib/epsCopyInstrument
+eps.lib/epsCopyLayer
+eps.lib/epsCopyWS
+eps.lib/epsCopyWSData
+eps.lib/epsCreateInstrument
+eps.lib/epsCreateLayer
+eps.lib/epsCreatePreset
+eps.lib/epsCreateWS
+eps.lib/epsDeleteInstrument
+eps.lib/epsDeleteLayer
+eps.lib/epsDeleteWS
+eps.lib/epsFadeInWSData
+eps.lib/epsFadeOutWSData
+eps.lib/epsGetInstrument
+eps.lib/epsGetLayer
+eps.lib/epsGetParameter
+eps.lib/epsGetPitchTable
+eps.lib/epsGetWS
+eps.lib/epsGetWSData
+eps.lib/epsGetWSOverview
+eps.lib/EPSInit
+eps.lib/epsInvertWSData
+eps.lib/epsMixWSData
+eps.lib/epsNormalizeGain
+eps.lib/epsPushButton
+eps.lib/epsPutInstrument
+eps.lib/epsPutLayer
+eps.lib/epsPutParameter
+eps.lib/epsPutPitchTable
+eps.lib/epsPutWS
+eps.lib/epsPutWSData
+eps.lib/epsReplicateWSData
+eps.lib/epsReverseWSData
+eps.lib/epsScaleWSData
+eps.lib/EPSTini
+eps.lib/epsTruncateWS
+eps.lib/epsVolumeSmoothing
+eps.lib/isleep
+eps.lib/OpenEPS
+eps.lib/RecvMsg
+eps.lib/SendMsg
+eps.lib/SetAlarm
+eps.lib/StartPause
+eps.lib/CloseEPS                                             eps.lib/CloseEPS
+
+   NAME   
+	CloseEPS -- close an EPS descriptor
+
+   SYNOPSIS
+	error = CloseEPS( eps )
+
+	int CloseEPS( struct EPSdesc * );
+
+   FUNCTION
+	Close an EPS descriptor. Basically, undoes anything done by
+	`OpenEPS()' on the same descriptor.
+
+   INPUTS
+	eps		- descriptor for the EPS to close.
+
+   RESULT
+	none
+
+   NOTES
+	Deletes the MIDI source and destination, and both routes.
+	The user is expected to have already freed any user data.
+
+   SEE ALSO
+	OpenEPS()
+
+
+eps.lib/EPSInit                                               eps.lib/EPSInit
+
+   NAME   
+	EPSInit -- Initialize everything so the EPS library can run
+
+   SYNOPSIS
+	error = EPSInit()
+
+   FUNCTION
+	Initialize various stuff. Returns 0 in case of success, a negative
+	number in case of error.
+	This function will be the first thing called, before any EPSes are
+	opened, before any function calls will be made. If you need to do
+	anything special to be able to read from and write to the MIDI port,
+	do it here.
+
+   INPUTS
+	none
+
+   RESULT
+	0 in case of success, a negative number in case of error.
+
+   NOTES
+	This function uses the Amiga MIDI library. It opens the MIDI
+	library, and creates a port through which all of the EPS timing
+	stuff will go.
+
+   SEE ALSO
+	EPSTini()
+
+
+eps.lib/EPSTini                                               eps.lib/EPSTini
+
+   NAME   
+	EPSTini -- clean up after the EPS library
+
+   SYNOPSIS
+	EPSTini()
+
+   FUNCTION
+	General tinitialization for the EPS stuff. All EPS descriptors and
+	stuff must be closed before calling this routine, though.
+	This function will be the last one called, after the user is through
+	calling any library functions, after closing any open EPSes. This
+	function should undo anything done in 'EPSInit()'.
+
+   INPUTS
+	none
+
+   RESULT
+	none
+
+   NOTES
+	Deletes the EPS timing port and closes the MIDI library.
+
+   BUGS
+	None so far.
+
+   SEE ALSO
+	EPSInit()
+
+
+eps.lib/EndPause                                             eps.lib/EndPause
+
+   NAME   
+	EndPause -- end an n-millisecond pause
+
+   SYNOPSIS
+	EndPause( eps )
+
+	EndPause( struct EPSdesc * );
+
+   FUNCTION
+	End the pause started by `StartPause()'. Do not return until `msec'
+	milliseconds have elapsed.
+
+   INPUTS
+	eps		- EPS to wait for.
+
+   RESULT
+	none
+
+   NOTES
+	Simply waits for the alarm set by `StartPause()' to expire.
+	See also `StartPause()'.
+
+   SEE ALSO
+	StartPause()
+
+
+eps.lib/OpenEPS                                               eps.lib/OpenEPS
+
+   NAME   
+	OpenEPS -- open a new EPS
+
+   SYNOPSIS
+	eps = OpenEPS( epsrequest )
+
+	struct EPSdesc *OpenEPS( struct NewEPS * );
+
+   FUNCTION
+	This function is called after `EPSInit()'. It is usually the first
+	one called after that, but it may be called repeatedly afterwards.
+	This function takes an initialized `NewEPS' request, containing
+	a description of the new EPS, and does anything necessary to enable
+	communication with that EPS.
+
+   INPUTS
+	eps		- initialized EPS descriptor
+
+   RESULT
+	error - 0 if successful, a negative number in case of error.
+
+   NOTES
+	Checks the channel, initializes any fields of `eps' which it does
+	not expect to be initialized, creates a MIDI source and
+	destination, and connects them to the MIDI OUT and IN ports
+	via a pair of paths.
+	Starts the first pause, so the first library command will have
+	something to wait for.
+	The only supported transport type supported so far is `TRANS_MIDI'.
+
+   SEE ALSO
+	CloseEPS()
+
+
+eps.lib/RecvMsg                                               eps.lib/RecvMsg
+
+   NAME   
+	RecvMsg -- receive a MIDI message from MIDI IN
+
+   SYNOPSIS
+	error = RecvMsg( eps, msgtype, len, msgbuf, timeout )
+
+	int RecvMsg
+		( struct EPSdesc *, struct MsgType *, ulong, uchar, ulong );
+
+   FUNCTION
+	Expect to receive a MIDI message from the EPS described by `eps'.
+	`msgtype' describes the type of message to expect. If no message
+	has come in after `timeout' milliseconds, stop waiting.
+
+   INPUTS
+	eps		- the EPS from which to expect a message.
+	msgtype		- type(s) of message to expect.
+	len		- length of the incoming message.
+	msgbuf		- pointer to a buffer in which to store the message.
+	timeout		- timeout value, in milliseconds.
+
+   RESULT
+	A positive value in case of success, a negative value in case
+	of error. -1 indicates a timeout.
+
+   NOTES
+	Basically, this routine just sets an alarm using `SetAlarm()',
+	waits for a message to come in either on the timer port or on
+	`eps's MIDI source.
+	If the first message to come in is on the timer port, then a
+	timeout has occurred. Otherwise, a MIDI message is waiting, so
+	check that it is of the correct type and cancel the alarm.
+
+   BUGS
+	Since the MIDI library will not send a message to the MIDI source
+	before it has been received in its entirety, it is necessary to
+	extend the timeout value artificially by the amount of time that
+	it takes for the message to arrive.
+
+   SEE ALSO
+	SendMsg()
+
+
+eps.lib/SendMsg                                               eps.lib/SendMsg
+
+   NAME   
+	SendMsg -- send a MIDI message to MIDI OUT
+
+   SYNOPSIS
+	error = SendMsg( eps, len, msg )
+
+	int SendMsg( struct EPSdesc *, ulong, uchar );
+
+   FUNCTION
+	Send the MIDI message in `msg' to the MIDI OUT port. This function
+	should not return until the entire message has been sent. The length
+	of the message is given by `len'.
+
+   INPUTS
+	eps		- EPS to send the message to.
+	len		- length of the message to be sent.
+	msg		- the MIDI message to send.
+
+   RESULT
+	error - 0 if successful, or a negative number in case of error.
+
+   NOTES
+	Uses the MIDI library to send a message to the EPS. Since this
+	is an atomic function, `SendMsg()' estimates the time it will
+	take to send the message, and waits that long before returning.
+
+   BUGS
+	The bit about waiting. Really ugly.
+
+   SEE ALSO
+	RecvMsg()
+
+
+eps.lib/SetAlarm                                             eps.lib/SetAlarm
+
+   NAME   
+	SetAlarm -- ask the timer for a delayed message
+
+   SYNOPSIS
+	error = SetAlarm( eps, timeout )
+
+	int SetAlarm( struct EPSdesc *, ULONG );
+
+   FUNCTION
+	Arrange for a message to be sent from the timer device after
+	`timeout' milliseconds.
+
+   INPUTS
+	eps		- the EPS on whose behalf we're acting.
+	timeout		- the time for the timer device to wait before
+			  answering, in milliseconds.
+
+   RESULT
+	none
+
+   NOTES
+	I'm not sure what would happen if several of these overlapped,
+	but I'm fairly sure that it never happens.
+
+
+eps.lib/StartPause                                         eps.lib/StartPause
+
+   NAME   
+	StartPause -- start an n-millisecond pause
+
+   SYNOPSIS
+	StartPause( eps, msec )
+
+	StartPause( struct EPSdesc *, ulong );
+
+   FUNCTION
+	Arrange things so that `EndPause()' will not return before `msec'
+	milliseconds have elapsed.
+
+   INPUTS
+	eps		- the EPS we are waiting for
+	msec		- the time to wait, in milliseconds.
+
+   RESULT
+	none
+
+   NOTES
+	Simply sets the alarm using `SetAlarm()'. `EndPause()' will wait
+	for it to expire.
+	The EPS can't handle too many commands coming in at once. There has
+	to be about a 100ms pause between commands. `StartPause()' and
+	`EndPause()', together, ensure that this pause occurs. `EndPause()'
+	will not return before N milliseconds have elapsed since the call
+	to `StartPause(N)'.
+	`EndPause()' is called before any EPS SysEx call, and `StartPause()'
+	is called at the end of every EPS SysEx call.
+
+   BUGS
+	Haven't seen any, sorry.
+
+   SEE ALSO
+	EndPause()
+
+
+eps.lib/epsAddWSData                                     eps.lib/epsAddWSData
+
+   NAME   
+	epsAddWSData -- add the data of two wavesamples together
+
+   SYNOPSIS
+	error = epsAddWSData( eps,inst,dest,from,to,dstart,noclip )
+
+	int epsAddWSData( struct EPSdesc *, edit_spec *, edit_spec *,
+	     ulong, ulong, ulong, int);
+
+   FUNCTION
+	Add the wavesample data of `inst', in the range `from'-`to' to
+	the wavesample `dest', starting at `dstart'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- source wavesample
+	dest		- destination wavesample
+	from		- start of source range, [0..fffff]
+	to		- end of source range, [0..fffff]
+	dstart		- start of destination range, [0..fffff]
+	noclip		- clip prevention flag, clear = 0, set = 1
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	`to' actually points one beyond the end of the range; so if you want
+	to add samples 0-511 inclusive of wavesample 1 to samples 1024-1535
+	inclusive of wavesample 2, and store the result in wavesample 2,
+	you would specify `to', `from' and `dstart' as 0, 512 and 1024
+	respectively.
+
+   BUGS
+	I don't know what the clip prevention flag does, so I don't know
+	whether it works.
+
+
+eps.lib/epsAuditionWS                                   eps.lib/epsAuditionWS
+
+   NAME   
+	epsAuditionWS -- audition two wavesamples and delete one.
+
+   SYNOPSIS
+	error = epsAuditionWS( eps, inst1, inst2, which, timeout )
+
+	int epsAuditionWS( struct EPSdesc *, edit_spec *, edit_spec *,
+		int *, (*int)());
+
+   FUNCTION
+	Audition the two wavesamples described in `inst1' and `inst2', and
+	delete the one that the user chooses not to keep. Typically, `inst1'
+	is an "old" wavesample, and `inst2' is a "new" wavesample, which was
+	created by performing some function on `inst1'.
+	`*which' will be set to 0 if the first wavesample was chosen, 1 if
+	the second one was chosen, or -1 if neither. `*which' is undefined in
+	case of error.
+	`timeout' points to a function that will be called when a timeout
+	occurs, to find out whether it's worth going on. It should return 0
+	if `AuditionWS()' should continue waiting, or 1 if a real timeout
+	has occurred. If `timeout' is NULL, then the first timeout will end
+	this whole business.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst1		- "old" wavesample
+	inst2		- "new" wavesample
+	which		- pointer to an int which will be set to a number
+			  corresponding to the wavesample that was deleted
+			  as a result of the audition
+	timeout		- pointer to a function to indicate whether a "real"
+			  timeout has occurred. Should return 0 for "no
+			  timeout," or 1 to indicate a timeout.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The `timeout' parameter has not been thoroughly tested. The only
+ 	reason it exists is that the EPS does not send an ACK immediately
+	after it receives the `Audition wavesample' command. Instead, it
+	will wait for the user to choose a wavesample to keep, delete the
+	other one, send a `Delete wavesample' message, and finally send
+	an ACK to acknowledge receipt of the `Audition wavesample' command.
+	The `timeout' parameter is just there to prevent the function from
+	hanging forever in case the EPS dies. It is called every 30 seconds,
+	and should return a nonzero value to indicate that a real timeout
+	has occurred, and that we should just give up.
+
+   BUGS
+	Probably lots. This is not one of my favorite functions.
+
+
+eps.lib/epsClearWSData                                 eps.lib/epsClearWSData
+
+   NAME   
+	epsClearWSData -- set a portion of a wavesample to zeros
+
+   SYNOPSIS
+	error = epsClearWSData( eps, inst, from, to )
+
+	int epsClearWSData( struct EPSdesc *, edit_spec *, ulong, ulong );
+
+   FUNCTION
+	Clear the wavesample of 'eps' described in 'inst', in the range
+	'from'-'to'. The affected samples will be set to 0, effectively
+	creating an area of silence.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- wavesample to clear.
+	from		- start of range, [0..fffff].
+	to		- end of range, [0..fffff].
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The `to' parameter is one beyond the end of the real range. Thus, if
+	you want to clear the samples 1000-2000 inclusive, you would specify
+	`from' and `to' as 1000 and 2001, respectively.
+
+
+eps.lib/epsCopyInstrument                           eps.lib/epsCopyInstrument
+
+   NAME   
+	epsCopyInstrument -- make a copy of an instrument
+
+   SYNOPSIS
+	error = epsCopyInstrument( inst, dest )
+
+	int epsCopyInstrument( struct EPSdesc *, edit_spec *, edit_spec * );
+
+   FUNCTION
+	Copy the instrument described by `inst' to the location described
+	by `dest'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- source instrument.
+	dest		- destination instrument.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The source instrument must exist.
+	The destination instrument must not exist.
+
+   SEE ALSO
+	epsCreateInstrument(), epsDeleteInstrument(), epsSaveInstrument()
+
+
+eps.lib/epsCopyLayer                                     eps.lib/epsCopyLayer
+
+   NAME   
+	epsCopyLayer -- make a copy of a layer
+
+   SYNOPSIS
+	error = epsCopyLayer( eps, inst, dest, copy )
+
+	int epsCopyLayer( struct EPSdesc *, edit_spec *, edit_spec *, int );
+
+   FUNCTION
+	Copy the layer described by `inst' to the layer described by `dest'.
+	If the `copy' flag is set, then the wavesample data within the source
+	layer will be copied as well.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- source layer.
+	dest		- destination layer.
+	copy		- copy flag, 0=don't copy data, 1=copy data.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	I'm not sure whether the destination layer may already exist or not.
+
+   SEE ALSO
+	epsCreateLayer(), epsDeleteLayer()
+
+
+eps.lib/epsCopyWS                                           eps.lib/epsCopyWS
+
+   NAME   
+	epsCopyWS -- make a copy of a wavesample
+
+   SYNOPSIS
+	error = epsCopyWS( eps, inst, dest, copy )
+
+	int epsCopyWS( struct EPSdesc *, edit_spec *, edit_spec *, int );
+
+   FUNCTION
+	Copy the wavesample given in `inst' to `dest'. If `copy' is set,
+	then the wavesample data will be copied as well; otherwise, the
+	destination wavesample will merely contain a link to the data.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- source wavesample.
+	dest		- destination layer.
+	copy		- copy flag; 0=don't copy wavesample data, 1=copy
+			  wavesample data.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The EPS seems to ignore the wavesample number given in `inst'. I
+	haven't made a rigorous analysis of how it allocates the next
+	wavesample number.
+	I'm not sure what happens to the wavesample data, especially when
+	copying across instruments.
+
+   SEE ALSO
+	epsCopyWSData(), epsCreateWS(), epsDeleteWS()
+
+
+eps.lib/epsCopyWSData                                   eps.lib/epsCopyWSData
+
+   NAME   
+	epsCopyWSData -- copy sample data from one wavesample to another
+
+   SYNOPSIS
+	error = epsCopyWSData( eps, inst, dest, from, to )
+
+	int epsCopyWSData
+		( struct EPSdesc *, inst_spec *, inst_spec *, ulong, ulong )
+
+   FUNCTION
+	Copy wavesample data from the wavesample given by `inst', in the
+	range `from'-`to' to the wavesample given by `dest'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- source wavesample.
+	dest		- destination wavesample.
+	from		- start of data range, [0..fffff].
+	to		- end of data range, [0..fffff].
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The destination wavesample must already exist.
+
+   SEE ALSO
+	epsCopyWS(), epsCreateWS(), epsDeleteWS()
+
+
+eps.lib/epsCreateInstrument                       eps.lib/epsCreateInstrument
+
+   NAME   
+	epsCreateInstrument -- create a new instrument
+
+   SYNOPSIS
+	error = epsCreateInstrument( eps, inst )
+
+	int epsCreateInstrument( struct EPSdesc *, edit_spec * );
+
+   FUNCTION
+	Create a new instrument with the instrument number given in `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- instrument to be created.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The new instrument will have no layers or wavesamples.
+	The instrument must not already exist.
+
+   SEE ALSO
+	epsCopyInstrument(), epsDeleteInstrument()
+
+
+eps.lib/epsCreateLayer                                 eps.lib/epsCreateLayer
+
+   NAME   
+	epsCreateLayer -- create a new layer
+
+   SYNOPSIS
+	error = epsCreateLayer( eps, inst )
+
+	int epsCreateLayer( struct EPSdesc *, edit_spec * );
+
+   FUNCTION
+	Create a new layer within the instrument given by `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- number of the instrument in which to create the
+			  new layer.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The EPS ignores any layer number given in `inst'. I haven't made a
+	rigorous analysis of how it allocates the next layer number.
+
+   SEE ALSO
+	epsCopyLayer(), epsDeleteLayer()
+
+
+eps.lib/epsCreatePreset                               eps.lib/epsCreatePreset
+
+   NAME   
+	epsCreatePreset -- create a preset
+
+   SYNOPSIS
+	error = epsCreatePreset( eps, pnum )
+
+	int epsCreatePreset( struct EPSdesc *, int );
+
+   FUNCTION
+	Create a preset with the current selection of instruments and
+	patches. The preset number is given by `pnum'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	pnum		- preset number, [0..7].
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	Not thoroughly tested.
+
+
+eps.lib/epsCreateWS                                       eps.lib/epsCreateWS
+
+   NAME   
+	epsCreateWS -- create a new wavesample with a short, square waveform
+
+   SYNOPSIS
+	error = epsCreateWS( eps, inst )
+
+	int epsCreateWS( struct EPSdesc *, edit_spec * );
+
+   FUNCTION
+	Create the wavesample given in `inst'. It will contain a two-sample
+	square wave.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample to be created.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The wavesample must not already exist.
+	The EPS seems to ignore the wavesample number in `inst'. I haven't
+	made a rigorous analysis of how it allocates the next wavesample
+	number.
+
+   SEE ALSO
+	epsCopyWS(), epsCopyWSData(), epsDeleteWS()
+
+
+eps.lib/epsDeleteInstrument                       eps.lib/epsDeleteInstrument
+
+   NAME   
+	epsDeleteInstrument -- delete an instrument
+
+   SYNOPSIS
+	error = epsDeleteInstrument( eps, inst )
+
+	int epsDeleteInstrument( struct EPSdesc *, edit_spec * );
+
+   FUNCTION
+	Delete the instrument whose number is given in `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- number of the instrument to be deleted.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The instrument must already exist.
+
+   SEE ALSO
+	epsCreateInstrument(), epsCopyInstrument()
+
+
+eps.lib/epsDeleteLayer                                 eps.lib/epsDeleteLayer
+
+   NAME   
+	epsDeleteLayer -- delete a given layer
+
+   SYNOPSIS
+	error = epsDeleteLayer( eps, inst )
+
+	int epsDeleteLayer( struct EPSdesc *, edit_spec * );
+
+   FUNCTION
+	Delete the layer whose number, and the number of the instrument it
+	is contained in, are given in `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- number of the layer to delete, and the number of
+			  the instrument it is contained in.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The layer must already exist.
+
+   SEE ALSO
+	epsCopyLayer(), epsCreateLayer()
+
+
+eps.lib/epsDeleteWS                                       eps.lib/epsDeleteWS
+
+   NAME   
+	epsDeleteWS -- delete a wavesample
+
+   SYNOPSIS
+	error = epsDeleteWS( eps, inst )
+
+	int epsDeleteWS( struct EPSdesc *, edit_spec * );
+
+   FUNCTION
+	Delete the wavesample given in `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample to be deleted.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The wavesample must already exist.
+	The wavesample data will be deleted, and its memory freed, only
+	if `inst' was the only (last) wavesample that used it.
+
+   SEE ALSO
+	epsCopyWS(), epsCopyWSData(), epsDeleteWS()
+
+
+eps.lib/epsFadeInWSData                               eps.lib/epsFadeInWSData
+
+   NAME   
+	epsFadeInWSData -- fade in a wavesample data in a given range
+
+   SYNOPSIS
+	error = epsFadeInWSData( eps, inst, from, to, depth )
+
+	int epsFadeInWSData
+		( struct EPSdesc *, edit_spec *, ulong, ulong, int );
+
+   FUNCTION
+	Fade in the wavesample data of `inst', in the range `from'-`to'.
+	`depth' gives the scale ramp depth; it must be in the range 0-6,
+	corresponding to 3.0 dB - 6.0 dB respectively.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample to fade in.
+	from		- data range start, [0..fffff].
+	to		- data range end, [0..fffff].
+	depth		- scale ramp depth, [0..6], 0=3.0 dB, 1=3.5 dB, ...
+			  6=6.0 dB.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   SEE ALSO
+	epsFadeOutWSData()
+
+
+eps.lib/epsFadeOutWSData                             eps.lib/epsFadeOutWSData
+
+   NAME   
+	epsFadeOutWSData -- fade out a wavesample data in a given range
+
+   SYNOPSIS
+	error = epsFadeOutWSData( eps, inst, from, to, depth )
+
+	int epsFadeOutWSData
+		( struct EPSdesc *, edit_spec *, ulong, ulong, int );
+
+   FUNCTION
+	Fade out the wavesample data of `inst', in the range `from'-`to'.
+	`depth' gives the scale ramp depth; it must be in the range 0-6,
+	corresponding to 3.0 dB - 6.0 dB respectively.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample to fade out.
+	from		- data range start, [0..fffff].
+	to		- data range end, [0..fffff].
+	depth		- scale ramp depth, [0..6], 0=3.0 dB, 1=3.5 dB, ...
+			  6=6.0 dB.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   SEE ALSO
+	epsFadeInWSData()
+
+
+eps.lib/epsGetInstrument                             eps.lib/epsGetInstrument
+
+   NAME   
+	epsGetInstrument -- get instrument parameters
+
+   SYNOPSIS
+	error = epsGetInstrument( eps, inst, out )
+
+	int epsGetInstrument( struct EPSdesc *, edit_spec *, inst_par * );
+
+   FUNCTION
+	Get the instrument parameters for the instrument given in `inst'.
+	The result will be put in `out'. The parameters are described in
+	"eps.h".
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the instrument whose parameters are to be retrieved
+	out		- pointer to a `inst_par' structure whose fields will
+			  be filled in with the parameters of the instrument.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The fields of `out' are documented in "eps.h".
+	In case of error, the values in `out' are undefined.
+
+   BUGS
+	The size value returned may or may not be that shown on the front
+	panel of the EPS. I have discovered no correlation between the
+	two.
+
+   SEE ALSO
+	eps.h, epsPutInstrument()
+
+
+eps.lib/epsGetLayer                                       eps.lib/epsGetLayer
+
+   NAME   
+	epsGetLayer -- get layer parameters
+
+   SYNOPSIS
+	error = epsGetLayer( eps, inst, out )
+
+	int epsGetLayer( struct EPSdesc *, edit_spec *, layer_par * );
+
+   FUNCTION
+	Get the layer parameters for the layer given in `inst'. The result
+	will be put in `out'. The parameters are described in "eps.h".
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- layer whose parameters are to be retrieved.
+	out		- pointer to a `layer_par' structure whose fields
+			  will be filled in with the layer parameters.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The fields of `out' are documented in "eps.h"
+	In case of error, the value of the fields in `out' are undefined.
+
+   SEE ALSO
+	eps.h, epsPutLayer()
+
+
+eps.lib/epsGetParameter                               eps.lib/epsGetParameter
+
+   NAME   
+	epsGetParameter -- get the value of a given parameter
+
+   SYNOPSIS
+	error = epsGetParameter( eps, inst, par, out )
+
+	int epsGetParameter( struct EPSdesc *, edit_spec *, int, ulong * );
+
+   FUNCTION
+	Get the value of parameter `par'. The relevant instrument, layer and
+	wavesample numbers are passed in `inst'. The value of the parameter
+	is returned in `out'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- instrument, layer and wavesample numbers. May be
+			  ignored if irrelevant.
+	par		- parameter number.
+	out		- points to a `ulong' which will be set to the value
+			  of the parameter.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The parameter numbers are listed in "eps.h".
+	Parameter numbers are sometimes different between the EPS Classic
+	and the EPS 16+. This routine does not try to figure out what the
+	user meant.
+
+   SEE ALSO
+	eps.h, epsPutParameter()
+
+
+eps.lib/epsGetPitchTable                             eps.lib/epsGetPitchTable
+
+   NAME   
+	epsGetPitchTable -- get pitch table data for a layer
+
+   SYNOPSIS
+	error = epsGetPitchTable( eps, inst, ptab )
+
+	int epsGetPitchTable( struct EPSdesc *, edit_spec *, pitch_tab * );
+
+   FUNCTION
+	Get the pitch table for the layer described in `inst'. The pitch
+	table is returned by filling in `*ptab'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the layer whose pitch table is to be retrieved.
+	ptab		- pointer to a `pitch_tab' structure which will be
+			  filled in with the layer's pitch table.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	I don't really know whether this works, since I don't know what
+	a pitch table is or what it does. I do know that if I fiddle with
+	the pitch table on the EPS, then something different comes out on
+	this end.
+
+   SEE ALSO
+	eps.h, epsPutPitchTable()
+
+
+eps.lib/epsGetWS                                             eps.lib/epsGetWS
+
+   NAME   
+	epsGetWS -- get wavesample parameters
+
+   SYNOPSIS
+	error = epsGetWS( eps, inst, out )
+
+	int epsGetWS( struct EPSdesc *, edit_spec *, ws_par * );
+
+   FUNCTION
+	Get the parameters for the wavesample described in `inst'. The
+	results will be put in `out'. The parameters are described in
+	"eps.h".
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- wavesample whose parameters are to be returned.
+	out		- pointer to a `ws_par' structure whose fields will
+			  be filled with the wavesample parameters.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The fields of `out' are documented in "eps.h".
+	In case of error, the values of the fields in `out' are undefined.
+
+   SEE ALSO
+	eps.h, epsPutWS()
+
+
+eps.lib/epsGetWSData                                     eps.lib/epsGetWSData
+
+   NAME   
+	epsGetWSData -- get wavesample data
+
+   SYNOPSIS
+	error = epsGetWSData( eps, inst, from, to, out )
+
+	int epsGetWSData
+		( struct EPSdesc *, edit_spec *, ulong, ulong, short * );
+
+   FUNCTION
+	Get the wavesample data for the wavesample described in `inst', in
+	the range `from'-`to'. The sample values are returned in `out'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- wavesample whose values are to be read.
+	from		- start of range, [0..fffff].
+	to		- end of range, [0..fffff].
+	out		- pointer to an array of `short's, to which the
+			  sample values will be written.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The `to' parameter actually points one beyond the end of the data
+	range. Thus, if you wanted to retrieve the samples in the range
+	1000-2000 inclusive, you would specify `from' and `to' as 1000 and
+	2001, respectively.
+
+   BUGS
+	I'm not sure what happens when you specify an invalid data range.
+
+   SEE ALSO
+	epsPutWSData()
+
+
+eps.lib/epsGetWSOverview                             eps.lib/epsGetWSOverview
+
+   NAME   
+	epsGetWSOverview -- get an overview of a given wavesample
+
+   SYNOPSIS
+	error = epsGetWSOverview( eps, inst, from, to, out )
+
+	int epsGetWSOverview
+		( struct EPSdesc *, edit_spec *, ulong, ulong, short[512] );
+
+   FUNCTION
+	Get an overview of the wavesample described in `inst', in the range
+	`from'-`to'. This function fills an array of 512 shorts containing
+	the value of the maximum value, in absolute value, in the
+	corresponding chunk of the wavesample. That is to say, it chops the
+	range `from'-`to' into 512 chunks; for each chunk, it takes the
+	absolute value of each sample, and returns the maximum.
+	This function gives a nice, concise picture of the waveform, and is
+	primarily intended for people writing graphical editors.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample whose overview is to be returned.
+	from		- start of data range, [0..fffff].
+	to		- end of data range, [0..fffff].
+	out		- pointer to an array of 512 `short's, into which
+			  the overview will be written.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	Apparently, this function does a simple right-shift 9 to get the
+	length of each chunk to be analyzed (probably in the interest of
+	simplicity), and regards all sample values past the end of the
+	wavesample as having value 0.
+	There is no corresponding `epsPutWSOverview()' function.
+
+   BUGS
+	I haven't managed to get this function to work without hanging my
+	EPS in a weird state. According to the folks at Ensoniq, this may
+	be because the OS has trouble recognizing the memory expansion.
+
+
+eps.lib/epsInvertWSData                               eps.lib/epsInvertWSData
+
+   NAME   
+	epsInvertWSData -- invert the wavesample data in a given range
+
+   SYNOPSIS
+	error = epsInvertWSData( eps, inst, from, to )
+
+	int epsInvertWSData( struct EPSdesc *, edit_spec *, ulong, ulong );
+
+   FUNCTION
+	Invert the wavesample data of the wavesample given in `inst' in the
+	range `from'-`to', i.e. multiply it by -1.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- wavesample to be inverted.
+	from		- data range start, [0..fffff].
+	to		- data range end, [0..fffff].
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The `to' parameter actually points one beyond the end of the range.
+	Thus, if you wanted to invert samples 1000-1999 inclusive, you would
+	specify `from' and `to' as 1000 and 2000, respectively.
+
+
+eps.lib/epsMixWSData                                     eps.lib/epsMixWSData
+
+   NAME   
+	epsMixWSData -- mix the data of two wavesamples
+
+   SYNOPSIS
+	error = epsMixWSData( eps, inst, dest, balance )
+
+	int epsMixWSData( struct EPSdesc *, edit_spec *, edit_spec *, int );
+
+   FUNCTION
+	Mix the wavesample data of `inst' with that of `dest'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- source wavesample.
+	dest		- destination wavesample.
+	balance		- balance control, [-127..127], -127=all source,
+			  0=equal balance, 127=all destination.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+
+eps.lib/epsNormalizeGain                             eps.lib/epsNormalizeGain
+
+   NAME   
+	epsNormalizeGain -- amplify a wavesample to the full signal range
+
+   SYNOPSIS
+	error = epsNormalizeGain( eps, inst )
+
+	int epsNormalizeGain( struct EPSdesc *, edit_spec * );
+
+   FUNCTION
+	Normalize the gain of the wavesample described in `inst', i.e.,
+	amplify it up to the full signal range.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample to be normalized.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   BUGS
+	On an EPS Classic running OS 2.49, this function never returns
+	any response. Consequently, this function returns 0 in case of
+	timeout.
+
+
+eps.lib/epsPushButton                                   eps.lib/epsPushButton
+
+   NAME   
+	epsPushButton -- virtual button press
+
+   SYNOPSIS
+	error = epsPushButton( eps, but )
+
+	int epsPushButton( struct EPSdesc *, int );
+
+   FUNCTION
+	Emulate a button press via MIDI, as if it had been pressed on the
+	front panel of the EPS.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	but		- number of the button to press. A list of button
+			  numbers is given in "eps.h".
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	This function should only be used when it is impossible to achieve
+	the desired result with another command.
+
+   BUGS
+	Does not always work. For example, it does not seem possible to
+	load an instrument from disk using only virtual button presses.
+
+   SEE ALSO
+	eps.h
+
+
+eps.lib/epsPutInstrument                             eps.lib/epsPutInstrument
+
+   NAME   
+	epsPutInstrument -- send instrument parameters to the EPS
+
+   SYNOPSIS
+	error = epsPutInstrument( eps, inst, par )
+
+	int epsPutInstrument( struct EPSdesc *, edit_spec *, inst_par * );
+
+   FUNCTION
+	Send the instrument parameters given in `par' to the instrument of
+	`eps' described in `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- instrument whose parameters are to be set.
+	par		- pointer to a `inst_par' structure containing the
+			  values of the instrument parameters.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The instrument parameters are documented in "eps.h".
+	A few of the parameters are ignored, in particular the instrument
+	size.
+
+   SEE ALSO
+	eps.h, epsGetInstrument()
+
+
+eps.lib/epsPutLayer                                       eps.lib/epsPutLayer
+
+   NAME   
+	epsPutLayer -- send layer parameters to the EPS
+
+   SYNOPSIS
+	error = epsPutLayer( eps, inst, par )
+
+	int epsPutLayer( struct EPSdesc *, edit_spec *, layer_par * );
+
+   FUNCTION
+	Send the layer parameters given in `par' to the layer of `eps'
+	described in `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample whose parameters are to be set.
+	par		- pointer to a `layer_par' structure containing the
+			  values of the parameters.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The parameters in `par' are described in "eps.h".
+
+   SEE ALSO
+	eps.h, epsGetLayer()
+
+
+eps.lib/epsPutParameter                               eps.lib/epsPutParameter
+
+   NAME   
+	epsPutParameter -- set a given parameter's value
+
+   SYNOPSIS
+	error = epsPutParameter( eps, inst, par, value )
+
+	int epsPutParameter( struct EPSdesc *, edit_spec *, par, value );
+
+   FUNCTION
+	Set the value of parameter `par' to the value `value'. The
+	instrument, layer and wavesample numbers are given in `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- instrument, layer and wavesample numbers. These
+			  may be ignored, if irrelevant.
+	par		- parameter number.
+	value		- parameter value.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The parameter numbers are listed in "eps.h".
+	Some parameter numbers are different between the EPS Classic and
+	the EPS 16+. This routine does not try to figure out what the Right
+	Thing to do is.
+
+   SEE ALSO
+	eps.h, epsGetParameter()
+
+
+eps.lib/epsPutPitchTable                             eps.lib/epsPutPitchTable
+
+   NAME   
+	epsPutPitchTable -- send pitch data for a given layer
+
+   SYNOPSIS
+	error = epsPutPitchTable( eps, inst, ptab )
+
+	int epsPutPitchTable( struct EPSdesc *, edit_spec *, pitch_tab * );
+
+   FUNCTION
+	Send the pitch table given in `ptab' to the layer of `eps' described
+	in `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- layer to send the pitch table data to.
+	ptab		- pitch table to send.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The `pitch_tab' structure is described in "eps.h".
+	This has not been thoroughly tested.
+
+   SEE ALSO
+	eps.h, epsGetPitchTable()
+
+
+eps.lib/epsPutWS                                             eps.lib/epsPutWS
+
+   NAME   
+	epsPutWS -- send wavesample parameters to the EPS
+
+   SYNOPSIS
+	error = epsPutWS( eps, inst, par )
+
+	int epsPutWS( struct EPSdesc *, edit_spec *, ws_par * );
+
+   FUNCTION
+	Send the wavesample parameters given in `par' to the wavesample of
+	`eps' described in `inst'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- wavesample whose parameters are to be set.
+	par		- pointer to a `ws_par' structure giving the
+			  parameter values.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The parameters are documented in "eps.h".
+
+   SEE ALSO
+	eps.h, epsGetWS()
+
+
+eps.lib/epsPutWSData                                     eps.lib/epsPutWSData
+
+   NAME   
+	epsPutWSData -- send wavesample data to the EPS
+
+   SYNOPSIS
+	error = epsPutWSData( eps, inst, from, to, data )
+
+	int epsPutWSData
+		( struct EPSdesc *, edit_spec *, ulong, ulong, short * );
+
+   FUNCTION
+	Send the wavesample data given in `data' to the wavesample given
+	in `inst', in the range `from'-`to'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- wavesample to send the data to.
+	from		- start of data range, [0..fffff].
+	to		- end of data range, [0..fffff].
+	data		- pointer to an array of `short's containing the
+			  wavesample data.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The `to' parameter actually points one past the end of the range. If
+	you wanted to send the samples from 1000 to 1999 inclusive, you would
+	specify `from' and `to' as 1000 and 2000, respectively.
+
+   BUGS
+	I don't know what happens if you specify an invalid range. It may
+	barf, or it may extend the wavesample by the necessary amount.
+
+   SEE ALSO
+	epsGetWSData()
+
+
+eps.lib/epsReplicateWSData                         eps.lib/epsReplicateWSData
+
+   NAME   
+	epsReplicateWSData -- make copies of wavesample data to fill a block
+
+   SYNOPSIS
+	error = epsReplicateWSData( eps, inst, from, to )
+
+	int epsReplicateWSData
+		( struct EPSdesc *, edit_spec *, ulong, ulong );
+
+   FUNCTION
+	Fills the wavesample given by `inst' by appending the wavesample
+	data in the range `from'-`to' to itself repeatedly until it fills
+	the entire sample (i.e., from `sstart_off' to `send_off' in the
+	`ws_par').
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample to be replicated.
+	from		- data range start, [0..fffff].
+	to		- data range end, [0..fffff].
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	I'm not sure what happens if you choose a range in the middle of
+	a wavesample.
+
+
+eps.lib/epsReverseWSData                             eps.lib/epsReverseWSData
+
+   NAME   
+	epsReverseWSData -- reverse the wavesample data in a given range
+
+   SYNOPSIS
+	error = epsReverseWSData( eps, inst, from, to )
+
+	int epsReverseWSData( struct EPSdesc *, edit_spec *, ulong, ulong );
+
+   FUNCTION
+	Reverse (i.e., play backward) the wavesample data of the wavesample
+	given in `inst', in the range `from'-`to'.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample to be reversed.
+	from		- data range start, [0..fffff].
+	to		- data range end, [0..fffff].
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	The `to' parameter actually points one past the end of the data
+	range. Thus, if you wanted to reverse the samples from 1000 to 1999
+	inclusive, you would specify `from' and `to' as 1000 and 2000,
+	respectively.
+
+
+eps.lib/epsScaleWSData                                 eps.lib/epsScaleWSData
+
+   NAME   
+	epsScaleWSData -- scale the data in a wavesample between two points
+
+   SYNOPSIS
+	error = epsScaleWSData( eps, inst, from, to, sfstart, sfs_fract,
+		sfend, sfe_fract, depth )
+
+	int epsScaleWSData( struct EPSdesc *, edit_spec *, ulong, ulong,
+		int, int, int, int );
+
+   FUNCTION
+	Scale the wavesample described in `inst', in the range `from'-`to',
+	based on a scaling ramp.
+	`sfstart', `sfs_fract', `sfend' and `sfe_fract' give the start and
+	end scale factors, as integer/fraction pairs.
+	`depth' gives the scale ramp depth.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- wavesample to be scaled.
+	from		- data range start.
+	to		- data range end.
+	sfstart		- integer part of scale factor start point, [0..127].
+	sfs_fract	- fractional part of scale factor start point,
+			  [0..127].
+	sfend		- integer part of scale factor end point, [0..127].
+	sfe_fract	- fractional part of scale factor end point,
+			  [0..127].
+	depth		- scale ramp depth, [0..6], 0=3.0 dB, 1=3.5 dB, ...
+			  6=6.0 dB.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	I don't understand what this does.
+	Not thoroughly tested.
+	The Ensoniq documentation says that `sfstart' and `sfend' are in
+	the range [0..255], and that `sfs_fract' and `sfe_fract' are in the
+	range [0..99]. It lies. They are all in the range [0..127].
+
+
+eps.lib/epsTruncateWS                                   eps.lib/epsTruncateWS
+
+   NAME   
+	epsTruncateWS -- delete any unused data in a wavesample
+
+   SYNOPSIS
+	error = epsTruncateWS( eps, inst )
+
+	int epsTruncateWS( struct EPSdesc *, edit_spec * );
+
+   FUNCTION
+	Truncates a wavesample, by freeing up the memory before the sample
+	start and after the sample end.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample to be truncated.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	If the wavesample given in `inst' is a copy, this command will only
+	free the memory that is not used by any of the copies. Nor will the
+	EPS delete any samples that are part of a loop.
+
+
+eps.lib/epsVolumeSmoothing                         eps.lib/epsVolumeSmoothing
+
+   NAME   
+	epsVolumeSmoothing -- equalize the amplitude of a wavesample range
+
+   SYNOPSIS
+	error = epsVolumeSmoothing( eps, inst, from, to, depth, smooth )
+
+	int epsVolumeSmoothing
+		( struct EPSdesc *, edit_spec *, ulong, ulong, int, int );
+
+   FUNCTION
+	Make the amplitude of the wavesample given in `inst' the same
+	throughout the range `from'-`to'. The amplitude will be set to that
+	at `from'. This functions like a digital dynamic compressor.
+
+   INPUTS
+	eps		- descriptor for the EPS to send the command to.
+	inst		- the wavesample to be smoothened.
+	from		- data range start, [0..fffff].
+	to		- data range end, [0..fffff].
+	depth		- scale ramp depth, [0..6], 0=3.0 dB, 1=3.5 dB, ...
+			  6=6.0 dB.
+	smooth		- smoothness parameter, [0..4], 0=very fine,
+			  4=very coarse.
+
+   RESULT
+	error - zero for success, a positive number giving the last response
+		returned by the EPS, or a negative number in case of library
+		error.
+
+   NOTES
+	I'm not sure I understand all of this.
+
+
+eps.lib/isleep                                                 eps.lib/isleep
+
+   NAME   
+	isleep -- do nothing for a given number of milliseconds
+
+   SYNOPSIS
+	error = isleep( eps, n )
+
+	isleep( struct EPSdesc *, long );
+
+   FUNCTION
+	Do nothing for at least `n' milliseconds.
+
+   INPUTS
+	eps		- descriptor for the EPS that is being slept on.
+
+   RESULT
+	none
+
+   NOTES
+	Simply sets the alarm with `SetAlarm()' and waits for it to
+	expire.
+	The `i' doesn't stand for anything.
+
+
+

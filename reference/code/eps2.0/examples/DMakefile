@@ -1,0 +1,13 @@
+CC = gcc
+CFLAGS = -Iproj:include
+LIBS = -leps -lmidi -lamiga
+SRCS = distort.c
+OBJS = distort.o
+
+all:	distort
+
+$(OBJS) : $(SRCS)
+	$(CC) -c $(CFLAGS) -o %(left) -c %(right)
+
+distort:	distort.o
+	$(CC) -o distort distort.o $(LIBS)

@@ -1,0 +1,59 @@
+MANIFEST		This file
+README			Overview of this distribution
+DMakefile		Makefile for DMake
+eps.lib			EPS SysEx library, DICE version
+libeps.a		EPS SysEx library, Amiga GCC version
+doc/eps.doc		Documentation for the EPS SysEx library
+doc/makeauto		Amiga script to generate the documentation
+doc/makeauto.pl		Perl script to generate the documentation
+doc/PORTING		Guidelines on porting the library to other platforms
+examples/DMakefile	Makefile for DMake
+examples/pretty.c	A pretty demo
+examples/distort.c	Demo: add distortion to a wavesample
+include/eps.h		Definitions and stuff for the library
+include/eps_protos.h	Function declarations to make GCC happy
+libsrc/DMakefile	Makefile for DMake
+libsrc/eps.c		System-independent utility functions
+libsrc/addwsdata.c	Add wavesample data
+libsrc/auditws.c	Audition wavesamples
+libsrc/button.c		Virtual button press
+libsrc/cfloop.c		Cross-fade loop (doesn't work)
+libsrc/clearwsdata.c	Clear wavesample data
+libsrc/copyinst.c	Copy instrument
+libsrc/copylayer.c	Copy layer
+libsrc/copyws.c		Copy wavesample parameters
+libsrc/copywsdata.c	Copy wavesample data
+libsrc/creinst.c	Create instrument
+libsrc/crelayer.c	Create layer
+libsrc/crepreset.c	Create preset
+libsrc/crews.c		Create wavesample
+libsrc/delinst.c	Delete instrument
+libsrc/dellayer.c	Delete layer
+libsrc/delws.c		Delete wavesample
+libsrc/finwsdata.c	Fade in wavesample data
+libsrc/foutwsdata.c	Fade out wavesample data
+libsrc/getinst.c	Get instrument parameters
+libsrc/getlayer.c	Get layer parameters
+libsrc/getparameter.c	Get parameter value
+libsrc/getpitch.c	Get pitch table
+libsrc/getws.c		Get wavesample parameters
+libsrc/getwsdata.c	Get wavesample data
+libsrc/getwsover.c	Get wavesample overview
+libsrc/invwsdata.c	Invert wavesample data
+libsrc/mixwsdata.c	Mix wavesample data
+libsrc/normgain.c	Normalize gain
+libsrc/putinst.c	Put instrument parameters
+libsrc/putlayer.c	Put layer parameters
+libsrc/putparameter.c	Put parameter value
+libsrc/putpitch.c	Put pitch table
+libsrc/putws.c		Put wavesample parameters
+libsrc/putwsdata.c	Put wavesample data
+libsrc/repwsdata.c	Replicate wavesample data
+libsrc/revwsdata.c	Reverse wavesample data
+libsrc/saveinst.c	Save instrument
+libsrc/scalewsdata.c	Scale wavesample data
+libsrc/truncws.c	Truncate wavesample
+libsrc/volsmooth.c 	Volume smoothing
+libsrc/amiga/midi.c	Amiga-specific MIDI routines
+libsrc/generic/midi.c	Generic prototypes for MIDI routines
+libsrc/msdos/mpu.h	Roland MPU-401 specific definitions

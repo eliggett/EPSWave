@@ -1,0 +1,92 @@
+===== Introduction
+
+	This is version 2 of my long-promised EPS System Exclusive
+routine library. The routines contained in this distribution implement
+a large subset of the routines found in Ensoniq's "EPS Performance
+Sampler External Command Specification" and should be useful to anyone
+writing code to control the EPS via MIDI.
+	This library should be easy to port to just about any reasonable
+architecture. I welcome any comments. Although I'm not asking for any
+money for this, I'd appreciate it if you'd drop me a line if you use this
+code. I can be reached at
+		arensb@kong.gsfc.nasa.gov
+
+	Disclaimer: this software is distributed without any guarantees
+whatsoever, either express or implied. In particular, while I have tried
+to write code that works on a much broader range of hardware and software
+configurations than what was available to me, in many cases it was
+impossible for me to test this code.
+
+===== Installation
+
+	This distribution comes with one pre-compiled library: libeps.a
+is a GCC library for the Amiga. If you're using GCC, copy 'libeps.a' to
+lib:, copy the include files to usr:include, and you're ready to go
+(once you've RTFM, of course). Otherwise, read on.
+	Throughout this distribution, you will find files called
+'DMakefile'. These are Makefiles for Matt Dillon's 'DMake' utility. It
+should be easy to convert them to conventional Makefiles: just rename
+them to "Makefile" and edit them to suit your system. There are comments
+throughout, to help you.
+	From the top-level directory, run 'DMake' (or 'make', or whatever)
+to have it build the library and documentation.
+
+	If, for some reason, you can't run 'make' or can't adapt the
+DMakefiles easily to your system, the 'libsrc' directory contains the
+sources for the library, one function per file (mostly). As for the
+details of building them into a coherent library, you're on your own.
+
+	If you're porting this library to a new architecture, read the
+'doc/PORTING' file for directions and guidelines.
+
+===== New features
+
+	Version 2 is a complete ground-up rewrite of version 1. If you
+have any copies of version 1 lying around, delete them. This version is
+much nicer. Much, *much* nicer. Features include:
+
+- Almost complete implementation of the EPS External Command Specification
+  from Ensoniq. The only functions that haven't been included are the
+  looping functions, since I haven't been able to figure out how to do
+  them entirely via MIDI.
+
+- EPS 16+ support. Well, I think it ought to work on a 16+. I only have
+  a Classic to test this on, unfortunately (you _could_, of course, send
+  me a donation to allow me to buy this beast).
+
+- Portability. This release contains one (!) system-dependent file:
+  'libsrc/amiga/midi.c', and a few Amiga-specific fields in 'include/eps.h'.
+  I've tried very hard to make this as portable as possible to just about
+  any system (as a former MS-DOS 3.1 user, I had some idea of what not
+  to expect from an OS :-) ).
+
+- Multiple EPSs. You can communicate with several EPSs independently
+  simultaneously.
+
+- Provisions for SCSI. Unfortunately, my EPS doesn't have SCSI (yet), but
+  I've planned for the day when it will: none of the library functions
+  assume MIDI as the underlying medium, only the auxiliary functions do;
+  this should make it easy to add SCSI support.
+
+- Consistent naming conventions and argument lists. Version 1 of this
+  library suffered from the fact that similar functions did not always
+  have similar argument lists. Version 2 fixes this: all functions
+  are of type 'int', have descriptive names, and take similar argument
+  lists.
+
+- Sane return values. Version 1 of this library returned some pretty
+  arbitrary values at times. In particular, start-of-wavesample offsets
+  were represented differently from end-of-wavesample offsets, and
+  neither of them was the same as what the EPS displayed on its front
+  panel. Version 2 eliminates this: all offsets are of the same type,
+  all are normalized to be the same as what the EPS displays, sample
+  values are normalized to 15 bits + sign, and so forth.
+
+- Extensive documentation. Each function is documented within its own
+  source code, making it easy to keep functionality and documentation
+  in sync. The Amiga 'autodoc' utility (and my Perl clone thereof)
+  extract the documentation from the source and compile it into a
+  consistent, alphabetized reference document.
+
+- Examples. Okay, so there's only two of them. But they should make it
+  easier to get started.

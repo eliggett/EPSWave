@@ -1,0 +1,5 @@
+.KEY filename/A
+.BRA <
+.KET >
+autodoc -I -C > /doc/eps.doc <filename>
+delete <filename>

@@ -1,0 +1,27 @@
+	Porting to other platforms:
+
+	This library was developed on an Amiga 3000, with the MIDI shared
+library. I have, however, taken great pains to make it easy to port to just
+about any other sane platform.
+	All of the public routines ('eps*()') make no assumptions about how
+MIDI data is sent back and forth between your computer and any EPSes attached
+to it. They, in turn, make use of system-dependent routines hidden in a
+subdirectory of their own. The directory 'libsrc/generic' contains a sample
+system-dependent module with templates for all of the necessary routines.
+Feel free to add new routines or modules, but keep them in a subdirectory.
+	The other thing you need to modify is the "eps.h" include file,
+specifically the declaration for 'struct EPSdesc'. At the top is a set of
+#defines. Use the one appropriate for your architecture, or add a new one
+if necessary.
+	Following that is a set of system-dependent #includes. Add your own,
+inside a "#ifdef ARCHITECTURE ... #endif" block.
+	Much further down, you will find the declaration for "struct
+EPSdesc". If you need to add any system-dependent fields, put them here,
+inside a "#ifdef ARCHITECTURE ... #endif" block. This struct is not intended
+to be portable, so go ahead and use ints and any other system-specific stuff
+you like.
+	That should be it. I've tried to make the Amiga-specific parts
+separate and clearly marked. If I've made any incorrect assumptions as to
+what is portable and what isn't, I'd like to hear about it. You can reach
+me at arensb@kong.gsfc.nasa.gov .
+
