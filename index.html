@@ -14,108 +14,8 @@
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.2.1/dist/css/bootstrap.min.css"
         integrity="sha384-GJzZqFGwb1QTTN6wy59ffF1BuGJpLSa9DkKMp0DgiMDm4iYMj70gZWKYbI706tWS" crossorigin="anonymous">
-    <style>
-        /* Bootstrap 4 has no dark theme, so the components in use are overridden
-           explicitly. Everything is scoped to body.dark.
-
-           color-scheme covers the parts the browser draws itself and no rule of
-           ours can reach: scrollbars, number input spinners, and in Firefox the
-           popup list of a <select>. Without it Firefox leaves all of those
-           white on the dark page. */
-        body.dark { color-scheme: dark; background-color: #12151a; color: #c8ced6; }
-        body.dark h2, body.dark h5, body.dark h6,
-        body.dark b, body.dark strong { color: #e6ebf1; }
-        body.dark .modal-content { background-color: #1b1f26; border-color: #2b323c; }
-        body.dark .modal-header, body.dark .modal-footer { border-color: #2b323c; }
-        body.dark .modal-body hr { border-top-color: #2b323c; }
-        /* Bootstrap's close button is a black glyph with a white text-shadow,
-           which on a dark panel leaves a faint smudge and nothing else. */
-        body.dark .close { color: #e6ebf1; text-shadow: none; opacity: .7; }
-        body.dark .close:hover { color: #ffffff; opacity: 1; }
-        body.dark .card { background-color: #1b1f26; border-color: #2b323c; }
-        body.dark .card-header { background-color: #232830; border-color: #2b323c; color: #e6ebf1; }
-        body.dark .form-control,
-        body.dark .custom-select,
-        body.dark textarea.form-control { background-color: #0f1319; color: #d5dbe3; border-color: #333b47; }
-        body.dark .form-control:focus,
-        body.dark .custom-select:focus { background-color: #0f1319; color: #eef2f6; border-color: #4a5568; }
-        body.dark .form-control::placeholder { color: #6b7482; }
-        body.dark .input-group-text { background-color: #232830; color: #c8ced6; border-color: #333b47; }
-        body.dark .custom-file-label { background-color: #0f1319; color: #a9b2bd; border-color: #333b47; }
-        body.dark .custom-file-label::after { background-color: #232830; color: #d5dbe3; border-color: #333b47; }
-        body.dark .dropdown-menu { background-color: #1b1f26; border-color: #333b47; }
-        body.dark .dropdown-item { color: #c8ced6; }
-        body.dark .dropdown-item:hover, body.dark .dropdown-item:focus { background-color: #2a303a; color: #ffffff; }
-        body.dark .dropdown-item.disabled { color: #5d6673; }
-        body.dark .dropdown-divider { border-top-color: #333b47; }
-        body.dark .btn-outline-secondary { color: #aeb6c0; border-color: #3c4553; }
-        body.dark .btn-outline-secondary:hover { background-color: #2f3640; color: #ffffff; border-color: #4a5568; }
-        body.dark .btn-secondary { background-color: #4a5568; border-color: #4a5568; }
-        body.dark .alert-warning { background-color: #3a3320; color: #f0d9a0; border-color: #5c4f2c; }
-        body.dark .alert-secondary { background-color: #232830; color: #c8ced6; border-color: #333b47; }
-        body.dark .alert-success { background-color: #1c3323; color: #a7dbb4; border-color: #2f5b3c; }
-        body.dark .alert-danger { background-color: #3a2124; color: #eda9ae; border-color: #5f3238; }
-        body.dark .text-muted { color: #8b95a1 !important; }
-        body.dark .custom-control-label { color: #c8ced6; }
-        body.dark a { color: #6fb8ff; }
-
-        /* Wavesample name fields, dressed as the synth's own display.
-
-           The EPS shows upper case only, so the field is upper cased here as
-           well as in the JS that feeds it: the CSS keeps what is on screen
-           honest even for a keystroke the input handler has not seen yet.
-           Letter spacing and tabular figures keep the twelve character cells
-           roughly even, since the font is not strictly monospaced. Swapping the
-           face out later means changing the url and the family name here and
-           nothing else. */
-        @font-face {
-            font-family: 'LCD14';
-            src: url('./fonts/lcd-font/otf/LCD14.otf') format('opentype');
-            font-display: swap;
-        }
-        .eps-name {
-            font-family: 'LCD14', monospace;
-            font-variant-numeric: tabular-nums;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-        }
-        /* Qualified with .form-control so it outranks Bootstrap's
-           .form-control-sm, which the fields under the Create buttons carry and
-           which would otherwise set the size back to 0.875rem. The field height
-           is an em calculation in Bootstrap, so the box grows to suit. */
-        .eps-name.form-control { font-size: 1.25rem; }
-        /* Light mode: a passive LCD, dark segments on a grey green panel. */
-        .eps-name.form-control {
-            background-color: #cfd8b9;
-            color: #1e2416;
-            border-color: #9aa585;
-        }
-        .eps-name.form-control:focus {
-            background-color: #d9e2c2;
-            color: #1e2416;
-            border-color: #7c8869;
-            box-shadow: none;
-        }
-        /* Dark mode: the vacuum fluorescent display it actually is. The glow is
-           a text-shadow rather than a filter so the characters stay crisp. */
-        body.dark .eps-name.form-control,
-        body.dark .eps-name.form-control:focus {
-            background-color: #000000;
-            color: #3dff9e;
-            border-color: #26463a;
-            text-shadow: 0 0 6px rgba(61, 255, 158, 0.55);
-        }
-        body.dark .eps-name.form-control:focus { border-color: #3dff9e; box-shadow: none; }
-        body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: none; }
-        .eps-name.form-control::placeholder { color: #7b8768; }
-
-        /* Expanded event log. The height is the viewport less the room the card
-           header, the checkbox row and the page margins take, so the textarea
-           fills what is left of the screen and the whole card still fits
-           without the page itself scrolling. rows= on the textarea loses to
-           this, which is the point. */
-        #log.log-expanded { height: calc(100vh - 13rem); min-height: 12rem; }
-    </style>
+    <link rel="stylesheet" href="./epswave.css">
+    <script src="./epsBlocks.js"></script>
     <script src="./eps.js"></script>
     <script src="./waveGen.js"></script>
     <script src="./wavePreview.js"></script>
@@ -123,38 +23,19 @@
     <script src="./pitchDetect.js"></script>
     <script src="./epsChart.js"></script>
     <script src="./about.js"></script>
+    <script src="./epswave.js"></script>
     <script>
-        // Firefox refuses localStorage outright in several configurations, most
-        // relevantly on file:// pages, and it throws rather than returning null.
-        // Every stored preference goes through here so that a refusal costs the
-        // preference and nothing else. The dark mode switch was the first
-        // synchronous localStorage read on the page in Firefox, because the
-        // MIDI callback that reads the port names never fires there, so a throw
-        // took out dark mode alone and left the rest of the page working.
-        window.safeStorage = {
-            get(key){
-                try { return localStorage.getItem(key) } catch(error){ return null }
-            },
-            set(key, value){
-                try { localStorage.setItem(key, value) } catch(error){}
-            }
-        }
-        // Dark by default. Resolved up here so the theme is settled before the
-        // page is painted and before any other script can fail: the switch used
-        // to be wired at the very end of a long inline script, where anything
-        // that threw earlier left the page stuck in light mode.
-        window.startDark = window.safeStorage.get("darkMode") != "0"
+        // Settled before the first paint, and before any other script can fail.
+        // The wave editor draws its own colours into a canvas, so it needs the
+        // answer too, and it needs it before its first paint rather than at the
+        // end of a long inline script.
+        EPSWaveUI.bootTheme()
         if(window.startDark) WaveEditor.theme = "dark"
     </script>
 </head>
 
 <body class="dark">
-    <script>
-        // The class ships on <body> so the first paint is already dark and the
-        // page still themes correctly with scripting off. Strip it only if the
-        // preference says so.
-        if(!window.startDark) document.body.classList.remove("dark")
-    </script>
+    <script>EPSWaveUI.applyBootTheme()</script>
     <div class="container">
         <div class="row align-items-center">
             <div class="col-sm d-flex align-items-center">
@@ -165,6 +46,11 @@
                 <h5 class="mb-0">Enable Sysex: <i>Edit -> System-Midi->Sysex-MIDI</i> and set to ON</h5>
             </div>
             <div class="col-sm-auto">
+                <a href="./librarian.html" class="btn btn-outline-secondary btn-sm">
+                    <i class="fa-solid fa-box-archive"></i> Patch librarian
+                </a>
+            </div>
+            <div class="col-sm-auto">
                 <div class="custom-control custom-switch">
                     <input type="checkbox" class="custom-control-input" id="darkMode" checked>
                     <label class="custom-control-label" for="darkMode">Dark mode</label>
@@ -172,25 +58,20 @@
             </div>
         </div>
         <script>
-            // Wired here, next to the switch, in plain DOM calls. It used to sit
-            // at the end of the main script where it depended on jQuery, on the
-            // MIDI setup, and on four hundred lines of unrelated code all having
-            // survived. The theme is the one thing on the page that should never
-            // be able to break.
-            ;(function(){
-                var toggle = document.getElementById("darkMode")
-                toggle.checked = window.startDark
-                toggle.addEventListener("change", function(){
-                    document.body.classList.toggle("dark", toggle.checked)
-                    // Repaints the editor canvases, which draw their own colours.
-                    // Called on the bare name: a top level `class` declaration
-                    // lives in the global lexical scope, so WaveEditor works but
-                    // window.WaveEditor is undefined, and guarding on the latter
-                    // silently skipped every repaint.
-                    WaveEditor.setTheme(toggle.checked ? "dark" : "light")
-                    window.safeStorage.set("darkMode", toggle.checked ? "1" : "0")
-                })
-            })()
+            // Wired here, next to the switch, rather than at the end of the main
+            // script where it would depend on jQuery, on the MIDI setup, and on
+            // four hundred lines of unrelated code all having survived. The
+            // theme is the one thing on the page that should never be able to
+            // break.
+            //
+            // The callback repaints the editor canvases, which draw their own
+            // colours. WaveEditor is named bare on purpose: a top level `class`
+            // declaration lives in the global lexical scope, so WaveEditor works
+            // but window.WaveEditor is undefined, and guarding on the latter
+            // silently skipped every repaint.
+            EPSWaveUI.wireTheme(function(dark){
+                WaveEditor.setTheme(dark ? "dark" : "light")
+            })
         </script>
         <div class="row" id="midiUnsupported" style="display:none">
             <div class="col-sm">
@@ -687,11 +568,7 @@
         // defined by the time this runs and there is nothing to wait for.
         // Filled once rather than on every open: the content never changes
         // while the page is up.
-        ;(function(){
-            document.getElementById("aboutBody").innerHTML = window.ABOUT_HTML
-                || "<p class='mb-0'>The About text could not be loaded. "
-                 + "Check that <code>about.js</code> is present next to this page.</p>"
-        })()
+        EPSWaveUI.initAbout()
     </script>
 
         <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"
@@ -729,97 +606,11 @@
             $("#waveNum").val(1)
 
 
-            // MIDI logging can produce a line per packet, so the log is capped
-            // and kept scrolled to the newest entry.
-            const LOG_MAX_LINES = 1000
-            let logLines = []
-
-            function logTimestamp() {
-                const now = new Date()
-                const pad = (value) => String(value).padStart(2, '0')
-                return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
-                    + `--${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-            }
-
-            function log(message) {
-                logLines.push(`${logTimestamp()}: ${message}`)
-                if (logLines.length > LOG_MAX_LINES) {
-                    logLines = logLines.slice(-LOG_MAX_LINES)
-                }
-                const element = document.getElementById("log")
-                element.value = logLines.join("\r\n") + "\r\n"
-                element.scrollTop = element.scrollHeight
-            }
-
-            // Clears the backing array too, otherwise the next line redraws the
-            // textarea from everything that was supposedly cleared.
-            $("#clearLog").click(() => {
-                logLines = []
-                document.getElementById("log").value = ""
-            })
-
-            // Grows the log to fill the screen. The preference sticks, because
-            // anyone who wants a big log while chasing a transfer wants it again
-            // next time. Scrolled into view on expanding, since the log sits at
-            // the bottom of a long page and growing something off screen looks
-            // like nothing happened.
-            function setLogExpanded(expanded, scroll) {
-                const element = document.getElementById("log")
-                element.classList.toggle("log-expanded", expanded)
-                $("#expandLogLabel").text(expanded ? "Collapse" : "Expand")
-                // Replaced as markup rather than by editing the <i>'s class:
-                // Font Awesome's script swaps each <i> for an <svg>, so by now
-                // there is no <i> left to find. Writing a fresh one back in is
-                // what the preview button does too, and the observer renders it.
-                $("#expandLogIcon").html(expanded
-                    ? '<i class="fa-solid fa-down-left-and-up-right-to-center"></i>'
-                    : '<i class="fa-solid fa-up-right-and-down-left-from-center"></i>')
-                element.scrollTop = element.scrollHeight
-                // The card, not the textarea: once expanded the textarea is
-                // taller than the viewport, and bringing *it* into view puts its
-                // top off screen along with these buttons.
-                if (expanded && scroll) {
-                    element.closest(".card").scrollIntoView({ block: "start", behavior: "smooth" })
-                }
-                safeStorage.set("logExpanded", expanded ? "1" : "0")
-            }
-            $("#expandLog").click(() => {
-                setLogExpanded(!document.getElementById("log").classList.contains("log-expanded"), true)
-            })
-            setLogExpanded(safeStorage.get("logExpanded") == "1", false)
-
-            // Exports what is in the log, not what is on screen: the textarea
-            // holds the same lines, but reading the array keeps the export
-            // independent of anything the browser does to the field.
-            $("#exportLog").click(() => {
-                if (logLines.length == 0) {
-                    handleError("Error: The log is empty, nothing to export")
-                    return
-                }
-                // CRLF so the file opens sensibly in a plain Windows editor,
-                // which is where a log emailed about a MIDI problem tends to go.
-                const text = logLines.join("\r\n") + "\r\n"
-                const blob = new Blob([text], { type: "text/plain;charset=utf-8" })
-                const url = (window.URL || window.webkitURL).createObjectURL(blob)
-                const link = document.createElement("a")
-                link.href = url
-                link.download = `eps16-log-${logTimestamp().replace(/[^0-9-]/g, "")}.txt`
-                link.click()
-                // Chrome keeps the blob alive for the life of the document
-                // otherwise, and a long session can export several times.
-                setTimeout(() => (window.URL || window.webkitURL).revokeObjectURL(url), 1000)
-                log(`Exported ${logLines.length} log lines to ${link.download}`)
-            })
-
-            // Sysex wavesample transfers run to thousands of bytes, so show the
-            // head of each packet and the total rather than the whole thing.
-            function formatMidiBytes(bytes) {
-                const shown = 24
-                let text = Array.from(bytes).slice(0, shown)
-                    .map(byte => byte.toString(16).toUpperCase().padStart(2, '0')).join(" ")
-                if (bytes.length > shown) text += ` ... (${bytes.length} bytes)`
-                return text
-            }
+            // The event log, the MIDI port pickers and the connection test all
+            // live in epswave.js now, shared with the librarian page. initLog
+            // installs window.log, which is what every log() call below writes
+            // to; nothing else on this page had to change for that.
+            EPSWaveUI.initLog()
 
             function handleError(error) {
                 log(error)
@@ -829,47 +620,20 @@
             }
 
             let eps = new EPS16(function (inputs, outputs) {
-                $("#midiIn").append($("<option>"))
-                $("#midiOut").append($("<option>"))
-                for (let input of inputs) {
-                    let option = $("<option>")
-                    option.val(input.name)
-                    option.html(input.name)
-                    $("#midiIn").append(option)
-                }
-                for (let output of outputs) {
-                    let option = $("<option>")
-                    option.val(output.name)
-                    option.html(output.name)
-                    $("#midiOut").append(option)
-                }
-                let midiIn = safeStorage.get("midiIn")
-                let midiOut = safeStorage.get("midiOut")
-                if (midiIn) {
-                    $("#midiIn").val(midiIn)
-                    eps.setInput(midiIn)
-                }
-                if (midiOut) {
-                    $("#midiOut").val(midiOut)
-                    eps.setOutput(midiOut)
-                }
-
+                EPSWaveUI.fillMidiPorts(eps, inputs, outputs)
             }, handleError, handleSuccess)
-
-            if (typeof navigator.requestMIDIAccess != "function") {
-                $("#midiUnsupported").show()
-            }
 
             // Checked at emit time rather than attached and detached, so turning
             // a checkbox on starts logging immediately mid transfer.
             eps.setMidiCallback((direction, bytes) => {
                 if (!$("#logMidi").is(":checked")) return
-                log(`${direction} ${formatMidiBytes(bytes)}`)
+                log(`${direction} ${EPSWaveUI.formatMidiBytes(bytes)}`)
             })
             eps.setDebugCallback((message) => {
                 if (!$("#logDebug").is(":checked")) return
                 log(`DEBUG: ${message}`)
             })
+            EPSWaveUI.wireMidi(eps)
 
             function resetUI(){
                 $("#instNum").val(0) 
@@ -972,38 +736,6 @@
                 $("#runTest").prop("disabled", false)
             })
 
-            // Asks the EPS for one read only System-MIDI parameter. Nothing on
-            // the synth needs to exist for that, which matters because a freshly
-            // powered EPS has no instrument, layer or wavesample.
-            $("#testConnection").click(async () => {
-                const result = $("#testConnectionResult")
-                const show = (text, kind) => result
-                    .removeClass("alert-secondary alert-success alert-danger alert-warning")
-                    .addClass(`alert-${kind}`).html(text).show()
-
-                $("#testConnection").prop("disabled", true)
-                $("#testConnectionSpinner").show()
-                show("Testing ...", "secondary")
-
-                const report = await eps.ping((status) => {
-                    show(status, "secondary")
-                    log(status)
-                })
-                log(report.message)
-                show(report.message, report.ok ? "success" : (report.reachable ? "warning" : "danger"))
-
-                $("#testConnectionSpinner").hide()
-                $("#testConnection").prop("disabled", false)
-            })
-
-            $("#midiIn").change((value) => {
-                eps.setInput(value.target.value)
-                safeStorage.set('midiIn', value.target.value);
-            })
-            $("#midiOut").change((value) => {
-                eps.setOutput(value.target.value)
-                safeStorage.set('midiOut', value.target.value);
-            })
             $("#delete").click(() => {
                 eps.deleteInstrument()
             })

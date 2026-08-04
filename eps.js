@@ -50,13 +50,29 @@ class EPS16 {
     static MAX_CHUNK_ATTEMPTS = 4
 
     /***
-     * Status codes that mean "not now" rather than "not this". Section 5 gives
-     * 14 as "Current disk activity prevented the execution of the command",
-     * which says nothing about the block that was offered, so the answer is to
-     * wait and offer the same block again. Halving it, the remedy for a block
-     * the EPS could not receive in time, would only make the transfer longer.
+     * Status codes that mean "not now" rather than "not this", so the answer is
+     * to wait and send the same thing again.
+     *
+     * $14, DISK ACCESS IN PROGRESS: "Current disk activity prevented the
+     * execution of the command". Says nothing about what was offered. Halving
+     * the block, which is the remedy for a block the EPS could not receive in
+     * time, would only make the transfer longer.
+     *
+     * $02, INSERT SYSTEM DISK, is here for a less obvious reason. Section 5
+     * says "The system disk must be inserted into the EPS-16 PLUS disk drive
+     * before the command is executed. The transmitter should prompt the user to
+     * insert the disk, and after the user is done, re-transmit the command."
+     * The EPS-16 PLUS keeps parts of its operating system out of RAM and pulls
+     * them in on demand, and a large sample upload can evict one.
+     *
+     * On a machine whose OS lives in onboard flash rather than on a floppy —
+     * which is how this was found — there is no disk to insert and nothing for
+     * the user to do. The synth fetches the overlay itself. What the spec asks
+     * for reduces to its second half: wait a moment, then re-transmit. So that
+     * is what happens, and if the overlay genuinely cannot be loaded the retries
+     * run out and the original error is reported unchanged.
      */
-    static TRANSIENT_STATUS = [0x14]
+    static TRANSIENT_STATUS = [0x14, 0x02]
 
     /***
      * Sample rate lives in two places, both documented.
@@ -340,10 +356,35 @@ class EPS16 {
      * through in section 8: the GET is answered with an ACK and the matching
      * PUT header, and the block itself only follows once we ACK that.
      */
+    /***
+     * Fetches a parameter block, waiting the EPS out if it is busy.
+     *
+     * The same treatment as putParamBlock and for the same reason. A restore
+     * finishes by reading the new instrument back so the saved parameters can
+     * be overlaid on the EPS's own pointer words, and that read lands moments
+     * after everything else, when the synth is still busy: it answered "Disk
+     * Access in Progress" and the whole restore was thrown away one command
+     * from the end. See epswave-log-20260803--141537.
+     */
     async getParamBlock(kind){
+        for(let attempt = 1; attempt <= EPS16.PARAM_BLOCK_ATTEMPTS; attempt++){
+            const block = await this.getParamBlockOnce(kind)
+            if(block.length > 0) return block
+            if(!EPS16.TRANSIENT_STATUS.includes(this.lastStatusCode)) return []
+            if(attempt == EPS16.PARAM_BLOCK_ATTEMPTS) return []
+            this.debug(`EPS busy (${this.statusText(this.lastStatusCode)}); asking for the `
+                + `${kind.label} block again in ${EPS16.BUSY_RETRY_MS / 1000}s, `
+                + `attempt ${attempt + 1}`)
+            await this.sleep(EPS16.BUSY_RETRY_MS)
+        }
+        return []
+    }
+    async getParamBlockOnce(kind){
         let cmd = this.createMIDIMessage(kind.get)
         await this.sendData(cmd);
         let messages = await this.readMessages()
+        // Recorded so the retry above can tell a busy synth from a real refusal.
+        this.noteStatus(messages)
         for(let msg of messages){
             if(await this.isAck(msg)){
                 await this.sendAck()
@@ -397,15 +438,717 @@ class EPS16 {
         this.debug(`Layer name "${this.lastLayerName}"`)
         return params
     }
-    async deleteInstrument(){
-        const msg = this.createMIDIMessage(0x1C)
-        await this.sendData(msg)
-        let messages = await this.readMessages()
-        if(await this.isAck(messages[0])){
-            this.successCallback("Success: Deleted instrument")
-        }else{
-            this.errorCallback("Error: Unable to delete instrument")
+    /***
+     * Sends a whole instrument to the synth: its layers, its wavesamples, all
+     * of the audio and every parameter block.
+     *
+     * Takes the shape that getInstrumentInventory and EPSEfe.readInstrument
+     * both return, plus a function that yields the audio of one wavesample,
+     * so it does not care whether the instrument came off a disk image or
+     * anywhere else.
+     *
+     * THE ORDER HERE IS NOT ARBITRARY. Four things constrain it:
+     *
+     * 1. CREATE LAYER makes a layer *and* one wavesample, whose number it
+     *    takes. So each layer is created with the lowest numbered wavesample it
+     *    owns, and the rest are created individually afterwards.
+     * 2. Audio goes in before parameters. Wavesample words 115-130 are offsets
+     *    into the wavedata and mean nothing until the data is there.
+     * 3. A copy is made after the wavesample it copies has its audio, because
+     *    COPY WAVESAMPLE is what establishes the sharing and there has to be
+     *    something to share.
+     * 4. Layer blocks go in after wavesample blocks, so that the key maps
+     *    reference wavesamples that already exist and are already the right
+     *    size.
+     *
+     * The instrument's own block is the one that cannot be written back as it
+     * was read: of its 323 words, everything from word 29 on is a pointer into
+     * the EPS's RAM, and the addresses that were valid when the backup was
+     * taken mean nothing now. So it is read back from the freshly created
+     * instrument and only the 29 parameter words are overlaid.
+     */
+    static RESTORE_PARAMETER_WORDS = 29
+    static RESTORE_SETTLE_MS = 2000
+
+    /***
+     * Which wavesample numbers the selected instrument currently holds, from
+     * its own pointer table. Null if the instrument cannot be read.
+     */
+    async occupiedWavesamples(){
+        const words = await this.getParamBlock(EPS16.BLOCK_INSTRUMENT)
+        if(words.length == 0) return null
+        return EPSBlocks.decodeInstrument(words).wavesamples
+            .filter(slot => slot.exists).map(slot => slot.number)
+    }
+
+    /***
+     * Runs a command that creates a wavesample and reports which number the EPS
+     * gave it.
+     *
+     * THE NUMBER IN THE COMMAND IS NOT HONOURED. Section 4.3 documents CREATE
+     * WAVESAMPLE as taking a "New WaveSample number", and it does not use it:
+     * asked for wavesample 17 in a layer already holding wavesample 1, a real
+     * EPS-16 PLUS acknowledged the command and created wavesample **2**. Every
+     * later command addressed to 17 was then correctly refused as invalid,
+     * which is the whole of a failure that took a dozen attempts to pin down.
+     * The proof is in epswave-log-20260804--102209: the instrument's pointer
+     * table holds 1 and 2, and 2 contains the 128 sample square wave that
+     * CREATE WAVESAMPLE supplies.
+     *
+     * So the number is learned rather than chosen: the pointer table is read
+     * before and after, and whatever appeared is what the EPS decided to call
+     * it. That costs one extra instrument read per created object, about a
+     * second, against a transfer measured in minutes — and unlike inferring the
+     * rule, it cannot be wrong.
+     */
+    async createAndIdentify(cmd, label){
+        const before = await this.occupiedWavesamples()
+        if(before === null) return { ok: false, reason: "could not read the instrument" }
+        const status = await this.sendCommand(cmd, label)
+        if(status != 0x00) return { ok: false, status, reason: this.statusText(status) }
+        const after = await this.occupiedWavesamples()
+        if(after === null) return { ok: false, reason: "could not read the instrument back" }
+        const added = after.filter(number => !before.includes(number))
+        if(added.length != 1){
+            return { ok: false, added,
+                reason: added.length == 0 ? "the EPS accepted the command but created nothing"
+                    : `the EPS created ${added.length} wavesamples at once (${added.join(", ")})` }
         }
+        this.debug(`${label}: the EPS assigned wavesample ${added[0]}`)
+        return { ok: true, number: added[0] }
+    }
+
+    /***
+     * Asks the EPS what it actually has, and writes the answer to the log.
+     *
+     * Run when a restore gives up, because the interesting question at that
+     * point is not what we asked for but what the synth ended up with. The
+     * failure this exists for is a CREATE WAVESAMPLE that is acknowledged and
+     * then denied: the EPS answers "Invalid Wavesample" to the next command
+     * addressing the number it just accepted. Reading the instrument's own
+     * pointer table settles what really got created, and under which number.
+     *
+     * Everything is wrapped, and every step is optional. This runs when things
+     * have already gone wrong, so it must not be able to make them worse or
+     * throw over the top of the real error.
+     */
+    async diagnoseInstrument(){
+        const lines = []
+        const say = (text) => { lines.push(text); this.debug(`PROBE: ${text}`) }
+        const restore = { layer: this.layerNum, ws: this.wsBytes }
+        try{
+            say(`--- probing instrument ${this.instNum + 1} after a failure ---`)
+            const words = await this.getParamBlock(EPS16.BLOCK_INSTRUMENT)
+            if(words.length == 0){
+                say("the instrument block could not be read at all")
+                return lines
+            }
+            const inst = EPSBlocks.decodeInstrument(words)
+            const layers = inst.layers.filter(l => l.exists).map(l => l.number)
+            const wavesamples = inst.wavesamples.filter(w => w.exists).map(w => w.number)
+            say(`name "${inst.name}", ${inst.sizeBlocks} blocks claimed`)
+            say(`layers occupied: [${layers.join(", ")}]`)
+            say(`wavesamples occupied: [${wavesamples.join(", ")}]`)
+
+            for(const number of layers){
+                this.setLayerNumber(number)
+                const block = await this.getParamBlock(EPS16.BLOCK_LAYER)
+                if(block.length == 0){ say(`layer ${number}: unreadable`); continue }
+                const layer = EPSBlocks.decodeLayer(block)
+                say(`layer ${number} "${layer.name}" plays wavesamples `
+                    + `[${layer.wavesamplesUsed.join(", ")}]`)
+            }
+            for(const number of wavesamples){
+                // A wavesample is addressed through its layer, and after a
+                // failure the maps may not agree with the pointer table, so
+                // every layer is tried until one answers.
+                let found = null
+                for(const layerNumber of layers){
+                    this.setLayerNumber(layerNumber)
+                    this.setWavesampleNumber(number)
+                    const block = await this.getParamBlock(EPS16.BLOCK_WAVESAMPLE)
+                    if(block.length > 0){
+                        found = { layerNumber, ws: EPSBlocks.decodeWavesample(block) }
+                        break
+                    }
+                }
+                if(!found){ say(`wavesample ${number}: exists in the table but answers nothing`) }
+                else{
+                    say(`wavesample ${number} (layer ${found.layerNumber}) "${found.ws.name}" `
+                        + `${found.ws.sampleEnd} samples, keys ${found.ws.keyRangeLo}-`
+                        + `${found.ws.keyRangeHi}`
+                        + (found.ws.isCopy ? `, copy of ${found.ws.copyNumber}` : ""))
+                }
+            }
+            const free = await this.freeBlocks()
+            if(free !== null) say(`free memory ${free} blocks`)
+            say("--- end of probe ---")
+        }catch(error){
+            say(`the probe itself failed: ${error.message}`)
+        }finally{
+            this.layerNum = restore.layer
+            this.wsBytes = restore.ws
+        }
+        return lines
+    }
+
+    /***
+     * Free sound memory, in blocks of 256 words. Null if the EPS will not say.
+     */
+    async freeBlocks(){
+        const answer = await this.getParameter(EPS16.PING_PAGE, EPS16.PING_ITEM)
+        return answer.answered && answer.value !== null ? answer.value : null
+    }
+
+    async uploadInstrument(inventory, audioFor, progressCallback = () => {}){
+        const report = { ok: false, instrument: -1, message: "", uploaded: 0, copied: 0 }
+        const say = (percent, what) => progressCallback(percent, what)
+
+        if(!inventory.instrument.isEps16Plus){
+            report.message = "This is an original EPS instrument, not an EPS-16 PLUS one. "
+                + "The command specification covers only the EPS-16 PLUS, and the layer "
+                + "block differs between them, so sending this has not been attempted."
+            return report
+        }
+        const layers = inventory.layers
+        const sources = inventory.wavesamples.filter(ws => !ws.isCopy)
+        const copies = inventory.wavesamples.filter(ws => ws.isCopy)
+        if(layers.length == 0 || sources.length == 0){
+            report.message = "This instrument has no layers or no wavesamples holding audio."
+            return report
+        }
+
+        // Progress is weighted by audio, because the audio is essentially all of
+        // the time. Everything else is a handful of short messages.
+        const totalSamples = sources.reduce((sum, ws) => sum + ws.sampleEnd, 0)
+        let doneSamples = 0
+
+        /***
+         * Pre-flight on free memory, and a running note of it afterwards.
+         *
+         * This exists because of a failure worth explaining. The only
+         * instrument that will not restore is also the largest, and it fails
+         * with "Insert System Disk" ($02) on the first command addressed to its
+         * second wavesample, right after the first one's 65,536 samples have
+         * gone in. Section 5 describes $02 as the EPS needing its system disk
+         * before the command can be executed, and the WAIT code's description
+         * mentions loading an overlay.
+         *
+         * The EPS-16 PLUS keeps parts of its operating system in the same RAM
+         * as the samples. A plausible reading, and the reason for measuring
+         * rather than guessing, is that a large enough instrument evicts an
+         * overlay and the synth then wants the disk to fetch it back. If that
+         * is what is happening, free memory will be visibly low at the point it
+         * gives up — and half finished instruments from earlier attempts, which
+         * hold their memory until deleted, make it far more likely.
+         *
+         * Either way, knowing how much room is left is worth having, and
+         * refusing before a long transfer beats failing in the middle of one.
+         */
+        const needed = inventory.source == "efe" && inventory.file
+            ? inventory.file.sizeBlocks
+            : Math.ceil(totalSamples / EPS16.SAMPLES_PER_BLOCK)
+        const free = await this.freeBlocks()
+        if(free !== null){
+            this.debug(`Free memory ${free} blocks; "${inventory.instrument.name}" needs `
+                + `about ${needed}`)
+            if(free < needed){
+                report.message = `Not enough room on the EPS: ${free} blocks free, this `
+                    + `instrument needs about ${needed}. Delete something on the synth — `
+                    + `half finished instruments from earlier attempts hold their memory `
+                    + `until they are deleted.`
+                return report
+            }
+        }
+
+        // The search starts at whatever instrument is selected and walks up, so
+        // where it lands depends on that selection as well as on what the synth
+        // already holds. Which slot it took is reported straight away rather
+        // than only at the end, because "it went somewhere I did not expect" is
+        // otherwise only discovered after several minutes of transfer.
+        const from = this.instNum
+        if(!await this.createNextFreeInstrument()){
+            report.message = `No free instrument slot at or after ${from + 1} on the EPS.`
+            return report
+        }
+        report.instrument = this.instNum
+        say(0, `using instrument ${this.instNum + 1}`
+            + (this.instNum != from ? ` (${from + 1} was taken)` : ""))
+        this.successCallback(`Success: Restoring into instrument ${this.instNum + 1}`
+            + (this.instNum != from ? `, since ${from + 1} was already in use` : ""))
+        this.debug(`Restoring "${inventory.instrument.name}" into instrument `
+            + `${this.instNum + 1}: ${layers.length} layer(s), ${sources.length} `
+            + `wavesample(s) plus ${copies.length} copy/copies`)
+
+        // Every give-up point goes through here, so the probe runs once and
+        // always. What the synth actually ended up with is the thing worth
+        // knowing when a restore fails, and it is gone the moment the half
+        // built instrument is deleted to try again.
+        const fail = async (message) => {
+            this.errorCallback(`Error: ${message}`)
+            report.message = message + ` Instrument ${report.instrument + 1} on the EPS is `
+                + "half built; delete it there before trying again."
+            report.probe = await this.diagnoseInstrument()
+            return report
+        }
+
+        // --- structure, learning the numbers the EPS assigns ------------------
+        //
+        // The file's wavesample numbers cannot be reproduced: CREATE WAVESAMPLE
+        // ignores the number it is given and picks its own. So each object is
+        // created, the instrument is read back to see what appeared, and a map
+        // is built from the file's numbering onto the synth's. Everything that
+        // refers to a wavesample later — the audio, the copies, the layer maps
+        // and the copy fields in the parameter blocks — goes through that map.
+        const toSynth = new Map()
+        const strays = []
+        for(const layer of layers){
+            const owned = [...layer.wavesamplesUsed].sort((a, b) => a - b)
+            say(0, `creating layer ${layer.number + 1}`)
+            this.setLayerNumber(layer.number)
+            this.setWavesampleNumber(1)
+            // CREATE LAYER may or may not bring a wavesample with it. Section
+            // 4.3 says it does; hardware says otherwise more often than not, so
+            // rather than depend on either, whatever appears is noted.
+            const made = await this.createAndIdentify(
+                this.createMIDIMessage(EPS16.CMD_CREATE_LAYER),
+                `create layer ${layer.number + 1}`)
+            if(!made.ok && made.status !== undefined && made.status != 0x00){
+                return await fail(`Could not create layer ${layer.number + 1}: `
+                    + `${made.reason}.`)
+            }
+            const sourcesHere = owned.filter(n => !copies.some(ws => ws.number == n))
+            const pending = [...sourcesHere]
+            if(made.ok){
+                if(pending.length > 0){
+                    toSynth.set(pending.shift(), made.number)
+                }else{
+                    // A layer of nothing but copies still got a wavesample it
+                    // has no use for. Remembered so it can be cleared away.
+                    strays.push({ layer: layer.number, number: made.number })
+                }
+            }
+            for(const fileNumber of pending){
+                this.setWavesampleNumber(fileNumber)
+                const result = await this.createAndIdentify(
+                    this.createMIDIMessage(EPS16.CMD_CREATE_WAVESAMPLE),
+                    `create wavesample ${fileNumber}`)
+                if(!result.ok){
+                    return await fail(`Could not create a wavesample for ${fileNumber}: `
+                        + `${result.reason}.`)
+                }
+                toSynth.set(fileNumber, result.number)
+            }
+        }
+        this.debug("Wavesample numbering, file -> EPS: "
+            + [...toSynth].map(([from, to]) => `${from}->${to}`).join(", "))
+
+        // --- audio -----------------------------------------------------------
+        for(const ws of sources){
+            const synthNumber = toSynth.get(ws.number)
+            if(synthNumber === undefined){
+                return await fail(`Wavesample ${ws.number} was never created.`)
+            }
+            const audio = await audioFor(ws)
+            if(!audio || audio.length == 0){
+                return await fail(`No audio available for wavesample ${ws.number}.`)
+            }
+            this.setLayerNumber(ws.layer == null ? layers[0].number : ws.layer)
+            this.setWavesampleNumber(synthNumber)
+            const before = doneSamples
+            // Rescaled from this wavesample's own 0-100 to its share of the
+            // whole instrument, because at forty minutes for a large one a bar
+            // that restarts every wavesample says nothing about how long is left.
+            const ok = await this.uploadWavesampleAudio(Array.from(audio), (percent) => {
+                const within = (Number(percent) || 0) / 100
+                say(Math.round(((before + within * ws.sampleEnd) / totalSamples) * 100),
+                    `wavesample ${synthNumber}, ${Math.round(within * 100)}%`)
+            })
+            if(!ok) return await fail(`Upload of wavesample ${synthNumber} did not finish.`)
+            // The EPS has housekeeping to do after taking a wavesample and is
+            // not ready for the next command the instant it acknowledges the
+            // last block.
+            await this.sleep(EPS16.RESTORE_SETTLE_MS)
+            doneSamples = before + ws.sampleEnd
+            report.uploaded++
+            say(Math.round((doneSamples / totalSamples) * 100),
+                `wavesample ${report.uploaded} of ${sources.length} uploaded`)
+        }
+
+        // --- copies ----------------------------------------------------------
+        // COPY WAVESAMPLE names a destination number, and on the evidence of
+        // CREATE WAVESAMPLE that number is unlikely to be honoured either, so
+        // the same before-and-after read is used and whatever appears is what
+        // the copy is called.
+        for(const ws of copies){
+            const source = inventory.wavesamples.find(w => w.number == ws.copyNumber)
+            if(!source){
+                return await fail(`Wavesample ${ws.number} copies ${ws.copyNumber}, `
+                    + "which is not in this instrument.")
+            }
+            const sourceSynth = toSynth.get(source.number)
+            if(sourceSynth === undefined){
+                return await fail(`Wavesample ${ws.number} copies ${ws.copyNumber}, `
+                    + "which was never created.")
+            }
+            const destLayer = ws.layer == null ? layers[0].number : ws.layer
+            const sourceLayer = source.layer == null ? layers[0].number : source.layer
+
+            // Give the copy the spare wavesample CREATE LAYER left in this
+            // layer, if there is one: the destination has to be free, and one
+            // that exists would be refused as already in use.
+            const spare = strays.findIndex(s => s.layer == destLayer)
+            if(spare >= 0){
+                await this.deleteWavesample(destLayer, strays[spare].number)
+                strays.splice(spare, 1)
+            }
+            say(100, `copying wavesample ${sourceSynth} into layer ${destLayer + 1}`)
+
+            const before = await this.occupiedWavesamples()
+            if(!await this.copyWavesample(sourceLayer, sourceSynth, destLayer, ws.number)){
+                return await fail(`Could not copy wavesample ${sourceSynth} for `
+                    + `${ws.number}.`)
+            }
+            const after = await this.occupiedWavesamples()
+            const added = before && after ? after.filter(n => !before.includes(n)) : []
+            if(added.length != 1){
+                return await fail(`Copied wavesample ${sourceSynth} but could not tell `
+                    + `which number the EPS gave the copy`
+                    + (added.length ? ` (${added.join(", ")})` : "") + ".")
+            }
+            this.debug(`copy of ${ws.number}: the EPS assigned wavesample ${added[0]}`)
+            toSynth.set(ws.number, added[0])
+            report.copied++
+        }
+
+        // Anything the EPS made that the instrument has no use for. Left in
+        // place it would sound, since creating a wavesample also hands it a key
+        // range across the whole layer.
+        for(const stray of strays){
+            this.debug(`Removing wavesample ${stray.number}, which CREATE LAYER `
+                + `added to layer ${stray.layer + 1} and nothing needs`)
+            await this.deleteWavesample(stray.layer, stray.number)
+        }
+
+        // --- parameters ------------------------------------------------------
+        // The EPS is reliably busy for a few seconds after the last of the
+        // audio goes in, and the block writes that follow are the part of a
+        // restore with the most to lose. The retries below would ride it out
+        // anyway; pausing first means they usually do not have to.
+        say(100, "letting the EPS settle")
+        await this.sleep(EPS16.RESTORE_SETTLE_MS)
+        // Every wavesample number inside a block refers to the file's numbering
+        // and has to be translated to the synth's before the block goes back.
+        // A number with no translation is left alone rather than zeroed: it
+        // means something was not created, which has already been reported, and
+        // guessing here would only make the result harder to read.
+        const remap = (number) => toSynth.has(number) ? toSynth.get(number) : number
+
+        say(100, "writing wavesample parameters")
+        for(const ws of inventory.wavesamples){
+            const block = Array.from(ws.words)
+            // Section 7.3 word 12: the wavesample holding this one's audio.
+            if(ws.isCopy){
+                block[12] = (remap(ws.copyNumber) << 8) | (block[12] & 0x00FF)
+            }
+            this.setLayerNumber(ws.layer == null ? layers[0].number : ws.layer)
+            this.setWavesampleNumber(remap(ws.number))
+            if(!await this.putParamBlock(EPS16.BLOCK_WAVESAMPLE, block)){
+                return await fail(`The EPS refused the parameter block for wavesample `
+                    + `${remap(ws.number)}.`)
+            }
+        }
+        say(100, "writing layer parameters")
+        for(const layer of layers){
+            const block = Array.from(layer.words)
+            // Section 7.2 words 19-106: one wavesample number per key. This is
+            // what actually decides which sample sounds where, and it is written
+            // after everything else because creating a wavesample overwrites it
+            // — a freshly created one is handed the whole layer.
+            for(let i = 0; i < EPSBlocks.LAYER_MAP_LENGTH; i++){
+                const at = EPSBlocks.LAYER_MAP_WORD + i
+                const was = (block[at] >> 8) & 0xFF
+                if(was == 0) continue
+                block[at] = (remap(was) << 8) | (block[at] & 0x00FF)
+            }
+            this.setLayerNumber(layer.number)
+            if(!await this.putParamBlock(EPS16.BLOCK_LAYER, block)){
+                return await fail(`The EPS refused the parameter block for layer `
+                    + `${layer.number + 1}.`)
+            }
+        }
+
+        // The instrument block, read back and overlaid. See the note above.
+        say(100, "writing instrument parameters")
+        const fresh = await this.getParamBlock(EPS16.BLOCK_INSTRUMENT)
+        if(fresh.length == 0) return await fail("Could not read the new instrument back.")
+        const merged = Array.from(fresh)
+        for(let word = 0; word < EPS16.RESTORE_PARAMETER_WORDS; word++){
+            merged[word] = inventory.instrument.words
+                ? inventory.instrument.words[word] : merged[word]
+        }
+        if(!await this.putParamBlock(EPS16.BLOCK_INSTRUMENT, merged)){
+            return await fail("The EPS refused the instrument parameter block.")
+        }
+
+        report.ok = true
+        report.message = `Sent "${inventory.instrument.name}" to instrument `
+            + `${report.instrument + 1}: ${report.uploaded} wavesample(s) uploaded`
+            + (report.copied ? `, ${report.copied} copied` : "")
+            + ". Effects are not included and have to be set on the synth."
+        this.successCallback(`Success: ${report.message}`)
+        return report
+    }
+    /***
+     * What can be learned about the effect, which is less than you would want.
+     *
+     * THE ALGORITHM NAME CANNOT BE READ OVER MIDI AT ALL. Two independent
+     * things in the specification say so and there is no way around either.
+     * NOTE 2 of section 9 states that functions on the Effect Select-Bypass
+     * page "neither transmit nor receive PUT or GET PARAMETER commands", and
+     * section 9.12 repeats it for the FX Algorithm Select parameter
+     * specifically. Nor is there any command in section 4 that reads the
+     * display, so the front panel cannot be driven with VIRTUAL BUTTON PRESS
+     * and then read back either. Whoever wants the algorithm has to look at
+     * the synth.
+     *
+     * What is reachable is the rest of page 30. Items 00 to 09 carry no "*" or
+     * "**" marker in any of the thirteen algorithm tables, so per NOTE 3 they
+     * answer a single GET PARAMETER. Item 00 is Variation in every one of those
+     * tables, which makes it the one field whose meaning is known without
+     * knowing the algorithm.
+     *
+     * The rest are returned as raw numbers on purpose. Their names differ per
+     * algorithm — item 03 is Decay Time in a reverb and something else entirely
+     * in a delay — so labelling them without knowing which algorithm is loaded
+     * would be inventing information. Section 9.12 is also the most OCR damaged
+     * part of the document, which is a second reason not to lean on its labels.
+     */
+    static EFFECT_PAGE = 0x30
+    static EFFECT_VARIATION_ITEM = 0x00
+    static EFFECT_LAST_READABLE_ITEM = 0x09
+
+    async readEffect(){
+        const none = { readable: false, variation: null, parameters: [] }
+        // The effect is a bonus on top of an inventory that is already complete
+        // and has already cost real time to fetch. Nothing that happens on this
+        // page is worth losing that over, so a failure here is reported and
+        // swallowed rather than thrown.
+        try{
+            const variation = await this.getParameter(EPS16.EFFECT_PAGE,
+                EPS16.EFFECT_VARIATION_ITEM)
+            if(!variation.answered || variation.value == null){
+                this.debug("Effect page did not answer; no effect parameters available")
+                return none
+            }
+            const parameters = []
+            for(let item = 1; item <= EPS16.EFFECT_LAST_READABLE_ITEM; item++){
+                const answer = await this.getParameter(EPS16.EFFECT_PAGE, item)
+                if(answer.answered && answer.value != null){
+                    parameters.push({ item, value: answer.value })
+                }
+            }
+            this.debug(`Effect variation ${variation.value}, `
+                + `${parameters.length} readable parameters`)
+            return { readable: true, variation: variation.value, parameters }
+        }catch(error){
+            this.debug(`Effect page could not be read: ${error.message}`)
+            return none
+        }
+    }
+    /***
+     * Everything inside the selected instrument: its parameters, every layer,
+     * every wavesample, and which wavesamples each layer plays on which keys.
+     *
+     * The expensive question — what is actually in there — turns out to be
+     * free. Most of the instrument block is a directory: section 7.1 words 29
+     * to 317 are the offsets of the pitch tables, the layers, the wavesamples
+     * and the effect, and a zero offset means the object does not exist. So one
+     * GET INSTRUMENT settles the entire inventory before anything else is
+     * asked for, and nothing here has to probe or guess.
+     *
+     * The GETs after that are only for names and parameters, one per object
+     * that exists. No wavedata is transferred, so this costs seconds rather
+     * than the tens of minutes a backup of the same instrument would.
+     *
+     * The three selectors are saved and put back, because reading an inventory
+     * should not quietly move the user's current layer and wavesample out from
+     * under the rest of the page.
+     */
+    async getInstrumentInventory(progressCallback = null){
+        const restore = { inst: this.instNum, layer: this.layerNum, ws: this.wsBytes }
+        try{
+            const instWords = await this.getInstrumentParams()
+            if(instWords.length == 0) return null
+            // The raw block travels with the decoded one, because a restore has
+            // to write these words back and cannot reconstruct them from the
+            // fields above.
+            const instrument = { ...EPSBlocks.decodeInstrument(instWords), words: instWords }
+            const layerSlots = instrument.layers.filter(l => l.exists)
+            const wsSlots = instrument.wavesamples.filter(w => w.exists)
+            const total = 1 + layerSlots.length + wsSlots.length
+            let done = 1
+            const step = (what) => {
+                if(progressCallback) progressCallback(Math.round((done / total) * 100), what)
+            }
+            step("instrument")
+            this.debug(`Inventory: "${instrument.name}", ${layerSlots.length} layer(s), `
+                + `${wsSlots.length} wavesample(s)`)
+
+            const layers = []
+            for(const slot of layerSlots){
+                this.setLayerNumber(slot.number)
+                const words = await this.getLayerParams()
+                done++
+                step(`layer ${slot.number + 1}`)
+                if(words.length == 0) continue
+                layers.push({ ...EPSBlocks.decodeLayer(words),
+                    number: slot.number, words })
+            }
+
+            const wavesamples = []
+            for(const slot of wsSlots){
+                // A wavesample belongs to a layer, so the layer selector has to
+                // name the one that owns it or the GET addresses nothing. The
+                // maps just read say who that is; anything the maps do not
+                // mention is asked for under the first layer, which is the only
+                // guess available and is logged when it happens.
+                const owner = layers.find(l => l.wavesamplesUsed.includes(slot.number))
+                if(!owner) this.debug(`Wavesample ${slot.number} is in no layer map`)
+                this.setLayerNumber(owner ? owner.number : layerSlots[0].number)
+                this.setWavesampleNumber(slot.number)
+                const words = await this.getWavesampleParams()
+                done++
+                step(`wavesample ${slot.number}`)
+                if(words.length == 0) continue
+                const ws = EPSBlocks.decodeWavesample(words)
+                wavesamples.push({ ...ws,
+                    number: slot.number, words,
+                    layer: owner ? owner.number : null,
+                    sampleRateHz: WaveGen.rateFromCode(ws.sampleRateCode) })
+            }
+
+            // A copy holds no audio of its own, so counting one would double the
+            // size of every split that shares a sample between zones.
+            const audioSamples = wavesamples
+                .filter(w => !w.isCopy)
+                .reduce((sum, w) => sum + w.sampleEnd, 0)
+
+            // Last, because it is ten more round trips and the useful part of
+            // the inventory is already in hand if the effect page says nothing.
+            step("effect")
+            const effect = await this.readEffect()
+
+            return { instrument, layers, wavesamples, audioSamples, effect,
+                // Three MIDI bytes carry one 16 bit sample, section 2.3.
+                wireBytes: audioSamples * 3 }
+        }finally{
+            this.instNum = restore.inst
+            this.layerNum = restore.layer
+            this.wsBytes = restore.ws
+        }
+    }
+    /***
+     * Commands used only by the restore. Section 4.3.
+     *
+     * All three take their numbers explicitly rather than operating on
+     * "the current one", which is what makes an exact reproduction possible:
+     * the layer and wavesample numbers of the original can be recreated as they
+     * were, and then the layer maps and the copy references restore verbatim
+     * without anything having to be renumbered.
+     */
+    static CMD_CREATE_LAYER = 0x16
+    static CMD_CREATE_WAVESAMPLE = 0x19
+    static CMD_DELETE_WAVESAMPLE = 0x1A
+    static CMD_COPY_WAVESAMPLE = 0x1B
+
+    /***
+     * The copy data flag of COPY WAVESAMPLE.
+     *
+     * "The WaveData is copied if the data copy flag is set." Clear is therefore
+     * the setting that does not duplicate the audio, which is what makes the
+     * destination a copy in the section 7.3 sense — a wavesample whose Copy
+     * Number names the one holding the data. That is what the front panel's own
+     * copy operation offers when it asks whether to copy the data, and it is
+     * what the instrument files contain.
+     *
+     * UNVERIFIED ON HARDWARE. If a restored instrument comes back with the
+     * copies holding their own audio, and using twice the memory, this is the
+     * value that is wrong. Read the instrument back after a restore and check
+     * that the copies still report a Copy Number.
+     */
+    static COPY_SHARES_DATA = 0x00
+    static COPY_DUPLICATES_DATA = 0x01
+
+    /***
+     * COPY WAVESAMPLE. The source is the usual instrument, layer and wavesample
+     * in the message header; the destination and the flag are the data.
+     */
+    async copyWavesample(sourceLayer, sourceNumber, destLayer, destNumber,
+            dataFlag = EPS16.COPY_SHARES_DATA){
+        const restore = { layer: this.layerNum, ws: this.wsBytes }
+        this.setLayerNumber(sourceLayer)
+        this.setWavesampleNumber(sourceNumber)
+        const destWs = this.convertTo12BitMidi([destNumber], 2)
+        const message = this.createMIDIMessage(EPS16.CMD_COPY_WAVESAMPLE,
+            [0x00, this.instNum, 0x00, destLayer, destWs[0], destWs[1], 0x00, dataFlag])
+        const status = await this.sendCommand(message,
+            `copy wavesample ${sourceNumber} to ${destNumber}`)
+        this.layerNum = restore.layer
+        this.wsBytes = restore.ws
+        if(status == 0x00) return true
+        this.errorCallback(`Error: Could not copy wavesample ${sourceNumber} to `
+            + `${destNumber}: ${this.statusText(status)}`)
+        return false
+    }
+
+    async deleteWavesample(layer, number){
+        this.setLayerNumber(layer)
+        this.setWavesampleNumber(number)
+        // Not routed through sendCommand: this one is expected to fail
+        // whenever CREATE LAYER did not leave a placeholder behind, and
+        // retrying a failure that is normal would only cost time.
+        await this.sendData(this.createMIDIMessage(EPS16.CMD_DELETE_WAVESAMPLE))
+        const messages = await this.readMessages()
+        this.noteStatus(messages)
+        return messages.length > 0 && await this.isAck(messages[0])
+    }
+
+    async deleteInstrument(quiet = false){
+        const status = await this.sendCommand(this.createMIDIMessage(0x1C),
+            `delete instrument ${this.instNum + 1}`)
+        if(status == 0x00){
+            this.successCallback(`Success: Deleted instrument ${this.instNum + 1}`)
+            return true
+        }
+        if(!quiet){
+            this.errorCallback(`Error: Unable to delete instrument ${this.instNum + 1}: `
+                + this.statusText(status))
+        }
+        return false
+    }
+
+    /***
+     * Empties every instrument slot and selects the first one.
+     *
+     * A debugging convenience: a failed restore leaves a half built instrument
+     * holding its memory, and clearing them one at a time on the front panel
+     * between attempts is most of the work of testing. Slots that are already
+     * empty refuse quietly, which is the expected answer rather than a problem,
+     * so nothing is reported for them.
+     */
+    async deleteAllInstruments(progressCallback = () => {}){
+        const before = this.instNum
+        let deleted = 0
+        for(let slot = 0; slot < EPS16.INSTRUMENT_COUNT; slot++){
+            this.setInstrumentNumber(slot)
+            progressCallback(Math.round((slot / EPS16.INSTRUMENT_COUNT) * 100),
+                `instrument ${slot + 1}`)
+            if(await this.deleteInstrument(true)) deleted++
+        }
+        this.setInstrumentNumber(0)
+        this.debug(`Deleted ${deleted} instrument(s); was on ${before + 1}, now on 1`)
+        return deleted
     }
     async sendAck(){
         const data = [
@@ -423,19 +1166,29 @@ class EPS16 {
      * answer for an occupied instrument and not something the user needs told
      * about seven times before the eighth attempt works.
      */
+    /***
+     * Creates an instrument in the currently selected slot.
+     *
+     * Routed through sendCommand so that a busy EPS is waited out rather than
+     * mistaken for a slot that is already taken. That distinction matters here
+     * more than anywhere else: createNextFreeInstrument reads a failure as
+     * "occupied, try the next one", so a NAK meaning "not now" silently cost a
+     * slot. It showed up as pressing Test Connection making the next restore
+     * land one instrument further along than it should.
+     */
     async createInstrument(name = null, quiet = false){
-        let message = this.createMIDIMessage(0x15)
-        await this.sendData(message)
-        let messages = await this.readMessages()
-        if(await this.isAck(messages[0])){
+        const status = await this.sendCommand(this.createMIDIMessage(0x15),
+            `create instrument ${this.instNum + 1}`)
+        if(status == 0x00){
             this.successCallback("Success: Created instrument")
             await this.nameAfterCreate(EPS16.BLOCK_INSTRUMENT, name)
             return true
-        }else{
-            if(!quiet) this.errorCallback("Error: Unable to create instrument")
-            return false
         }
-
+        if(!quiet){
+            this.errorCallback("Error: Unable to create instrument: "
+                + this.statusText(status))
+        }
+        return false
     }
 
     /***
@@ -466,30 +1219,27 @@ class EPS16 {
         return false
     }
     async createLayer(name = null){
-        let message = this.createMIDIMessage(0x16)
-        await this.sendData(message)
-        let messages = await this.readMessages()
-        if(await this.isAck(messages[0])){
+        const status = await this.sendCommand(this.createMIDIMessage(0x16),
+            `create layer ${this.layerNum + 1}`)
+        if(status == 0x00){
             this.successCallback("Success: Created layer")
             await this.nameAfterCreate(EPS16.BLOCK_LAYER, name)
             return true
-        }else{
-            this.errorCallback("Error: Unable to create layer")
-            return false
         }
+        this.errorCallback("Error: Unable to create layer: " + this.statusText(status))
+        return false
     }
     async createSqrWave(name = null){
-        let message = this.createMIDIMessage(0x19)
-        await this.sendData(message)
-        let messages = await this.readMessages()
-        if(await this.isAck(messages[0])){
+        const status = await this.sendCommand(this.createMIDIMessage(0x19),
+            "create wavesample")
+        if(status == 0x00){
             this.successCallback("Success: Created SQR")
             await this.nameAfterCreate(EPS16.BLOCK_WAVESAMPLE, name)
             return true
-        }else{
-            this.errorCallback("Error: Unable to create SQR wavesample")
-            return false;
         }
+        this.errorCallback("Error: Unable to create SQR wavesample: "
+            + this.statusText(status))
+        return false
     }
     /***
      * Names something that has just been created, if a name was given. The
@@ -533,41 +1283,103 @@ class EPS16 {
     async renameInstrument(name){ return await this.rename(EPS16.BLOCK_INSTRUMENT, name) }
     async renameLayer(name){ return await this.rename(EPS16.BLOCK_LAYER, name) }
     async renameWavesample(name){ return await this.rename(EPS16.BLOCK_WAVESAMPLE, name) }
+    /***
+     * Zeroes a wavesample's data from the start to its end offset.
+     *
+     * The end offset used to be computed, converted, and then dropped:
+     * `data.concat(offsets)` returns a new array and the result was discarded,
+     * so the command went out with a four byte start offset and no end offset
+     * at all. Nothing on either page calls this yet, which is why it was never
+     * noticed.
+     *
+     * Both offsets are four bytes, the same left justified form the other
+     * wavedata commands use, hence the minimum length passed to the converter.
+     */
     async clearWavesample(){
-        let params = await this.getWavesampleParams()
+        const params = await this.getWavesampleParams()
         if(params.length == 0) return false
-        let length = this.getEndOffset(params)
-        let offsets = this.convertTo12BitMidi([length])
-        let data = [
-            0x00, // start offset
-            0x00, // start offset
-            0x00, // start offset
-            0x00, // start offset
-        ]
-        data.concat(offsets)
-        let cmd = this.createMIDIMessage(0x1f, data)
-        await this.sendData(cmd)
-        let messages = await this.readMessages()
-        if(await this.isAck(messages[0])){
+        const end = this.getEndOffset(params)
+        const data = this.convertTo12BitMidi([0], 4)
+            .concat(this.convertTo12BitMidi([end], 4))
+        const status = await this.sendCommand(this.createMIDIMessage(0x1f, data),
+            "clear wavesample")
+        if(status == 0x00){
             this.successCallback("Success: Cleared wavesample")
             return true
-        }else{
-            this.errorCallback("Error: Ubnable to clear wavesample")
-            return false
         }
+        this.errorCallback("Error: Unable to clear wavesample: " + this.statusText(status))
+        return false
+    }
+    /***
+     * Sends a command and returns the status the EPS answered with, or -1 for
+     * silence. WAIT is followed through, per section 3.2, so the caller sees
+     * the answer that came after it rather than the WAIT itself.
+     */
+    /***
+     * Statuses that mean "you sent that too soon", for a command carrying no
+     * data block.
+     *
+     * TRANSIENT_STATUS plus NAK. Section 5 defines NAK as "Something was wrong
+     * with the last data transfer which could not be processed", which sounds
+     * fatal, but section 3.1 gives it a second meaning: the receiver "should
+     * send a response command with a negative acknowledge (NAK) status code if
+     * another message is received during processing". For CREATE, DELETE and
+     * COPY there is no data transfer to be wrong with, so only the second
+     * meaning is available.
+     *
+     * This is what every remaining restore failure turned out to be. After a
+     * wavesample's audio goes in, the next CREATE arrives while the EPS is
+     * still working and is NAKed — at 4765 samples, at 2000, and at 65,536
+     * alike, so it was never about size, numbering or memory. See
+     * epswave-log-20260804--084716, --090628 and --091622, which fail
+     * identically on three different instruments.
+     */
+    static BUSY_AFTER_COMMAND = [...EPS16.TRANSIENT_STATUS, 0x17]
 
+    /***
+     * Sends a command that carries no data, retrying while the EPS says it is
+     * busy. Returns the final status.
+     */
+    async sendCommand(cmd, label){
+        let status = await this.sendAndWait(cmd)
+        for(let attempt = 1; attempt < EPS16.PARAM_BLOCK_ATTEMPTS
+                && EPS16.BUSY_AFTER_COMMAND.includes(status); attempt++){
+            this.debug(`EPS answered ${this.statusText(status)} to ${label}; retrying in `
+                + `${EPS16.BUSY_RETRY_MS / 1000}s, attempt ${attempt + 1}`)
+            await this.sleep(EPS16.BUSY_RETRY_MS)
+            status = await this.sendAndWait(cmd)
+        }
+        return status
+    }
+    async sendAndWait(cmd, timeoutMs = EPS16.COMMAND_TIMER_MS){
+        await this.sendData(cmd)
+        let status = this.noteStatus(await this.readMessages(timeoutMs))
+        if(status == 0x01){
+            this.debug("EPS asked to wait; acknowledging")
+            await this.sendAck()
+            status = this.noteStatus(await this.readMessages(30000))
+        }
+        return status
     }
     async truncateWavesample(){
-        let cmd = this.createMIDIMessage(0x1E)
-        await this.sendData(cmd)
-        let messages = await this.readMessages()
-        if(await this.isAck(messages[0])){
+        const cmd = this.createMIDIMessage(0x1E)
+        let status = await this.sendAndWait(cmd)
+        // Same "not now" treatment as the parameter writes. Truncate is the
+        // command immediately after the one that first showed this, so it is
+        // the next thing that would fail for the same reason.
+        for(let attempt = 1; attempt < EPS16.PARAM_BLOCK_ATTEMPTS
+                && EPS16.TRANSIENT_STATUS.includes(status); attempt++){
+            this.debug(`EPS answered ${this.statusText(status)} to truncate; retrying in `
+                + `${EPS16.BUSY_RETRY_MS / 1000}s, attempt ${attempt + 1}`)
+            await this.sleep(EPS16.BUSY_RETRY_MS)
+            status = await this.sendAndWait(cmd)
+        }
+        if(status == 0x00){
             this.successCallback("Success: Truncated wavesample")
             return true
-        }else{
-            this.errorCallback("Error: Unable to Truncate wavesample")
-            return false
         }
+        this.errorCallback(`Error: Unable to Truncate wavesample: ${this.statusText(status)}`)
+        return false
     }
     async getWavesampleDataChunked(chunkSize, plotCallback){
         let wavedata = []
@@ -642,9 +1454,23 @@ class EPS16 {
         return word >= 0x800000 ? word - 0x1000000 : word
     }
     /***
-     * Asks the EPS for one parameter. The answer is a PUT PARAMETER message
-     * carrying the value inline, so unlike a data transfer there is no second
-     * exchange to complete.
+     * Asks the EPS for one parameter. The answer is an ACK followed by a PUT
+     * PARAMETER message carrying the value inline.
+     *
+     * THE ANSWER MUST NOT BE ACKNOWLEDGED, which is worth stating because the
+     * specification appears to say otherwise and I got this wrong once.
+     *
+     * Section 8's worked example ends with "if the data was successfully
+     * received, the ACK status code should be sent", so an ACK was added here.
+     * The synth disagrees: send one and it answers "Invalid Instrument", which
+     * is what turned a clean connection test into a test plus an error. That
+     * example is a WaveData transfer, a multi-message exchange where the ACK
+     * keeps the next part coming. A parameter value arrives complete in one
+     * message and there is nothing left to ask for.
+     *
+     * The problem the ACK was meant to fix — the command after a free memory
+     * read being NAKed — was the EPS being busy, and is handled where it
+     * belongs, in sendCommand.
      */
     async getParameter(page, item, timeoutMs = EPS16.COMMAND_TIMER_MS){
         const cmd = this.createMIDIMessage(0x08, [page, item])
@@ -760,15 +1586,29 @@ class EPS16 {
         let msg = header.concat(midiValue)
         let cmd = this.createMIDIMessage(0x11,msg)
         this.debug("Set Parameter", cmd)
-        await this.sendData(cmd)
         // The spec notes that PUT PARAMETER only answers when the parameter
         // number or value is wrong, so this usually times out. Keep it short:
         // it exists to pace the command, to drain an error response before it
         // can be mistaken for the answer to the next command, and to report
         // whether the value was accepted.
-        const messages = await this.readMessages(300)
-        const status = this.noteStatus(messages)
-        // Silence means accepted. ACK and WAIT are not errors either.
+        let status = await this.sendAndWait(cmd, 300)
+        // "Not now" rather than "not this": send the identical command again
+        // after a pause. This is the only recovery the EPS offers for an
+        // overlay it has to fetch, and it is what broke a restore of the one
+        // instrument large enough to evict one.
+        for(let attempt = 1; attempt < EPS16.PARAM_BLOCK_ATTEMPTS
+                && EPS16.TRANSIENT_STATUS.includes(status); attempt++){
+            this.debug(`EPS answered ${this.statusText(status)} to parameter `
+                + `${paramGroup.toString(16)}/${paramByte.toString(16)}; retrying in `
+                + `${EPS16.BUSY_RETRY_MS / 1000}s, attempt ${attempt + 1}`)
+            await this.sleep(EPS16.BUSY_RETRY_MS)
+            status = await this.sendAndWait(cmd, 300)
+        }
+        // Silence means accepted. ACK is not an error either, and WAIT has
+        // already been followed through by sendAndWait: section 3.2 requires it
+        // to be acknowledged and waited out, and treating it as success is what
+        // made a restore fire commands into a machine that had asked for time
+        // and then NAKed everything. See epswave-log-20260803--134217.
         if(status > 0x01){
             this.errorCallback(`Error: The EPS refused parameter `
                 + `${paramGroup.toString(16)}/${paramByte.toString(16)} = ${paramValue}: `
@@ -921,6 +1761,53 @@ class EPS16 {
 
     }
 
+    /***
+     * The audio half of uploadWavToEPS, with nothing else attached.
+     *
+     * A restore writes the entire wavesample parameter block afterwards, so
+     * every setting uploadWavToEPS establishes on the way in — loop mode, loop
+     * position, loop start, sample start, and afterwards the rate, root key,
+     * tuning and name — is overwritten a minute later. Sending them is not
+     * merely wasted, it is five more commands that can fail.
+     *
+     * And they do. On hardware, the first of them, "set loop mode to forward",
+     * came back "Insert System Disk" ($02) on the second wavesample of an
+     * instrument, immediately after the first wavesample's 65,536 samples had
+     * gone in, and everything addressed to that wavesample failed from then on.
+     * The EPS-16 PLUS loads parts of its operating system from disk on demand,
+     * and the most likely reading is that the large allocation evicted whatever
+     * the loop mode editor needs. Not proven — but the command is unnecessary
+     * here, and the cheapest fix for a command that fails is not to send it.
+     *
+     * Sample end is the one that has to be set. It is what makes TRUNCATE throw
+     * away the single cycle square wave that CREATE WAVESAMPLE supplies, so the
+     * real audio is not appended to it.
+     */
+    async uploadWavesampleAudio(audio, progressCallback = () => {}){
+        // Clearing the square wave first is preferred but not required, and on
+        // hardware it is sometimes not possible. On the second wavesample of an
+        // instrument the EPS answered "Insert System Disk" to this parameter
+        // write five times over fifteen seconds and never recovered, while the
+        // identical write to the first wavesample had gone through moments
+        // earlier. See epswave-log-20260804--095312.
+        //
+        // So it is attempted and then let go. A wavesample straight from CREATE
+        // WAVESAMPLE holds a single cycle square wave, a few hundred bytes at
+        // most, and the upload writes from offset 0 and grows the wavesample as
+        // it goes — the same growth that happens after a truncate to one
+        // sample. Whatever the square wave occupied is overwritten by the first
+        // chunk. The sample end is set from the saved parameter block at the
+        // end of the restore either way, so nothing downstream depends on this.
+        let cleared = false
+        if(await this.setParameter(0x20, 0x16, 1)){
+            cleared = await this.truncateWavesample()
+        }
+        if(!cleared){
+            this.successCallback("Note: Could not clear the new wavesample first, so the "
+                + "audio is being written over it. This is expected to be harmless.")
+        }
+        return await this.putWavesampleDataInChunks(audio, this.chunkSize, 1, 0, progressCallback)
+    }
     async uploadWavToEPS(audio, numWaves=1, waveIndex=0, progressCallback=()=>{}, sampleRate=0, rootKey=0, fineTune=null, name=null){
         await this.setParameter(0x20, 0x00, 2) // set loop forward
         await this.setParameter(0x20, 0x19, 0) // set loop pos
@@ -963,19 +1850,37 @@ class EPS16 {
         if(data > 32767) {data = data - 65536;}
         return data
     }
-    saveFile(samples, sampleRate=44100){
-        // Stolen from Recorder.js
-        // https://github.com/mattdiamond/Recorderjs
+    /***
+     * A mono 16 bit WAV, as an ArrayBuffer.
+     *
+     * Static and free of the DOM so that it can be tested without a browser,
+     * and so the librarian can hand it whole wavesamples pulled out of a disk
+     * image. saveFile below wraps it for the download.
+     *
+     * Originally from Recorder.js, https://github.com/mattdiamond/Recorderjs
+     */
+    static encodeWav(samples, sampleRate=44100){
         let buffer = new ArrayBuffer(44 + samples.length * 2);
         let view = new DataView(buffer);
+        EPS16.writeWavHeader(view, samples.length, sampleRate)
+        let offset = 44
+        for(let i=0; i<samples.length; i++, offset +=2){
+            view.setInt16(offset, samples[i], true)
+        }
+        return buffer
+    }
+    static writeWavHeader(view, sampleCount, sampleRate){
+        const writeString = (at, string) => {
+            for(let i=0; i<string.length; i++) view.setUint8(at + i, string.charCodeAt(i))
+        }
         /* RIFF identifier */
-        this.writeString(view, 0, 'RIFF');
+        writeString(0, 'RIFF');
         /* RIFF chunk length */
-        view.setUint32(4, 36 + samples.length * 2, true);
+        view.setUint32(4, 36 + sampleCount * 2, true);
         /* RIFF type */
-        this.writeString(view, 8, 'WAVE');
+        writeString(8, 'WAVE');
         /* format chunk identifier */
-        this.writeString(view, 12, 'fmt ');
+        writeString(12, 'fmt ');
         /* format chunk length */
         view.setUint32(16, 16, true);
         /* sample format (raw) */
@@ -991,20 +1896,21 @@ class EPS16 {
         /* bits per sample */
         view.setUint16(34, 16, true);
         /* data chunk identifier */
-        this.writeString(view, 36, 'data');
+        writeString(36, 'data');
         /* data chunk length */
-        view.setUint32(40, samples.length * 2, true);
-        let offset = 44
-        for(let i=0; i<samples.length; i++, offset +=2){
-            view.setInt16(offset, samples[i], true)
-        }
-        let audioBlob = new Blob([view], {type: 'audio/x-wav'});
-        let url = (window.URL || window.webkitURL).createObjectURL(audioBlob);
-        let link = window.document.createElement('a');
-        link.href = url;
-        link.download = 'output.wav';
-        link.innerHTML="Download"
-        link.click();
+        view.setUint32(40, sampleCount * 2, true);
+    }
+    /***
+     * Saves samples as a WAV. The name is optional and used to be "output.wav"
+     * for everything, which is unhelpful the moment you save two.
+     */
+    saveFile(samples, sampleRate=44100, name="output.wav"){
+        const blob = new Blob([EPS16.encodeWav(samples, sampleRate)], {type: 'audio/x-wav'})
+        // Routed through the shared helper, which appends the anchor to the
+        // document before clicking it and revokes the URL afterwards. Firefox
+        // ignores a click on a detached anchor, so the old version of this
+        // silently did nothing there.
+        EPSWaveUI.download(blob, 'audio/x-wav', name)
     }
     readTag(view, offset){
         return String.fromCharCode(
@@ -1080,11 +1986,6 @@ class EPS16 {
             sampleRate: format.sampleRate,
             available: available,
             truncated: available > length
-        }
-    }
-    writeString(view, offset, string) {
-        for (let i = 0; i < string.length; i++) {
-            view.setUint8(offset + i, string.charCodeAt(i));
         }
     }
     async isAck(message){
@@ -1503,13 +2404,52 @@ class EPS16 {
      * of section 4.2 requires of every PUT that carries a block: the command
      * with the edit context, then the block itself once the EPS has ACKed.
      */
+    /***
+     * Sends a parameter block, waiting the EPS out if it is busy.
+     *
+     * A restore writes seven or more blocks back to back immediately after a
+     * multi-megabyte upload, and the EPS is still doing its own housekeeping
+     * when the first of them arrives. It refuses with "Disk Access in Progress"
+     * ($14), which is not a rejection of the block — offer the same one again a
+     * few seconds later and it is taken. Without this a restore of a single
+     * wavesample instrument died on its layer block having done everything
+     * else right; see epswave-log-20260803--140115.
+     *
+     * Only the transient statuses are retried. A block the EPS genuinely
+     * dislikes fails on the first attempt, as it should.
+     */
+    static PARAM_BLOCK_ATTEMPTS = 5
+    static BUSY_RETRY_MS = 3000
+
     async putParamBlock(kind, block){
+        for(let attempt = 1; attempt <= EPS16.PARAM_BLOCK_ATTEMPTS; attempt++){
+            this.lastBlockError = ""
+            if(await this.putParamBlockOnce(kind, block)) return true
+            const busy = EPS16.TRANSIENT_STATUS.includes(this.lastStatusCode)
+            if(!busy || attempt == EPS16.PARAM_BLOCK_ATTEMPTS){
+                this.errorCallback(`Error: ${this.lastBlockError}`)
+                return false
+            }
+            this.debug(`EPS busy (${this.statusText(this.lastStatusCode)}); `
+                + `offering the ${kind.label} block again in `
+                + `${EPS16.BUSY_RETRY_MS / 1000}s, attempt ${attempt + 1}`)
+            await this.sleep(EPS16.BUSY_RETRY_MS)
+        }
+        return false
+    }
+
+    /***
+     * One attempt. Records why it failed in lastBlockError rather than
+     * reporting it, so that a refusal which the next attempt recovers from does
+     * not appear in the event log as an error that mattered.
+     */
+    async putParamBlockOnce(kind, block){
         const cmd = this.createMIDIMessage(kind.put)
         await this.sendData(cmd)
         let messages = await this.readMessages()
         this.noteStatus(messages)
         if(messages.length == 0){
-            this.errorCallback(`Error: No response to the ${kind.label} parameter block command`)
+            this.lastBlockError = `No response to the ${kind.label} parameter block command`
             return false
         }
         let accepted = false
@@ -1520,23 +2460,23 @@ class EPS16 {
             }
         }
         if(!accepted){
-            this.errorCallback(`Error: The EPS would not take a ${kind.label} parameter block: `
-                + this.statusText(this.lastStatusCode))
+            this.lastBlockError = `The EPS would not take a ${kind.label} parameter block: `
+                + this.statusText(this.lastStatusCode)
             return false
         }
         await this.sendData(this.convertTo16BitMidi(block))
         const responses = await this.readMessages(EPS16.COMMAND_TIMER_MS + 1000)
         this.noteStatus(responses)
         if(responses.length == 0){
-            this.errorCallback(`Error: No response after sending a ${block.length} word `
-                + `${kind.label} parameter block`)
+            this.lastBlockError = `No response after sending a ${block.length} word `
+                + `${kind.label} parameter block`
             return false
         }
         for(let resp of responses){
             if(await this.isAck(resp)) return true
         }
-        this.errorCallback(`Error: The EPS refused the ${kind.label} parameter block: `
-            + this.statusText(this.lastStatusCode))
+        this.lastBlockError = `The EPS refused the ${kind.label} parameter block: `
+            + this.statusText(this.lastStatusCode)
         return false
     }
     /***
