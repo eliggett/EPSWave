@@ -1919,6 +1919,10 @@ class EPS16 {
      * real code and completely misleading: the command was GET INSTRUMENT and
      * no loop was involved.
      *
+     * Confirmed since: an instrument in internal flash cannot be read over MIDI
+     * at all, and cannot be edited on the synth either. It has to be copied to
+     * floppy or SCSI and loaded from there. statusText says so.
+     *
      * So a non-zero hi byte is kept, folded into the returned value at a
      * magnitude no documented code can reach — section 5 runs to `1E` — which
      * means every existing `status != 0x00` test treats it as the failure it
@@ -1934,13 +1938,29 @@ class EPS16 {
      */
     statusText(code){
         if(code < 0) return "no response"
-        // A status the specification does not describe. Named as such, with
-        // both bytes, because the alternative is confidently reporting whatever
-        // the lo byte happens to collide with. See responseStatus.
+        /***
+         * A status the specification does not describe.
+         *
+         * Named as such, with both bytes, because the alternative is
+         * confidently reporting whatever the lo byte happens to collide with —
+         * see responseStatus, where reading only the lo byte of `36 16` gave
+         * "Loop is too long" for a GET INSTRUMENT.
+         *
+         * WHAT IT MEANS IS NOW KNOWN, at least for the case that produced it.
+         * An instrument sitting in the machine's internal flash cannot be read
+         * over MIDI at all, and cannot be edited on the synth either; it has to
+         * be copied to floppy or SCSI and loaded from there first. That was
+         * established on hardware rather than from the document, so the advice
+         * is offered as the likely cause rather than stated as the meaning of
+         * the code — no other undocumented status has been seen, and if one
+         * turns up this message would otherwise send its finder the wrong way.
+         */
         if(code > 0xFF){
             return `undocumented status ${((code >> 8) & 0xFF).toString(16).padStart(2, "0")} `
                 + `${(code & 0xFF).toString(16).padStart(2, "0")} (section 4.1 says the hi byte `
-                + `is always 0)`
+                + `is always 0). This may indicate that your instrument is stored on the `
+                + `internal flash memory; please offload it to floppy or SCSI first, reload, `
+                + `and try again.`
         }
         return this.getResponseMessage([0x01, 0x00, code])
             .replace(/^(Error|INFO|SUCCESS): /, '')

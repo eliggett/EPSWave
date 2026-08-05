@@ -1071,6 +1071,35 @@ before spending twenty minutes finding out that it does not. Instrument word 15,
 *Total Instrument Size in Blocks*, is **not** usable for this from a file — see
 *Two things the specification does not say* above.
 
+### Instruments in internal flash cannot be read at all
+
+An instrument sitting in the machine's internal flash is not reachable over
+MIDI, and cannot be edited on the synth either. It has to be copied to floppy or
+SCSI and loaded from there first. Switching the storage selector back to floppy
+does not help; the instrument has to physically come from somewhere else.
+
+Asking for one produces a response the specification does not allow:
+
+```
+-> F0 0F 03 00 03 00 03 00 00 00 01 F7      GET INSTRUMENT
+<- F0 0F 03 00 01 36 16 F7                  hi byte 36, lo byte 16
+```
+
+Section 4.1 gives a response as `01` followed by "Status Code hi byte, (always
+0)" and the lo byte. **That hi byte is not always 0.** Reading only the lo byte
+turns this into `16`, "Loop is too long" — a real code, and a completely
+misleading one for a GET INSTRUMENT with no loop involved. It cost an evening.
+
+`responseStatus` now keeps a non-zero hi byte, folded in above any documented
+code so that every `status != 0` test treats it as the failure it is, and
+`statusText` names it as undocumented and suggests the flash as the likely
+cause. `isAck` requires the hi byte to be zero too, without which a response of
+`36 00` counted as an acknowledgement.
+
+Whether `36 16` means "in flash" specifically or something broader is unknown —
+it is the only undocumented status seen — so the advice is offered as a likely
+cause rather than as the meaning of the code.
+
 ### "Not now" is not "no"
 
 Four status codes mean the EPS is busy rather than refusing, and every one of

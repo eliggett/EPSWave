@@ -6,6 +6,14 @@
     <meta charset="utf-8">
     <title>EPSWave: Ensoniq EPS-16+ wavesample editor</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <!-- Icons. The .ico carries the 48x48 for browsers that want one file, the
+         SVG scales for everything modern, and the PNGs cover the tab, the
+         bookmark bar and an installed shortcut. -->
+    <link rel="icon" href="./favicon.ico" sizes="any">
+    <link rel="icon" href="./icon.svg" type="image/svg+xml">
+    <link rel="icon" type="image/png" sizes="192x192" href="./icon-192x192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="./icon-512x512.png">
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.3.0/css/regular.min.css"
         integrity="sha512-3YMBYASBKTrccbNMWlnn0ZoEOfRjVs9qo/dlNRea196pg78HaO0H/xPPO2n6MIqV6CgTYcWJ1ZB2EgWjeNP6XA=="
         crossorigin="anonymous" referrerpolicy="no-referrer" />
@@ -743,26 +751,39 @@
                 eps.saveFile(epsChart.wavesample, epsChart.sampleRate)
             })
             $("#upload").click(async () => {
+                // Held so that closing the page mid-transfer asks first, and
+                // released in a finally so a throw cannot leave the page stuck
+                // asking forever.
+                const release = EPSWaveUI.hold("uploading a wavesample")
                 $("#uploadSpinner").show()
                 $("#uploadPercent").html("0%").show()
-                await eps.uploadWavToEPS(localChart.wavesample, 1, 0, (percent) => {
-                    $("#uploadPercent").html(`${percent}%`)
-                }, localChart.sampleRate, localChart.rootKey, localChart.fineTune, localChart.name)
-                $("#uploadSpinner").hide()
-                $("#uploadPercent").hide().html("0%")
+                try {
+                    await eps.uploadWavToEPS(localChart.wavesample, 1, 0, (percent) => {
+                        $("#uploadPercent").html(`${percent}%`)
+                    }, localChart.sampleRate, localChart.rootKey, localChart.fineTune, localChart.name)
+                } finally {
+                    release()
+                    $("#uploadSpinner").hide()
+                    $("#uploadPercent").hide().html("0%")
+                }
             })
             $("#uploadEps").click(async () => {
                 if (!epsChart.wavesample || epsChart.wavesample.length == 0) {
                     handleError("Error: Nothing to upload, get a wavesample from the EPS first")
                     return
                 }
+                const release = EPSWaveUI.hold("uploading a wavesample")
                 $("#uploadEpsSpinner").show()
                 $("#uploadEpsPercent").html("0%").show()
-                await eps.uploadWavToEPS(epsChart.wavesample, 1, 0, (percent) => {
-                    $("#uploadEpsPercent").html(`${percent}%`)
-                }, epsChart.sampleRate, epsChart.rootKey, epsChart.fineTune, epsChart.name)
-                $("#uploadEpsSpinner").hide()
-                $("#uploadEpsPercent").hide().html("0%")
+                try {
+                    await eps.uploadWavToEPS(epsChart.wavesample, 1, 0, (percent) => {
+                        $("#uploadEpsPercent").html(`${percent}%`)
+                    }, epsChart.sampleRate, epsChart.rootKey, epsChart.fineTune, epsChart.name)
+                } finally {
+                    release()
+                    $("#uploadEpsSpinner").hide()
+                    $("#uploadEpsPercent").hide().html("0%")
+                }
             })
             // The three name fields in the EPS Functions card. Each filters to
             // the character set the synth can display, exactly as the
@@ -833,80 +854,90 @@
                 let tunes = waveScapes.map(ws => ws.fineTune)
                 let names = waveScapes.map(ws => ws.name)
                 console.log(waves)
+                const release = EPSWaveUI.hold("uploading a soundscape")
                 $("#uploadSoundScapeSpinner").show()
-                const value = $('input[name="flexRadioDefault"]:checked').val();
-                if (value == "simple") {
-                    await eps.uploadToDifferentInstruments(waves, (percent) => { 
-                        $("#percentAllComplete").show()
-                        $("#percentAllComplete").html(`${percent}%`)
-                    }, rates, roots, tunes, names)
-                    resetUI()
-                } else if (value == "morph") {
-                    await eps.createMorphingWaveTable(waves, (percent) => { 
-                        $("#percentAllComplete").show()
-                        $("#percentAllComplete").html(`${percent}%`)
-                    }, rates, roots, tunes, names)
-                    resetUI()
-                } else if (value == "transwave") {
-                    await eps.uploadAsTranswave(waves, (percent) => { 
-                        $("#percentAllComplete").show()
-                        $("#percentAllComplete").html(`${percent}%`)
-                    }, rates, roots, tunes, names)
-                    resetUI()
+                try {
+                    const value = $('input[name="flexRadioDefault"]:checked').val();
+                    if (value == "simple") {
+                        await eps.uploadToDifferentInstruments(waves, (percent) => { 
+                            $("#percentAllComplete").show()
+                            $("#percentAllComplete").html(`${percent}%`)
+                        }, rates, roots, tunes, names)
+                        resetUI()
+                    } else if (value == "morph") {
+                        await eps.createMorphingWaveTable(waves, (percent) => { 
+                            $("#percentAllComplete").show()
+                            $("#percentAllComplete").html(`${percent}%`)
+                        }, rates, roots, tunes, names)
+                        resetUI()
+                    } else if (value == "transwave") {
+                        await eps.uploadAsTranswave(waves, (percent) => { 
+                            $("#percentAllComplete").show()
+                            $("#percentAllComplete").html(`${percent}%`)
+                        }, rates, roots, tunes, names)
+                        resetUI()
+                    }
+                } finally {
+                    release()
+                    $("#uploadSoundScapeSpinner").hide()
+                    $("#percentAllComplete").hide()
                 }
-                $("#uploadSoundScapeSpinner").hide()
-                $("#percentAllComplete").hide()
             })
             $("#getWS").click(async () => {
+                const release = EPSWaveUI.hold("reading a wavesample")
                 $("#downloadSpinner").show()
                 $("#percentComplete").show()
-                const epsWavesample = await eps.getWavesampleDataChunked(eps.chunkSize, (wavedata, percentComplete) => {
-                    $("#percentComplete").html(`${percentComplete}%`)
-                    epsChart.setWavesample(wavedata)
-                })
-                epsChart.setWavesample(epsWavesample)
-                // The rate came back in word 131 of the parameter block that
-                // the download already fetched, so stop making the user guess.
-                if (eps.lastSampleRate) {
-                    epsChart.sampleRate = EPSChart.selectRate(
-                        epsRateEl, epsRateAllEl, eps.lastSampleRate)
-                    epsChart.refreshPreview()
-                    log(`Wavesample rate read from the EPS: `
-                        + `${(eps.lastSampleRate / 1000).toFixed(1)} kHz (code ${eps.lastSampleRateCode})`)
+                try {
+                    const epsWavesample = await eps.getWavesampleDataChunked(eps.chunkSize, (wavedata, percentComplete) => {
+                        $("#percentComplete").html(`${percentComplete}%`)
+                        epsChart.setWavesample(wavedata)
+                    })
+                    epsChart.setWavesample(epsWavesample)
+                    // The rate came back in word 131 of the parameter block that
+                    // the download already fetched, so stop making the user guess.
+                    if (eps.lastSampleRate) {
+                        epsChart.sampleRate = EPSChart.selectRate(
+                            epsRateEl, epsRateAllEl, eps.lastSampleRate)
+                        epsChart.refreshPreview()
+                        log(`Wavesample rate read from the EPS: `
+                            + `${(eps.lastSampleRate / 1000).toFixed(1)} kHz (code ${eps.lastSampleRateCode})`)
+                    }
+                    if (typeof eps.lastRootKey == "number") {
+                        epsChart.rootKey = eps.lastRootKey
+                        epsRootEl.value = eps.lastRootKey
+                        log(`Root key read from the EPS: `
+                            + `${WaveGen.noteToName(eps.lastRootKey)} (${eps.lastRootKey})`)
+                    }
+                    // Word 86's scaling is undocumented, so adopt the value only
+                    // when it lands inside the range the parameter page accepts.
+                    // Anything else is logged raw rather than written back later.
+                    if (typeof eps.lastFineTune == "number") {
+                        epsFineEl.value = epsChart.setFineTune(eps.lastFineTune)
+                        log(`Fine tune read from the EPS: ${eps.lastFineTune} cents`)
+                    } else if (typeof eps.lastFineTuneRaw == "number") {
+                        log(`Fine tune raw value ${eps.lastFineTuneRaw} is outside the `
+                            + `documented -99..+99 range, leaving the field alone`)
+                    }
+                    // Words 0 to 11 of the same parameter block. Adopted as if the
+                    // user had typed it, so uploading straight back keeps the name
+                    // the wavesample already had.
+                    if (typeof eps.lastWavesampleName == "string") {
+                        epsChart.setName(eps.lastWavesampleName, true)
+                        // The rename field at the top of the page gets it too, so
+                        // renaming starts from the current name rather than a blank
+                        // box. No extra traffic: this came out of the parameter
+                        // block the download already fetched.
+                        $("#wsName").val(EPS16.sanitizeName(eps.lastWavesampleName))
+                        log(eps.lastWavesampleName.length > 0
+                            ? `Wavesample name read from the EPS: "${eps.lastWavesampleName}"`
+                            : `Wavesample has no name on the EPS`)
+                    }
+                } finally {
+                    release()
+                    $("#downloadSpinner").hide()
+                    $("#percentComplete").hide()
+                    $("#percentComplete").html("0%")
                 }
-                if (typeof eps.lastRootKey == "number") {
-                    epsChart.rootKey = eps.lastRootKey
-                    epsRootEl.value = eps.lastRootKey
-                    log(`Root key read from the EPS: `
-                        + `${WaveGen.noteToName(eps.lastRootKey)} (${eps.lastRootKey})`)
-                }
-                // Word 86's scaling is undocumented, so adopt the value only
-                // when it lands inside the range the parameter page accepts.
-                // Anything else is logged raw rather than written back later.
-                if (typeof eps.lastFineTune == "number") {
-                    epsFineEl.value = epsChart.setFineTune(eps.lastFineTune)
-                    log(`Fine tune read from the EPS: ${eps.lastFineTune} cents`)
-                } else if (typeof eps.lastFineTuneRaw == "number") {
-                    log(`Fine tune raw value ${eps.lastFineTuneRaw} is outside the `
-                        + `documented -99..+99 range, leaving the field alone`)
-                }
-                // Words 0 to 11 of the same parameter block. Adopted as if the
-                // user had typed it, so uploading straight back keeps the name
-                // the wavesample already had.
-                if (typeof eps.lastWavesampleName == "string") {
-                    epsChart.setName(eps.lastWavesampleName, true)
-                    // The rename field at the top of the page gets it too, so
-                    // renaming starts from the current name rather than a blank
-                    // box. No extra traffic: this came out of the parameter
-                    // block the download already fetched.
-                    $("#wsName").val(EPS16.sanitizeName(eps.lastWavesampleName))
-                    log(eps.lastWavesampleName.length > 0
-                        ? `Wavesample name read from the EPS: "${eps.lastWavesampleName}"`
-                        : `Wavesample has no name on the EPS`)
-                }
-                $("#downloadSpinner").hide()
-                $("#percentComplete").hide()
-                $("#percentComplete").html("0%")
             })
             $("#instNum").change(() => {
                 eps.setInstrumentNumber(parseInt($("#instNum").val()))
