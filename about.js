@@ -27,7 +27,9 @@ window.ABOUT_HTML = `
     <p><img src="icon-192x192.png"></p>
     <p class="mb-0"><b>This version by Elliott Liggett</b></p>
     <p><a href="https://github.com/eliggett/EPSWave" target="_blank" rel="noopener">github.com/eliggett/EPSWave</a></p>
-
+    <p><a href="https://github.com/eliggett/EPSWave/tree/main/reference/" target="_blank" rel="noopener">Reference Material</a></p>
+    <p><a href="https://github.com/eliggett/EPSWave/tree/main/reference/disks/" target="_blank" rel="noopener">Example Patches</a></p>
+    <p><a href="https://web.archive.org/web/20041024235453/http://soundcentral.com/cats/keyboard/ensoniq/" target="_blank" rel="noopener">Many Patches (soundcentral.com via the Wayback Machine)</a></p>
     <hr>
 
     <h6>Credit</h6>
