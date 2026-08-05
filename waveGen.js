@@ -92,6 +92,25 @@ class WaveGen {
      */
     static SUPER_SAW_VOICES = 7
 
+    /***
+     * Where the super saw controls land when it is picked.
+     *
+     * Chosen by ear rather than derived: a wide spread with the voices smeared
+     * by random phases and a slow shallow drift, the tracking high pass keeping
+     * the beats between them out of the bottom end, and band limiting off
+     * because the hard edges are a good part of what makes a super saw sound
+     * like one.
+     */
+    static SUPER_SAW_DEFAULTS = {
+        detuneCents: 32,
+        amplitude: 99,
+        randomPhase: true,
+        drift: true,
+        driftCents: 6,
+        trackingHighPass: true,
+        bandLimited: false
+    }
+
     static NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
     static DEFAULT_NOTE = 48 // C3
 
@@ -117,10 +136,18 @@ class WaveGen {
      * 1731/periods cents, so a buffer just long enough for a non-zero detune
      * badly overshoots what was asked for. Aim instead for a step no larger
      * than a quarter of the request.
+     *
+     * `smearCents` widens that. Random start phases and drift both move the
+     * voices around by more than the quantisation error does, so once either is
+     * on, placing every voice exactly on its nominal detune stops being worth
+     * the samples it costs. Half the request is as coarse as this will ever go:
+     * beyond that neighbouring voices round onto the same cycle count and the
+     * super saw collapses back into a single saw.
      */
-    static periodsForDetune(cents) {
+    static periodsForDetune(cents, smearCents = 0) {
         if (cents <= 0) return 1
-        return Math.ceil((4 * 1731) / cents)
+        const step = Math.min(Math.max(cents / 4, smearCents), cents / 2)
+        return Math.ceil(1731 / step)
     }
 
     /***
@@ -186,6 +213,9 @@ class WaveGen {
      *   amplitude   0..1 peak level
      *   phase       0..1 starting phase offset
      *   bandLimited true for additive synthesis, false for naive hard edges
+     *   randomPhase super saw only: scatter the detuned voices' start phases
+     *   driftCents  super saw only: how far the detuned voices wander, 0 for none
+     *   trackingHighPass super saw only: 24 dB/oct below the fundamental
      */
     static generate(opts) {
         const sampleRate = opts.sampleRate || WaveGen.DEFAULT_SAMPLE_RATE
@@ -221,6 +251,7 @@ class WaveGen {
         let raw
         let detune = null
         let harmonics = bandLimited ? maxHarmonic : 0
+        let highPassHz = 0
 
         if (opts.type === 'superSaw') {
             const layered = WaveGen.renderSuperSaw({
@@ -229,11 +260,19 @@ class WaveGen {
                 sampleRate: sampleRate,
                 detuneCents: opts.detuneCents === undefined ? 25 : opts.detuneCents,
                 bandLimited: bandLimited,
-                phase: phase
+                phase: phase,
+                randomPhase: opts.randomPhase === true,
+                driftCents: opts.driftCents || 0
             })
             raw = layered.raw
             detune = layered.detune
             harmonics = layered.harmonics
+            // Tracks the pitch the buffer really plays at, not the note that
+            // was asked for, so it stays on the fundamental after rounding.
+            if (opts.trackingHighPass) {
+                highPassHz = actualFrequency
+                raw = WaveGen.trackingHighPass(raw, sampleRate, highPassHz)
+            }
         } else {
             raw = new Array(totalSamples)
             for (let i = 0; i < totalSamples; i++) {
@@ -252,6 +291,7 @@ class WaveGen {
             actualFrequency: actualFrequency,
             harmonics: harmonics,
             detune: detune,
+            highPassHz: highPassHz,
             clamped: clamped
         }
     }
@@ -272,12 +312,14 @@ class WaveGen {
 
         // Offsets spread evenly over -1..+1, so the outer voices sit at the
         // full requested detune and the rest fall between.
+        const offsets = []
         const cycleCounts = []
         const achieved = []
         for (let v = 0; v < voices; v++) {
             const offset = voices === 1 ? 0 : (2 * v) / (voices - 1) - 1
             const ratio = Math.pow(2, (offset * detuneCents) / 1200)
             const cycles = Math.max(1, Math.round(periods * ratio))
+            offsets.push(offset)
             cycleCounts.push(cycles)
             achieved.push(1200 * Math.log2(cycles / periods))
         }
@@ -295,15 +337,48 @@ class WaveGen {
             table = WaveGen.buildSawTable(harmonics)
         }
 
+        // Drift maps are shared: the six detuned voices only ever wander in one
+        // of two directions, so at most two get built however many voices there
+        // are. The centre voice never drifts, so it is not asked for one.
+        const driftCents = Math.max(0, params.driftCents || 0)
+        const driftMaps = {}
+        const driftMapFor = (direction) => {
+            if (!driftMaps[direction]) {
+                driftMaps[direction] = WaveGen.buildDriftMap(totalSamples, driftCents, direction)
+            }
+            return driftMaps[direction]
+        }
+
         const raw = new Array(totalSamples).fill(0)
+        let randomised = 0
+        let drifting = 0
         for (let v = 0; v < voices; v++) {
             const cycles = cycleCounts[v]
+            // The one voice sitting on the fundamental anchors the pitch, and it
+            // is left exactly as it was: no scattered phase, no drift.
+            const centre = offsets[v] === 0
             // Stagger the starting phases. Every voice is cycle aligned to the
             // buffer, so without this they would all launch together and put a
             // large spike at sample zero that normalisation then pays for.
-            const voicePhase = params.phase + v / voices
+            // Scattering them at random does the same job less evenly, and gives
+            // each generation its own character rather than the fixed comb the
+            // regular stagger always produces.
+            let voicePhase = params.phase + v / voices
+            if (params.randomPhase && !centre) {
+                voicePhase = Math.random()
+                randomised++
+            }
+            // Where the voice is in its cycles at each sample: a straight ramp
+            // normally, a drifting one when asked. Voices above the fundamental
+            // drift down, voices below it drift up.
+            let map = null
+            if (driftCents > 0 && !centre) {
+                map = driftMapFor(offsets[v] > 0 ? -1 : 1)
+                drifting++
+            }
             for (let i = 0; i < totalSamples; i++) {
-                const t = ((i / totalSamples) * cycles + voicePhase) % 1
+                const position = map ? map[i] : i / totalSamples
+                const t = (position * cycles + voicePhase) % 1
                 raw[i] += table ? WaveGen.readTable(table, t) : 2 * t - 1
             }
         }
@@ -327,9 +402,143 @@ class WaveGen {
                 voiceCents: achieved,
                 cycleCounts: cycleCounts,
                 distinctVoices: distinctVoices,
-                requiredPeriods: WaveGen.periodsForDetune(detuneCents)
+                randomPhaseVoices: randomised,
+                driftCents: drifting ? driftCents : 0,
+                driftVoices: drifting,
+                requiredPeriods: WaveGen.periodsForDetune(detuneCents,
+                    WaveGen.smearCents(detuneCents, params.randomPhase, driftCents))
             }
         }
+    }
+
+    /***
+     * How far the voices are being moved about by things other than their
+     * nominal detune. Feeds periodsForDetune, which spends fewer samples once
+     * the smearing is wider than the error it is trying to avoid.
+     */
+    static smearCents(detuneCents, randomPhase, driftCents) {
+        let smear = randomPhase ? detuneCents / 2 : 0
+        if (driftCents > 0) smear = Math.max(smear, driftCents)
+        return smear
+    }
+
+    /***
+     * A drift shape: how far through its cycles a voice is at each sample,
+     * as a fraction of the whole buffer.
+     *
+     * The voice's pitch swings `cents` either side of nominal over a single LFO
+     * cycle spanning the entire buffer, which is as slow as the material allows
+     * and is what "takes the whole period to complete" means. Integrating pitch
+     * gives phase, and the integral is then scaled to end on exactly 1.
+     *
+     * That last step is what keeps the loop seamless. Whatever the drift does in
+     * between, the voice still completes its whole number of cycles across the
+     * buffer, so the wrap point lands on the same phase it started at; and the
+     * LFO is at zero on both ends, so the pitch matches across the join as well
+     * as the phase does. Nothing here needs the loop criteria loosened.
+     */
+    static buildDriftMap(totalSamples, cents, direction) {
+        const map = new Float64Array(totalSamples + 1)
+        const scale = (direction * cents) / 1200
+        let sum = 0
+        for (let i = 0; i < totalSamples; i++) {
+            // Midpoint of the sample's span, so this is the integral of the
+            // pitch rather than a left hand approximation of it.
+            const u = (i + 0.5) / totalSamples
+            sum += Math.pow(2, scale * Math.sin(2 * Math.PI * u))
+            map[i + 1] = sum
+        }
+        for (let i = 1; i <= totalSamples; i++) map[i] /= sum
+        return map
+    }
+
+    /***
+     * Butterworth Q values for a four pole cascade. Two biquads at 12 dB an
+     * octave each is where the JP-8000's 24 dB an octave comes from.
+     */
+    static HPF_STAGE_Q = [0.54119610, 1.30656296]
+
+    /***
+     * Cycles of the cutoff to run the filter for before keeping its output.
+     * Four poles settle in a handful; this is generous rather than marginal,
+     * and it costs at most one extra pass over the buffer.
+     */
+    static HPF_SETTLE_CYCLES = 16
+
+    /***
+     * A tracking high pass, JP-8000 style: 24 dB an octave below the
+     * fundamental the buffer was generated at.
+     *
+     * Seven detuned saws stack a lot of weight underneath the fundamental —
+     * every pair of voices beats, and the beats are all slower than the note.
+     * That is the low frequency thickening the JP-8000 answers with a high pass
+     * that follows the pitch, and this is the same filter.
+     *
+     * Filtering a loop is the awkward part. Run an IIR once from silence and it
+     * starts with a transient and finishes holding a state it did not begin
+     * with, so the join clicks. The signal is periodic, so instead the filter is
+     * run round and round the buffer until its state settles, and only then is
+     * the output kept. What comes back is the steady state periodic response,
+     * which repeats exactly and therefore joins exactly.
+     */
+    static trackingHighPass(values, sampleRate, cutoffHz) {
+        const total = values.length
+        // Nothing below DC to remove, and nothing above Nyquist to keep.
+        if (!(cutoffHz > 0) || cutoffHz >= sampleRate / 2 || total < 1) {
+            return values.slice()
+        }
+        const stages = WaveGen.HPF_STAGE_Q.map(
+            q => WaveGen.highPassBiquad(sampleRate, cutoffHz, q))
+        const state = stages.map(() => ({ x1: 0, x2: 0, y1: 0, y2: 0 }))
+        const step = (i) => {
+            let v = values[i]
+            for (let s = 0; s < stages.length; s++) {
+                v = WaveGen.stepBiquad(stages[s], state[s], v)
+            }
+            return v
+        }
+
+        // Whole laps only. Stopping part way round would leave the state
+        // holding the middle of the buffer when the kept pass starts at the
+        // beginning of it, which is the very seam this is avoiding.
+        const settle = Math.ceil((WaveGen.HPF_SETTLE_CYCLES * sampleRate) / cutoffHz)
+        const laps = Math.max(1, Math.ceil(settle / total))
+        for (let lap = 0; lap < laps; lap++) {
+            for (let i = 0; i < total; i++) step(i)
+        }
+
+        const output = new Array(total)
+        for (let i = 0; i < total; i++) output[i] = step(i)
+        return output
+    }
+
+    /***
+     * One high pass biquad, bilinear transformed, normalised so a0 is 1.
+     * Straight out of the RBJ cookbook.
+     */
+    static highPassBiquad(sampleRate, cutoffHz, q) {
+        const w0 = (2 * Math.PI * cutoffHz) / sampleRate
+        const cos0 = Math.cos(w0)
+        const alpha = Math.sin(w0) / (2 * q)
+        const a0 = 1 + alpha
+        const shared = (1 + cos0) / 2
+        return {
+            b0: shared / a0,
+            b1: (-(1 + cos0)) / a0,
+            b2: shared / a0,
+            a1: (-2 * cos0) / a0,
+            a2: (1 - alpha) / a0
+        }
+    }
+
+    static stepBiquad(coefficients, state, x) {
+        const y = coefficients.b0 * x + coefficients.b1 * state.x1 + coefficients.b2 * state.x2
+            - coefficients.a1 * state.y1 - coefficients.a2 * state.y2
+        state.x2 = state.x1
+        state.x1 = x
+        state.y2 = state.y1
+        state.y1 = y
+        return y
     }
 
     /***

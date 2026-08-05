@@ -330,6 +330,9 @@ class EPSChart {
         const container = document.getElementById(containerId)
         if(!container) return
         const id = this.elementId
+        // The last period count this panel put in the field itself, so it can
+        // tell its own suggestion from a figure the user typed.
+        this.autoPeriods = null
 
         const typeOptions = WaveGen.TYPES.map(
             type => `<option value="${type.value}">${type.label}</option>`).join("")
@@ -379,6 +382,33 @@ class EPSChart {
                             <input type="range" id="${id}_genAmp" class="custom-range" min="10" max="100" value="99">
                         </div>
                     </div>
+                    <div class="form-row" id="${id}_genSawGroup" style="display:none">
+                        <div class="col-12 mb-1">
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="${id}_genRandomPhase">
+                                <label class="form-check-label" for="${id}_genRandomPhase">
+                                    <small>Random start phase</small>
+                                </label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="${id}_genDrift">
+                                <label class="form-check-label" for="${id}_genDrift">
+                                    <small>Drift</small>
+                                </label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="${id}_genTrackingHpf">
+                                <label class="form-check-label" for="${id}_genTrackingHpf"
+                                    title="24 dB/octave below the fundamental, as on the JP-8000">
+                                    <small>Tracking HPF</small>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-12 mb-2" id="${id}_genDriftGroup" style="display:none">
+                            <label class="mb-0"><small>Drift Depth: <span id="${id}_genDriftLabel">&plusmn;10 cents</span></small></label>
+                            <input type="range" id="${id}_genDriftAmount" class="custom-range" min="1" max="50" value="10">
+                        </div>
+                    </div>
                     <div class="form-row align-items-center">
                         <div class="col-auto">
                             <div class="form-check">
@@ -408,6 +438,13 @@ class EPSChart {
         const groupEl = document.getElementById(`${id}_genPulseGroup`)
         const titleEl = document.getElementById(`${id}_genPulseTitle`)
         const labelEl = document.getElementById(`${id}_genPulseLabel`)
+        const sawGroupEl = document.getElementById(`${id}_genSawGroup`)
+        const randomPhaseEl = document.getElementById(`${id}_genRandomPhase`)
+        const driftEl = document.getElementById(`${id}_genDrift`)
+        const driftGroupEl = document.getElementById(`${id}_genDriftGroup`)
+        const driftAmountEl = document.getElementById(`${id}_genDriftAmount`)
+        const hpfEl = document.getElementById(`${id}_genTrackingHpf`)
+        const bandEl = document.getElementById(`${id}_genBandLimited`)
 
         const rootEl = document.getElementById(`${id}_genRoot`)
         const fineEl = document.getElementById(`${id}_genFine`)
@@ -420,32 +457,83 @@ class EPSChart {
                 ? `&plusmn;${pulseEl.value} cents`
                 : `${pulseEl.value}%`
         }
+        const driftLabel = () => {
+            document.getElementById(`${id}_genDriftLabel`).innerHTML
+                = `&plusmn;${driftAmountEl.value} cents`
+        }
+        const ampLabel = () => {
+            document.getElementById(`${id}_genAmpLabel`).innerHTML = `${ampEl.value}%`
+        }
+
+        /***
+         * How far random phase and drift are moving the voices about. Both
+         * loosen how precisely each voice has to land on its nominal detune,
+         * which is what decides the buffer length.
+         */
+        const smearCents = () => WaveGen.smearCents(
+            parseInt(pulseEl.value) || 0,
+            randomPhaseEl.checked,
+            driftEl.checked ? (parseInt(driftAmountEl.value) || 0) : 0)
 
         /***
          * Detune only survives cycle quantisation on a long enough buffer, so
-         * raise the periods field to the minimum that expresses it rather than
+         * set the periods field to the minimum that expresses it rather than
          * quietly generating a plain saw. Never suggests more than fits inside
-         * the generator's size limit, and never lowers what the user set.
+         * the generator's size limit.
+         *
+         * A figure this put there is ours to move in either direction, so
+         * turning on random phase or drift can hand the samples back rather
+         * than leaving the buffer pinned at the strict length. A figure the
+         * user typed is only ever raised.
          */
         const raisePeriodsForDetune = () => {
             if (!WaveGen.usesDetune(typeEl.value)) return
             const periodSamples = this.sampleRate / WaveGen.noteToFrequency(parseInt(noteEl.value))
             const fits = Math.max(1, Math.floor(WaveGen.MAX_SAMPLES / periodSamples))
-            const needed = Math.min(fits, WaveGen.periodsForDetune(parseInt(pulseEl.value)))
-            if ((parseInt(periodsEl.value) || 1) < needed) periodsEl.value = needed
+            const needed = Math.min(fits,
+                WaveGen.periodsForDetune(parseInt(pulseEl.value), smearCents()))
+            const current = parseInt(periodsEl.value) || 1
+            if (current === this.autoPeriods || current < needed) {
+                periodsEl.value = needed
+                this.autoPeriods = needed
+            }
         }
+
+        // Band limiting is shared with every other waveform, so the super saw's
+        // preference for it off is handed back on the way out rather than
+        // quietly leaving the next sine to alias.
+        let bandLimitedBeforeSaw = null
 
         /***
          * The pulse width slider doubles as the super saw detune control, so it
-         * gets a new title, range and units when the waveform changes.
+         * gets a new title, range and units when the waveform changes. Picking
+         * the super saw also drops its whole preset in, since none of its
+         * settings mean anything to the other waveforms.
          */
         const configureSpread = () => {
-            if (WaveGen.usesDetune(typeEl.value)) {
+            const superSaw = WaveGen.usesDetune(typeEl.value)
+            sawGroupEl.style.display = superSaw ? '' : 'none'
+            if (!superSaw && bandLimitedBeforeSaw !== null) {
+                bandEl.checked = bandLimitedBeforeSaw
+                bandLimitedBeforeSaw = null
+            }
+            if (superSaw) {
+                const preset = WaveGen.SUPER_SAW_DEFAULTS
                 groupEl.style.display = ''
                 titleEl.innerHTML = 'Detune Spread'
                 pulseEl.min = 0
                 pulseEl.max = 100
-                pulseEl.value = 25
+                pulseEl.value = preset.detuneCents
+                ampEl.value = preset.amplitude
+                ampLabel()
+                randomPhaseEl.checked = preset.randomPhase
+                driftEl.checked = preset.drift
+                driftAmountEl.value = preset.driftCents
+                driftGroupEl.style.display = preset.drift ? '' : 'none'
+                driftLabel()
+                hpfEl.checked = preset.trackingHighPass
+                if (bandLimitedBeforeSaw === null) bandLimitedBeforeSaw = bandEl.checked
+                bandEl.checked = preset.bandLimited
             } else if (typeEl.value === 'pulse') {
                 groupEl.style.display = ''
                 titleEl.innerHTML = 'Pulse Width'
@@ -465,6 +553,16 @@ class EPSChart {
             spreadLabel()
             raisePeriodsForDetune()
         })
+
+        driftEl.addEventListener('change', () => {
+            driftGroupEl.style.display = driftEl.checked ? '' : 'none'
+            raisePeriodsForDetune()
+        })
+        driftAmountEl.addEventListener('input', () => {
+            driftLabel()
+            raisePeriodsForDetune()
+        })
+        randomPhaseEl.addEventListener('change', raisePeriodsForDetune)
         // A generated waveform plays back at its own pitch when the key played
         // is the fundamental it was generated at, so the root key follows the
         // fundamental. Change it afterwards to transpose the sample on the
@@ -480,9 +578,7 @@ class EPSChart {
         fineEl.addEventListener('change', () => {
             this.fineTune = this.setFineTune(parseInt(fineEl.value) || 0)
         })
-        ampEl.addEventListener('input', () => {
-            document.getElementById(`${id}_genAmpLabel`).innerHTML = `${ampEl.value}%`
-        })
+        ampEl.addEventListener('input', ampLabel)
 
         // Changing the rate changes the pitch the buffer plays back at, so keep
         // preview and WAV export in step even before the next Generate.
@@ -514,18 +610,28 @@ class EPSChart {
         this.suggestName(`${EPSChart.WAVE_NAMES[type] || type} ${WaveGen.noteToName(note)}`)
         // One slider, read as a percentage for pulse and as cents for super saw.
         const spread = parseInt(document.getElementById(`${id}_genPulse`).value)
+        const driftEl = document.getElementById(`${id}_genDrift`)
+        const periodsEl = document.getElementById(`${id}_genPeriods`)
+        const asked = parseInt(periodsEl.value) || 1
         const result = WaveGen.generate({
             type: type,
             frequency: WaveGen.noteToFrequency(note),
             sampleRate: this.sampleRate,
-            periods: parseInt(document.getElementById(`${id}_genPeriods`).value) || 1,
+            periods: asked,
             pulseWidth: spread / 100,
             detuneCents: spread,
             amplitude: parseInt(document.getElementById(`${id}_genAmp`).value) / 100,
-            bandLimited: document.getElementById(`${id}_genBandLimited`).checked
+            bandLimited: document.getElementById(`${id}_genBandLimited`).checked,
+            randomPhase: document.getElementById(`${id}_genRandomPhase`).checked,
+            driftCents: driftEl && driftEl.checked
+                ? parseInt(document.getElementById(`${id}_genDriftAmount`).value) || 0 : 0,
+            trackingHighPass: document.getElementById(`${id}_genTrackingHpf`).checked
         })
         this.setWavesample(result.data, { periodSamples: result.periodSamples })
-        document.getElementById(`${id}_genPeriods`).value = result.periods
+        periodsEl.value = result.periods
+        // Generating can clamp the count to fit the size limit. If the figure it
+        // replaced was one we put there, the replacement is ours to move too.
+        if (this.autoPeriods === asked) this.autoPeriods = result.periods
 
         // The buffer holds a whole number of samples, so the pitch it really
         // loops at is a shade off the note asked for. Cancel that too, the same
@@ -548,12 +654,22 @@ class EPSChart {
             const detune = result.detune
             info += `. ${WaveGen.SUPER_SAW_VOICES} saws detuned &plusmn;`
                 + `${detune.achievedCents.toFixed(1)} cents`
+            if(detune.randomPhaseVoices){
+                info += `, ${detune.randomPhaseVoices} at random start phases`
+            }
+            if(detune.driftCents){
+                info += `, drifting &plusmn;${detune.driftCents} cents once across the loop`
+            }
             // Voices snap to whole cycles, so a short buffer can land either
             // side of the request, or flatten it to nothing entirely.
             const tolerance = Math.max(0.5, detune.requestedCents * 0.1)
             if(Math.abs(detune.achievedCents - detune.requestedCents) > tolerance){
                 info += ` rather than the &plusmn;${detune.requestedCents} asked for`
                     + ` (${detune.requiredPeriods} periods would land closer)`
+            }
+            if(result.highPassHz){
+                info += `, high passed at 24 dB/octave below `
+                    + `${result.highPassHz.toFixed(1)} Hz`
             }
             if(detune.distinctVoices < WaveGen.SUPER_SAW_VOICES){
                 info += `. Only ${detune.distinctVoices} distinct pitches at this length;`
