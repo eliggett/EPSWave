@@ -1447,6 +1447,130 @@ class EPS16 {
         this.errorCallback("Error: Unable to create layer: " + this.statusText(status))
         return false
     }
+    /***
+     * Makes sure the selected instrument, layer and wavesample all exist,
+     * creating whatever is missing, so that an upload can just be pressed.
+     *
+     * Before this, uploading into an empty slot failed with whatever the first
+     * command addressed to a thing that is not there happens to answer —
+     * "Invalid Instrument", or worse, an upload that appears to work and lands
+     * nowhere. The three Create buttons were the fix, and they required knowing
+     * that the EPS needs an instrument before a layer and a layer before a
+     * wavesample, which is knowledge about the synth rather than about the
+     * sound anyone is trying to move.
+     *
+     * Only what is missing is created. An instrument that is already there is
+     * left exactly as it is, including its other layers and wavesamples.
+     *
+     * THE WAVESAMPLE NUMBER MAY NOT BE THE ONE THAT WAS ASKED FOR. CREATE
+     * WAVESAMPLE ignores the number in the command and assigns the next free
+     * slot — the discovery that cost a week, written up in METHODS.md. So the
+     * new one is created, the instrument is read back to see what appeared, and
+     * that number is selected and reported. Asking for wavesample 5 in an empty
+     * layer gets wavesample 1, and the caller is told so rather than left to
+     * wonder why the sound is not where it was put.
+     *
+     * `names` supplies names for anything created; the wavesample is left
+     * unnamed here because uploadWavToEPS names it from the editor at the end,
+     * once the audio and every parameter are in place.
+     */
+    async prepareTarget(names = {}, progressCallback = () => {}){
+        const wanted = (this.wsBytes[0] << 6) | this.wsBytes[1]
+        const report = { ok: false, created: [], wavesample: wanted,
+                         renumbered: false, message: "" }
+        const say = (what) => { this.debug(`Preparing: ${what}`); progressCallback(what) }
+
+        // --- the instrument --------------------------------------------------
+        let words = await this.getParamBlock(EPS16.BLOCK_INSTRUMENT)
+        if(words.length == 0){
+            // Kept before anything else is sent, because CREATE INSTRUMENT is
+            // about to overwrite it and this is the only clue to why the read
+            // failed — an empty slot and an instrument in internal flash both
+            // come back empty here, and only one of them can be fixed by
+            // creating something.
+            const why = this.statusText(this.lastStatusCode)
+            say(`creating instrument ${this.instNum + 1}`)
+            if(!await this.createInstrument(names.instrument)){
+                report.message = `Instrument ${this.instNum + 1} could not be read `
+                    + `(${why}) and a new one could not be created there either.`
+                return report
+            }
+            report.created.push(`instrument ${this.instNum + 1}`)
+            // The same settle the restore takes after CREATE INSTRUMENT: the
+            // command that follows one is the command that gets ignored.
+            await this.sleep(EPS16.RESTORE_SETTLE_MS)
+            words = await this.getParamBlock(EPS16.BLOCK_INSTRUMENT)
+            if(words.length == 0){
+                report.message = `Created instrument ${this.instNum + 1} but could not `
+                    + `read it back.`
+                return report
+            }
+        }
+        const instrument = EPSBlocks.decodeInstrument(words)
+
+        // --- the layer -------------------------------------------------------
+        let brought = null
+        if(!instrument.layers.some(slot => slot.exists && slot.number == this.layerNum)){
+            say(`creating layer ${this.layerNum + 1}`)
+            const made = await this.createLayerConfirmed(this.layerNum,
+                `create layer ${this.layerNum + 1}`)
+            if(!made.ok){
+                report.message = `Could not create layer ${this.layerNum + 1}: `
+                    + `${made.reason}.`
+                return report
+            }
+            report.created.push(`layer ${this.layerNum + 1}`)
+            await this.nameAfterCreate(EPS16.BLOCK_LAYER, names.layer)
+            // Section 4.3 says CREATE LAYER also produces a wavesample and the
+            // hardware does it sometimes. When it has, that one is used rather
+            // than making a second and leaving a spare behind to sound.
+            brought = made.wavesample
+        }
+
+        // --- the wavesample --------------------------------------------------
+        //
+        // ASKED OF THE LAYER, NOT OF THE INSTRUMENT. The instrument's pointer
+        // table is instrument-wide: wavesample 1 appearing in it says only that
+        // some layer has a wavesample 1, not that this layer does. Checking
+        // there instead let an upload into a freshly created second layer sail
+        // past this step on the strength of a wavesample belonging to the
+        // first, and then fail addressing a wavesample that layer has never
+        // heard of.
+        //
+        // So the question is put the way the upload will put it: GET WAVESAMPLE
+        // PARAMETERS for this layer and this number. An answer means it is
+        // there and addressable, which is the whole of what needs to be true.
+        if(brought !== null && brought !== undefined){
+            this.setWavesampleNumber(brought)
+            report.wavesample = brought
+            report.created.push(`wavesample ${brought}`)
+        }else if((await this.getParamBlock(EPS16.BLOCK_WAVESAMPLE)).length == 0){
+            say("creating a wavesample")
+            const result = await this.createAndIdentify(
+                this.createMIDIMessage(EPS16.CMD_CREATE_WAVESAMPLE), "create wavesample")
+            if(!result.ok){
+                report.message = `Could not create a wavesample: ${result.reason}.`
+                return report
+            }
+            this.setWavesampleNumber(result.number)
+            report.wavesample = result.number
+            report.created.push(`wavesample ${result.number}`)
+        }
+
+        report.ok = true
+        report.renumbered = report.wavesample != wanted
+        report.message = report.created.length == 0
+            ? `Instrument ${this.instNum + 1}, layer ${this.layerNum + 1} and wavesample `
+                + `${report.wavesample} were ready.`
+            : `Prepared the EPS: created ${report.created.join(", ")}.`
+        if(report.renumbered){
+            report.message += ` The EPS numbers wavesamples itself, so this is `
+                + `wavesample ${report.wavesample} rather than the ${wanted} that was `
+                + `selected.`
+        }
+        return report
+    }
+
     async createSqrWave(name = null){
         const status = await this.sendCommand(this.createMIDIMessage(0x19),
             "create wavesample")

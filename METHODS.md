@@ -857,6 +857,29 @@ transfer measured in minutes. Unlike inferring the rule, it cannot be wrong — 
 it stays correct if the rule turns out to be different on another machine or
 another OS version.
 
+### A wavesample belongs to a layer, not to an instrument
+
+`prepareTarget` creates whatever an upload needs — instrument, layer, first
+wavesample — so that pressing Upload works on an empty slot without knowing that
+the EPS wants them in that order.
+
+Deciding whether the wavesample already exists looks like a job for the
+instrument's pointer table, and it is not. **That table is instrument-wide.**
+Wavesample 1 appearing in it says only that *some* layer has a wavesample 1.
+Upload into a freshly created second layer and the check sails past on the
+strength of a wavesample belonging to the first, then fails addressing one the
+new layer has never heard of.
+
+The question is instead put the way the upload will put it: `GET WAVESAMPLE
+PARAMETERS` for this layer and this number. An answer means it is there and
+addressable, which is the whole of what has to be true. One round trip, no
+inference.
+
+The number that comes back may not be the one asked for, because `CREATE
+WAVESAMPLE` assigns its own — see above. Asking for wavesample 5 in an empty
+layer gets wavesample 1, so the assigned number is read back, selected, and the
+page's selector corrected to match.
+
 ### Two more things creates do that the specification does not mention
 
 **`CREATE LAYER` does not reliably produce the wavesample it promises.** Section

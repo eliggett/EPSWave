@@ -758,6 +758,18 @@
                 $("#uploadSpinner").show()
                 $("#uploadPercent").html("0%").show()
                 try {
+                    // The EPS needs an instrument before a layer and a layer
+                    // before a wavesample. Rather than make that the user's
+                    // problem, whatever is missing is created here. The
+                    // wavesample number can come back different — the EPS
+                    // assigns its own — so the selector is put right if it does.
+                    const ready = await eps.prepareTarget(
+                        { instrument: instName(), layer: layerName() },
+                        (what) => $("#uploadPercent").html(what))
+                    if (!ready.ok) { handleError(`Error: ${ready.message}`); return }
+                    if (ready.created.length > 0 || ready.renumbered) log(ready.message)
+                    if (ready.renumbered) $("#waveNum").val(ready.wavesample)
+                    $("#uploadPercent").html("0%")
                     await eps.uploadWavToEPS(localChart.wavesample, 1, 0, (percent) => {
                         $("#uploadPercent").html(`${percent}%`)
                     }, localChart.sampleRate, localChart.rootKey, localChart.fineTune, localChart.name)
@@ -776,6 +788,18 @@
                 $("#uploadEpsSpinner").show()
                 $("#uploadEpsPercent").html("0%").show()
                 try {
+                    // The EPS needs an instrument before a layer and a layer
+                    // before a wavesample. Rather than make that the user's
+                    // problem, whatever is missing is created here. The
+                    // wavesample number can come back different — the EPS
+                    // assigns its own — so the selector is put right if it does.
+                    const ready = await eps.prepareTarget(
+                        { instrument: instName(), layer: layerName() },
+                        (what) => $("#uploadEpsPercent").html(what))
+                    if (!ready.ok) { handleError(`Error: ${ready.message}`); return }
+                    if (ready.created.length > 0 || ready.renumbered) log(ready.message)
+                    if (ready.renumbered) $("#waveNum").val(ready.wavesample)
+                    $("#uploadEpsPercent").html("0%")
                     await eps.uploadWavToEPS(epsChart.wavesample, 1, 0, (percent) => {
                         $("#uploadEpsPercent").html(`${percent}%`)
                     }, epsChart.sampleRate, epsChart.rootKey, epsChart.fineTune, epsChart.name)
