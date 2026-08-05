@@ -1887,7 +1887,7 @@ class EPS16 {
                 report.message = `The EPS answered, so sysex is on, but it declined the `
                     + `request: ${this.statusText(answer.status)}.`
             }else{
-                report.message = "The EPS answered, so sysex is on, but the reply was not "
+                report.message = "Something sent data back, but the reply was not "
                     + "the expected parameter value."
             }
             return report
