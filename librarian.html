@@ -125,17 +125,21 @@
             </div>
         </div>
 
-        <!-- The six actions, grouped by what is on the other end. Four of them
-             are disabled; librarian.js gives each one a tooltip saying what it
-             is waiting on. They are shown rather than hidden because "what is
-             not built yet" is useful information on a page like this. -->
+        <!-- The six actions, grouped by what is on the other end.
+
+             Each column is a flex column and its buttons sit in an mt-auto
+             wrapper, so they are pushed to the bottom of the row's equal height
+             columns and line up across all three. Without it each pair of
+             buttons starts directly under an introduction of a different height
+             — a select in one column and two lines of prose in another — and
+             the three pairs sit at three different heights. -->
         <div class="row mt-3">
             <div class="col-sm">
                 <div class="card">
                     <div class="card-header">Move an instrument</div>
                     <div class="card-body">
                         <div class="row">
-                            <div class="col-md-4 mb-3">
+                            <div class="col-md-4 mb-3 d-flex flex-column">
                                 <h6><i class="fa-solid fa-keyboard"></i> EPS-16 PLUS</h6>
                                 <div class="input-group input-group-sm mb-2">
                                     <div class="input-group-prepend">
@@ -143,56 +147,67 @@
                                     </div>
                                     <select id="instNum" class="custom-select"></select>
                                 </div>
-                                <button id="readFromEps" class="btn btn-primary btn-block btn-sm mb-2">
-                                    <i class="fa-solid fa-download"></i> Read instrument from EPS
-                                    <span id="readFromEpsSpinner" class="spinner-border spinner-border-sm"
-                                        role="status" aria-hidden="true" style="display:none"></span>
-                                </button>
-                                <button id="saveToEps" class="btn btn-warning btn-block btn-sm">
-                                    <i class="fa-solid fa-upload"></i> Save instrument to EPS
-                                    <span id="saveToEpsSpinner" class="spinner-border spinner-border-sm"
-                                        role="status" aria-hidden="true" style="display:none"></span>
-                                </button>
+                                <div class="mt-auto">
+                                    <button id="readFromEps" class="btn btn-primary btn-block btn-sm mb-2">
+                                        <i class="fa-solid fa-download"></i> Read instrument from EPS
+                                        <span id="readFromEpsSpinner" class="spinner-border spinner-border-sm"
+                                            role="status" aria-hidden="true" style="display:none"></span>
+                                    </button>
+                                    <button id="saveToEps" class="btn btn-warning btn-block btn-sm">
+                                        <i class="fa-solid fa-upload"></i> Send instrument to EPS
+                                        <span id="saveToEpsSpinner" class="spinner-border spinner-border-sm"
+                                            role="status" aria-hidden="true" style="display:none"></span>
+                                    </button>
+                                </div>
                             </div>
-                            <div class="col-md-4 mb-3">
+                            <div class="col-md-4 mb-3 d-flex flex-column">
                                 <h6><i class="fa-solid fa-floppy-disk"></i> Ensoniq disk file</h6>
                                 <p class="text-muted mb-2"><small><code>.EFE</code>, the format
                                     Ensoniq disk images and the existing library tools use.</small></p>
-                                <button id="readFromEfe" class="btn btn-primary btn-block btn-sm mb-2">
-                                    <i class="fa-solid fa-folder-open"></i> Read instrument from disk (EFE)
-                                </button>
-                                <input type="file" id="efeFile" accept=".efe,.EFE" style="display:none">
-                                <button id="saveToEfe" class="btn btn-success btn-block btn-sm"
-                                    title="Untested on hardware. The writer reproduces the EPS's
-                                        own allocator from measurements of 42 of its files; only
-                                        the synth can say whether it agrees.">
-                                    <i class="fa-solid fa-file-export"></i> Save instrument to EFE
-                                    <span class="badge badge-warning">untested</span>
-                                    <span id="saveToEfeSpinner" class="spinner-border spinner-border-sm"
-                                        role="status" aria-hidden="true" style="display:none"></span>
-                                </button>
+                                <div class="mt-auto">
+                                    <button id="readFromEfe" class="btn btn-primary btn-block btn-sm mb-2">
+                                        <i class="fa-solid fa-folder-open"></i> Read instrument from disk (EFE)
+                                    </button>
+                                    <input type="file" id="efeFile" accept=".efe,.EFE" style="display:none">
+                                    <button id="saveToEfe" class="btn btn-success btn-block btn-sm">
+                                        <i class="fa-solid fa-file-export"></i> Save instrument to EFE
+                                        <span id="saveToEfeSpinner" class="spinner-border spinner-border-sm"
+                                            role="status" aria-hidden="true" style="display:none"></span>
+                                    </button>
+                                </div>
                             </div>
-                            <div class="col-md-4 mb-3">
+                            <div class="col-md-4 mb-3 d-flex flex-column">
                                 <h6><i class="fa-solid fa-file-code"></i> EPSWave file</h6>
                                 <p class="text-muted mb-2"><small><code>.epswave</code>, JSON
                                     holding the raw parameter blocks and the audio, so a backup
                                     keeps everything &mdash; including the words we do not yet
                                     decode.</small></p>
-                                <button id="readOwn" class="btn btn-primary btn-block btn-sm mb-2">
-                                    <i class="fa-solid fa-file-import"></i> Read instrument from EPSWave file
-                                </button>
-                                <input type="file" id="ownFile" accept=".epswave,.json" style="display:none">
-                                <button id="saveOwn" class="btn btn-success btn-block btn-sm">
-                                    <i class="fa-solid fa-file-arrow-down"></i> Save instrument to EPSWave file
-                                    <span id="saveOwnSpinner" class="spinner-border spinner-border-sm"
-                                        role="status" aria-hidden="true" style="display:none"></span>
-                                </button>
+                                <div class="mt-auto">
+                                    <button id="readOwn" class="btn btn-primary btn-block btn-sm mb-2">
+                                        <i class="fa-solid fa-file-import"></i> Read instrument from EPSWave file
+                                    </button>
+                                    <input type="file" id="ownFile" accept=".epswave,.json" style="display:none">
+                                    <button id="saveOwn" class="btn btn-success btn-block btn-sm">
+                                        <i class="fa-solid fa-file-arrow-down"></i> Save instrument to EPSWave file
+                                        <span id="saveOwnSpinner" class="spinner-border spinner-border-sm"
+                                            role="status" aria-hidden="true" style="display:none"></span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        <!-- Diagnostics. Sends deliberately altered copies of the
-                             instrument that is open, each changing one thing, so
-                             that a failure can be pinned on a single variable in
-                             seconds rather than in five minute transfers. -->
+                        <!-- Diagnostics, disabled.
+
+                             These send deliberately altered copies of the open
+                             instrument, each changing one thing, so that a
+                             failure can be pinned on a single variable in
+                             seconds rather than in five minute transfers. They
+                             found the wavesample numbering bug and have had
+                             nothing to do since. Kept, rather than deleted,
+                             because the next unexplained refusal will want them
+                             — librarian.variant() is still there and still
+                             tested. To bring them back, remove this comment
+                             wrapper.
+
                         <hr>
                         <p class="mb-1"><small><b>Test patches</b> &mdash; built from the
                             instrument opened above, each changing one thing. Use these to
@@ -211,6 +226,7 @@
                                 Both
                             </button>
                         </div>
+                        -->
                         <div id="librarianStatus" class="alert alert-secondary mb-0 py-2"
                             style="display:none"></div>
                     </div>

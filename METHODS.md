@@ -952,8 +952,9 @@ object carries five words of bookkeeping ahead of the block in section 7, and
 those five words have to be produced rather than copied. All of it was measured
 against the 42 files here.
 
-**`EPSEfe.write` is implemented and untested on hardware.** Everything that can
-be checked without a synth has been; only the synth can say the rest.
+**`EPSEfe.write` is implemented and confirmed on hardware.** A file written here
+loads on an EPS-16 PLUS and plays, including after a full round trip: EFE in,
+read the instrument back off the synth, write a new EFE, load that.
 
 ### Byte-for-byte reproduction is the wrong test
 
@@ -1001,9 +1002,10 @@ the name, the block count at `$34` — repeated at `$36`, which is the only reas
 to notice it — and byte `$38`, which is **0 in all 38 EPS-16 PLUS files and 2 in
 all 4 original EPS ones**.
 
-### What is still guessed
+### What is still guessed, and does not matter
 
-Three things, and they are the whole of what hardware has to settle.
+Three things. The synth loads the file regardless, so **none of them is a field
+the EPS depends on** — which is itself the answer to the question they raised.
 
 | Field | Written as | Why |
 |-------|-----------|-----|
@@ -1012,7 +1014,9 @@ Three things, and they are the whole of what hardware has to settle.
 | The padding after a wavesample's audio | `0` | Real files have stale RAM there — one ends with the bytes of a name fragment. |
 
 Reproducing the two closest files leaves **21 and 22 differing bytes**, and every
-one of them is in that table. Nothing else in either file differs.
+one of them is in that table. Nothing else in either file differs. That the EPS
+then loads such a file says the relocation pointer really is rebuilt on load,
+which is what Appendix B implied and what could not be checked from files alone.
 
 ### What a written file drops
 

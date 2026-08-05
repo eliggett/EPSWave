@@ -1,16 +1,14 @@
 /***
  * The patch librarian page.
  *
- * Six things an instrument can be moved between: the synth, an Ensoniq .EFE
- * disk file, and a file in a format of our own. Two of the six work — reading
- * from the synth and reading an EFE — and the other four are on the page,
- * disabled, with the reason on each. They are left visible on purpose: what is
- * missing and why is the most useful thing this page can say right now.
+ * Six ways to move an instrument between three places: the synth, an Ensoniq
+ * .EFE disk file, and a .epswave of our own. All six work.
  *
- * Both working paths end in the same place. getInstrumentInventory and
- * EPSEfe.readInstrument return the same shape, because the parameter blocks are
- * the same layout whichever way they arrive, so renderInventory does not know
- * or care which button was pressed.
+ * They all end in the same place. getInstrumentInventory, EPSEfe.readInstrument
+ * and EPSWaveFile.read return the same shape, because the parameter blocks are
+ * the same layout whichever way they arrive, so render() does not know or care
+ * which button was pressed. audioFor() is the same idea for the samples: three
+ * sources, one question.
  */
 
 /***
@@ -23,12 +21,6 @@
  * telling them eight when it will be twenty.
  */
 const LIBRARIAN_BYTES_PER_SECOND = 1353
-
-/***
- * What each unbuilt button is waiting on. Shown as its tooltip, so the roadmap
- * lives on the thing it describes rather than in a document nobody opens.
- */
-const LIBRARIAN_NOT_YET = {}
 
 const librarian = {
     eps: null,
@@ -267,6 +259,8 @@ const librarian = {
      */
     async readFromEps(){
         const button = $("#readFromEps")
+        // Held so that closing the page mid-transfer asks first.
+        const release = EPSWaveUI.hold("reading the instrument")
         button.prop("disabled", true)
         $("#readFromEpsSpinner").show()
         $("#librarianStatus").removeClass("alert-danger alert-success")
@@ -295,6 +289,7 @@ const librarian = {
                 .html(`Error: ${escapeHtml(error.message)}`)
         }finally{
             $("#readFromEpsSpinner").hide()
+            release()
             button.prop("disabled", false)
         }
     },
@@ -316,6 +311,8 @@ const librarian = {
             return
         }
         const button = $("#saveOwn")
+        // Held so that closing the page mid-transfer asks first.
+        const release = EPSWaveUI.hold("saving an EPSWave file")
         button.prop("disabled", true)
         $("#saveOwnSpinner").show()
         try{
@@ -349,6 +346,7 @@ const librarian = {
                 .addClass("alert-danger").html(escapeHtml(error.message)).show()
         }finally{
             $("#saveOwnSpinner").hide()
+            release()
             button.prop("disabled", false)
         }
     },
@@ -356,10 +354,11 @@ const librarian = {
     /***
      * Save instrument to an Ensoniq .EFE.
      *
-     * UNTESTED ON HARDWARE, and the button says so, because there is no way to
-     * test it here: the writer reproduces the EPS's allocator from measurements
-     * of 42 of its own files, and only the synth can say whether it agrees.
-     * Everything that can be checked without it has been — see epsEfe.js.
+     * Confirmed on hardware: a file written here loads on an EPS-16 PLUS and
+     * plays. The writer reproduces the EPS's allocator from measurements of 42
+     * of its own files — see the long note in epsEfe.js — and three of its
+     * fields are still written blind, which the synth has now shown it does not
+     * mind.
      *
      * Like saving a .epswave, this fetches the audio first if it is not already
      * in hand.
@@ -372,6 +371,8 @@ const librarian = {
             return
         }
         const button = $("#saveToEfe")
+        // Held so that closing the page mid-transfer asks first.
+        const release = EPSWaveUI.hold("saving an EFE file")
         button.prop("disabled", true)
         $("#saveToEfeSpinner").show()
         try{
@@ -397,8 +398,7 @@ const librarian = {
             librarian.render(inventory)
             $("#librarianStatus").removeClass("alert-secondary alert-danger")
                 .addClass("alert-success")
-                .html(`${escapeHtml(message)}. <b>This has not been tested on hardware
-                    yet</b> — please report whether the EPS loads it.`
+                .html(escapeHtml(message)
                     + (written.lost.length
                         ? `<br><small>${written.lost.map(escapeHtml).join("<br>")}</small>`
                         : "")).show()
@@ -408,6 +408,7 @@ const librarian = {
                 .addClass("alert-danger").html(escapeHtml(error.message)).show()
         }finally{
             $("#saveToEfeSpinner").hide()
+            release()
             button.prop("disabled", false)
         }
     },
@@ -495,6 +496,8 @@ const librarian = {
             return
         }
         const button = $("#deleteAll")
+        // Held so that closing the page mid-transfer asks first.
+        const release = EPSWaveUI.hold("clearing the synth")
         button.prop("disabled", true)
         $("#deleteAllSpinner").show()
         try{
@@ -515,6 +518,7 @@ const librarian = {
                 .addClass("alert-danger").html(escapeHtml(error.message)).show()
         }finally{
             $("#deleteAllSpinner").hide()
+            release()
             button.prop("disabled", false)
         }
     },
@@ -663,6 +667,8 @@ const librarian = {
         }
 
         const button = $("#saveToEps")
+        // Held so that closing the page mid-transfer asks first.
+        const release = EPSWaveUI.hold("sending to the EPS")
         button.prop("disabled", true)
         $("#saveToEpsSpinner").show()
         const started = Date.now()
@@ -687,6 +693,7 @@ const librarian = {
                 .addClass("alert-danger").html(escapeHtml(error.message)).show()
         }finally{
             $("#saveToEpsSpinner").hide()
+            release()
             button.prop("disabled", false)
         }
     },
@@ -765,6 +772,9 @@ $(document).ready(function(){
     $("#readFromEps").click(() => librarian.readFromEps())
     $("#saveToEps").click(() => librarian.saveToEps())
     $("#deleteAll").click(() => librarian.deleteAll())
+    // The test patch buttons are commented out in librarian.html; this stays so
+    // that uncommenting them is the whole of bringing them back. See the note
+    // above librarian.variant().
     $(".testVariant").click(function(){ librarian.saveToEps($(this).data("variant")) })
 
     // The file input is hidden and driven by the button, so the six actions
@@ -782,8 +792,4 @@ $(document).ready(function(){
         if(this.files && this.files[0]) librarian.readFromOwn(this.files[0])
         this.value = ""
     })
-
-    for(const [id, reason] of Object.entries(LIBRARIAN_NOT_YET)){
-        $(`#${id}`).attr("title", reason).prop("disabled", true)
-    }
 })

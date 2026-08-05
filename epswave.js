@@ -260,7 +260,59 @@ window.EPSWaveUI = {
         body.innerHTML = window.ABOUT_HTML
             || "<p class='mb-0'>The About text could not be loaded. "
              + "Check that <code>about.js</code> is present next to this page.</p>"
-    }
+    },
+
+    /***
+     * Warning before the page is closed while a transfer is running.
+     *
+     * A transfer of a large instrument takes tens of minutes, and it dies the
+     * instant the page goes away — mid-restore that leaves a half built
+     * instrument on the synth holding its memory, and mid-backup it throws away
+     * everything read so far. A reload reflex or a stray Ctrl-W costs the whole
+     * thing, and there is no way to resume.
+     *
+     * Browsers deliberately give no control over the wording: Chrome and
+     * Firefox both show their own generic "changes you made may not be saved"
+     * regardless of what is returned here, and only show anything at all if the
+     * user has interacted with the page. Since every transfer starts with a
+     * button press, that condition is always met by the time it matters.
+     *
+     * The three lines below are all required, and by different browsers:
+     * preventDefault for the current standard, a non-empty returnValue for
+     * Chrome, and a returned string for older Safari.
+     */
+    holds: new Set(),
+
+    guardUnload(){
+        if(EPSWaveUI.guarding) return
+        EPSWaveUI.guarding = true
+        window.addEventListener("beforeunload", (event) => {
+            if(EPSWaveUI.holds.size == 0) return undefined
+            event.preventDefault()
+            event.returnValue = ""
+            return ""
+        })
+    },
+
+    /***
+     * Marks something as in flight. Returns the function that releases it, so
+     * the caller can put it in a `finally` and cannot forget which token to
+     * release:
+     *
+     *     const done = EPSWaveUI.hold("sending to the EPS")
+     *     try{ ... }finally{ done() }
+     *
+     * A Set of labels rather than a counter, so that two overlapping transfers
+     * cannot release each other's hold, and so the reason is inspectable.
+     */
+    hold(what){
+        EPSWaveUI.guardUnload()
+        const token = `${what} ${Date.now()} ${Math.random()}`
+        EPSWaveUI.holds.add(token)
+        return () => EPSWaveUI.holds.delete(token)
+    },
+
+    busy(){ return EPSWaveUI.holds.size > 0 }
 }
 
 /***

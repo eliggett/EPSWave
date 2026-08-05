@@ -207,7 +207,8 @@ class EPSEfe {
      * holds a RAM address between $C900 and $CCC0 that differs in every file.
      * **It is the one field here that is written blind**, on the reasoning that
      * a pointer the specification says is for relocation cannot survive being
-     * loaded at a different address and must be rebuilt.
+     * loaded at a different address and must be rebuilt. A file written with
+     * zero here loads on a real EPS-16 PLUS, which settles it.
      *
      * Words 3 and 4 are a doubly linked list of the wavesamples in each layer,
      * in the high bytes: on a layer, the first and last wavesample it plays; on
