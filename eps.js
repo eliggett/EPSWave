@@ -3111,7 +3111,14 @@ class EPS16 {
         }
         // Every wave ends up in one wavesample here, so only the first slot's
         // name has anywhere to go.
-        isSuccess = await this.uploadWavToEPS(transwave, 1, 0, progressCallback,
+        // `const`, and not by taste. A class body is strict mode, so the
+        // undeclared assignment this used to be threw a ReferenceError the
+        // moment the audio finished going in — after the samples were sent and
+        // before any of the four modulation settings below. Every transwave
+        // ever made with this ended up as a plain wavesample holding the right
+        // audio with none of the transwave wiring, and the caller's `finally`
+        // tidied the spinner away so it looked like it had worked.
+        const isSuccess = await this.uploadWavToEPS(transwave, 1, 0, progressCallback,
             this.perWave(sampleRates, 0), this.perWave(rootKeys, 0), this.perWave(fineTunes, 0),
             this.perWave(names, 0))
         if(!isSuccess){
