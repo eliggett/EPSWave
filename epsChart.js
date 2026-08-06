@@ -94,6 +94,25 @@ class EPSChart {
         return EPS16.sanitizeName(base)
     }
 
+    /***
+     * Live generation: moving a generator control builds a new waveform on the
+     * spot, so the Generate button becomes a way to re-roll rather than the
+     * only way to hear a change. Set false to go back to generating on the
+     * button alone; nothing else has to change.
+     */
+    static LIVE_GENERATE = true
+
+    /***
+     * How long the panel waits for the controls to stop moving before it
+     * rebuilds. A super saw filling the whole 65536 sample limit takes the
+     * better part of a third of a second to build, and that work blocks the
+     * page, so generating on every event of a slider drag would make the
+     * slider itself stutter. Waiting for a pause gives one waveform per
+     * gesture rather than forty, and 150 ms is short enough to read as
+     * immediate.
+     */
+    static LIVE_DELAY_MS = 150
+
     constructor(elementId, label, color, hasFileUpload, eps){
         this.wavesample = []
         this.eps = eps
@@ -114,6 +133,11 @@ class EPSChart {
         // Cents of correction sent with the wavesample, cancelling whatever
         // pitch error the EPS's rate quantisation leaves behind.
         this.fineTune = 0
+        // Whether what is on screen is the generator's to replace. Live
+        // generation only touches a waveform the generator made; see
+        // liveGenerate.
+        this.fromGenerator = false
+        this.liveTimer = null
         this.preview = new WavePreview()
 
         const canvas = document.getElementById(elementId + "_chart")
@@ -128,6 +152,9 @@ class EPSChart {
             sampleRate: this.sampleRate,
             onChange: (data) => {
                 this.wavesample = data
+                // Hand edits are the user's work, not the generator's, so a
+                // later touch of a slider must not quietly discard them.
+                this.fromGenerator = false
                 this.refreshPreview()
             }
         })
@@ -290,7 +317,40 @@ class EPSChart {
         if(!wavesample) return
         this.editor.setData(wavesample, options)
         this.wavesample = this.editor.getData()
+        // Whatever arrived here came from somewhere else — a file, the synth,
+        // a test — until generate says otherwise, which it does immediately
+        // after calling this.
+        this.fromGenerator = false
         this.refreshPreview()
+    }
+
+    /***
+     * Queues a regeneration after the controls have been still for a moment.
+     *
+     * By default this only replaces a waveform the generator itself made. The
+     * panel doubles as the retuning panel for everything else — the sample rate
+     * select is where you retune an imported WAV, and the root key and
+     * fundamental sit in the same card — so a slot holding an import, a
+     * wavesample pulled off the synth, or an edit made on the canvas is left
+     * alone rather than silently thrown away. An empty slot has nothing to lose
+     * and so is live from the start; anywhere else the first press of Generate
+     * is what arms it.
+     *
+     * `force` overrides that, for the one control where the intent is not in
+     * doubt: picking a waveform type can only mean make me that waveform, so it
+     * builds one whatever is on screen and whoever drew it. That also puts the
+     * slot back under the generator, so the sliders go live again with it.
+     */
+    liveGenerate(options = {}){
+        if(!EPSChart.LIVE_GENERATE) return
+        if(!options.force && !this.fromGenerator && this.wavesample.length > 0) return
+        clearTimeout(this.liveTimer)
+        // A live rebuild shows the whole of what it made, exactly as the button
+        // does. Holding the old view sounds helpful and is not: most of these
+        // controls change the length of the buffer, so the window that was
+        // showing three cycles of a saw is a sliver of the front of a super saw
+        // thirty times longer, and the display looks wrong rather than zoomed.
+        this.liveTimer = setTimeout(() => this.generate(), EPSChart.LIVE_DELAY_MS)
     }
 
     /***
@@ -515,6 +575,41 @@ class EPSChart {
         // quietly leaving the next sine to alias.
         let bandLimitedBeforeSaw = null
 
+        // The period count the current waveform's own sizing displaced, and
+        // whether that count was this panel's suggestion or the user's own
+        // number. Null when the waveform on the dropdown did not move the field.
+        let displacedPeriods = null
+
+        /***
+         * Hands back the period count the outgoing waveform's sizing displaced.
+         *
+         * Some waveforms need a long buffer to be themselves — a super saw over
+         * a couple of cycles quantises to a plain saw — so picking one raises
+         * the period count on the spot. That figure has nothing to do with the
+         * next waveform, and leaving a sine at the hundred and thirty nine
+         * periods a super saw needed is a surprise every time.
+         *
+         * Deliberately not a list of which waveforms are long: it restores
+         * whenever the field was moved by the sizing rather than by the user, so
+         * any waveform added later that sizes its own buffer is covered without
+         * anything here knowing about it.
+         *
+         * A number the user typed is left where it is. Only a figure this panel
+         * put there is this panel's to take away, which is the same rule
+         * raisePeriodsForDetune works to.
+         */
+        const restoreDisplacedPeriods = () => {
+            if (displacedPeriods === null) return
+            if ((parseInt(periodsEl.value) || 1) === this.autoPeriods) {
+                periodsEl.value = displacedPeriods.value
+                // Only still ours if it was ours before the sizing took it. A
+                // figure the user typed goes back to being theirs, so the
+                // sizing can raise it again but never lower it.
+                this.autoPeriods = displacedPeriods.auto ? displacedPeriods.value : null
+            }
+            displacedPeriods = null
+        }
+
         /***
          * The pulse width slider doubles as the super saw detune control, so it
          * gets a new title, range and units when the waveform changes. Picking
@@ -522,6 +617,12 @@ class EPSChart {
          * settings mean anything to the other waveforms.
          */
         const configureSpread = () => {
+            // Back to the length the incoming waveform should be sized from,
+            // before it gets a chance to size the field itself.
+            restoreDisplacedPeriods()
+            const periodsBefore = parseInt(periodsEl.value) || 1
+            const beforeWasAuto = periodsBefore === this.autoPeriods
+
             const superSaw = WaveGen.usesDetune(typeEl.value)
             sawGroupEl.style.display = superSaw ? '' : 'none'
             if (!superSaw && bandLimitedBeforeSaw !== null) {
@@ -556,24 +657,65 @@ class EPSChart {
             }
             spreadLabel()
             raisePeriodsForDetune()
+
+            // Whether this waveform's own sizing moved the field, and so what
+            // there is to hand back when a different one is picked. Read off
+            // the field rather than from the type, so it stays true of whatever
+            // is added later.
+            const periodsAfter = parseInt(periodsEl.value) || 1
+            displacedPeriods = periodsAfter !== periodsBefore
+                ? { value: periodsBefore, auto: beforeWasAuto }
+                : null
         }
-        typeEl.addEventListener('change', configureSpread)
+        /***
+         * Every control that changes the samples asks for a rebuild. The ones
+         * that only change how the wavesample is played on the synth — root
+         * key and fine tune — do not, since there is nothing to rebuild.
+         *
+         * configureSpread is called at mount time as well as on a change, so
+         * this hangs off the listener rather than off the function: a panel
+         * appearing on screen is not the user asking for a waveform.
+         */
+        const live = (options) => this.liveGenerate(options)
+
+        // Forced: a new waveform type is an unambiguous request for a new
+        // waveform, so it builds one over an import or over work drawn on the
+        // canvas rather than appearing to do nothing.
+        typeEl.addEventListener('change', () => {
+            configureSpread()
+            live({ force: true })
+        })
         configureSpread()
 
         pulseEl.addEventListener('input', () => {
             spreadLabel()
             raisePeriodsForDetune()
+            live()
         })
 
         driftEl.addEventListener('change', () => {
             driftGroupEl.style.display = driftEl.checked ? '' : 'none'
             raisePeriodsForDetune()
+            live()
         })
         driftAmountEl.addEventListener('input', () => {
             driftLabel()
             raisePeriodsForDetune()
+            live()
         })
-        randomPhaseEl.addEventListener('change', raisePeriodsForDetune)
+        randomPhaseEl.addEventListener('change', () => {
+            raisePeriodsForDetune()
+            live()
+        })
+        hpfEl.addEventListener('change', live)
+        bandEl.addEventListener('change', live)
+        // On change rather than input, unlike the sliders. Generating writes
+        // the count it actually achieved back into this field, so rebuilding
+        // per keystroke would rewrite the number under the user mid-way
+        // through typing it. Waiting for the field to be committed — Enter, a
+        // click away, or either spinner arrow — costs nothing and cannot fight
+        // the typing.
+        periodsEl.addEventListener('change', live)
         // A generated waveform plays back at its own pitch when the key played
         // is the fundamental it was generated at, so the root key follows the
         // fundamental. Change it afterwards to transpose the sample on the
@@ -582,6 +724,7 @@ class EPSChart {
             raisePeriodsForDetune()
             rootEl.value = noteEl.value
             this.rootKey = parseInt(noteEl.value)
+            live()
         })
         rootEl.addEventListener('change', () => {
             this.rootKey = parseInt(rootEl.value)
@@ -589,7 +732,10 @@ class EPSChart {
         fineEl.addEventListener('change', () => {
             this.fineTune = this.setFineTune(parseInt(fineEl.value) || 0)
         })
-        ampEl.addEventListener('input', ampLabel)
+        ampEl.addEventListener('input', () => {
+            ampLabel()
+            live()
+        })
 
         // Changing the rate changes the pitch the buffer plays back at, so keep
         // preview and WAV export in step even before the next Generate.
@@ -602,6 +748,7 @@ class EPSChart {
                 this.editor.setSampleRate(hz)
                 raisePeriodsForDetune()
                 this.refreshPreview()
+                live()
             })
         this.editor.setSampleRate(this.sampleRate)
 
@@ -647,9 +794,16 @@ class EPSChart {
 
     /***
      * Reads the generator controls and replaces this slot's wavesample.
+     *
+     * Always leaves the editor showing the whole of the new waveform, whether
+     * it was the button that asked or a control being moved.
      */
     generate(){
         const id = this.elementId
+        // Anything queued is about to be done here anyway, and letting it fire
+        // afterwards would re-roll the random phases of the waveform the user
+        // just asked for.
+        clearTimeout(this.liveTimer)
         const note = parseInt(document.getElementById(`${id}_genNote`).value)
         this.rootKey = parseInt(document.getElementById(`${id}_genRoot`).value) || note
         const type = document.getElementById(`${id}_genType`).value
@@ -676,6 +830,9 @@ class EPSChart {
             trackingHighPass: document.getElementById(`${id}_genTrackingHpf`).checked
         })
         this.setWavesample(result.data, { periodSamples: result.periodSamples })
+        // Now the generator's to replace, which is what lets the next slider
+        // move rebuild it without asking.
+        this.fromGenerator = true
         periodsEl.value = result.periods
         // Generating can clamp the count to fit the size limit. If the figure it
         // replaced was one we put there, the replacement is ours to move too.

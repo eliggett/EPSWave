@@ -1248,12 +1248,21 @@ class WaveEditor {
      *
      * Sits directly under the canvas rather than in the toolbar, where its
      * changing length used to push the buttons about, and where it was a long
-     * way from the thing it describes. Two halves: what is on screen on the
-     * left, what the screen is calibrated at on the right.
+     * way from the thing it describes.
+     *
+     * Two rows, both of a height reserved in the stylesheet whether or not
+     * they have anything in them. The top one is what is always there: the
+     * length on the left, what the screen is calibrated at on the right. The
+     * bottom one is everything that comes and goes — the selected range, and
+     * whatever an edit had to say — kept off the top row so that its arrival
+     * cannot lengthen a line that something else is sharing.
      */
     buildReadout() {
         const row = document.createElement('div')
         row.className = 'we-readout'
+
+        const top = document.createElement('div')
+        top.className = 'we-readout-row'
 
         this.infoEl = document.createElement('small')
         this.infoEl.className = 'text-muted we-info'
@@ -1261,8 +1270,14 @@ class WaveEditor {
         this.scaleEl = document.createElement('small')
         this.scaleEl.className = 'text-muted we-scale'
 
-        row.appendChild(this.infoEl)
-        row.appendChild(this.scaleEl)
+        top.appendChild(this.infoEl)
+        top.appendChild(this.scaleEl)
+
+        this.detailEl = document.createElement('small')
+        this.detailEl.className = 'text-muted we-detail'
+
+        row.appendChild(top)
+        row.appendChild(this.detailEl)
         this.canvas.insertAdjacentElement('afterend', row)
         this.readoutEl = row
     }
@@ -1423,13 +1438,19 @@ class WaveEditor {
                 if (this.viewLength < this.data.length) {
                     text += ` &middot; viewing ${this.viewStart}–${this.viewStart + this.viewLength}`
                 }
-                if (this.selection) {
-                    text += ` &middot; <b>selected ${this.selection.start}–${this.selection.end}`
-                        + ` (${this.selection.end - this.selection.start})</b>`
-                }
-                if (this.status) text += ` &middot; <b>${this.status}</b>`
             }
             this.infoEl.innerHTML = text
+        }
+        if (this.detailEl) {
+            // The second row: the two readings that are not always there. Empty
+            // is the usual state and costs nothing, since the row is reserved.
+            const parts = []
+            if (this.data.length > 0 && this.selection) {
+                parts.push(`selected ${this.selection.start}–${this.selection.end}`
+                    + ` (${this.selection.end - this.selection.start})`)
+            }
+            if (this.data.length > 0 && this.status) parts.push(this.status)
+            this.detailEl.innerHTML = parts.length ? `<b>${parts.join(' &middot; ')}</b>` : ''
         }
         if (this.scaleEl) {
             this.scaleEl.innerHTML = this.scaleText()

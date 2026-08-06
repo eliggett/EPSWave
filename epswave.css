@@ -110,21 +110,35 @@ body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: non
    and stay put. */
 .we-toolbar { justify-content: flex-start; }
 
-/* The readout under the canvas: what is on screen on the left, what the
-   screen is calibrated at on the right. min-height reserves the row so
-   the page does not shift when the text appears, and the left half
-   ellipsizes rather than wrapping, which would move the canvas below
-   it. Both halves are laid out at zero basis so neither can push the
-   other off its end of the row. */
+/* The readout under the canvas. Two rows, both of them reserved whether
+   or not they have anything to say, so that a selection appearing or an
+   edit reporting itself cannot move the page: the length and the scale
+   on top, the selected range and any status underneath.
+
+   width:0 with min-width:100% is the point of the block. It lays out at
+   the full width of the canvas above it, but it offers nothing to the
+   intrinsic width of the column it sits in — Bootstrap's columns are
+   flex items with no min-width:0 of their own, so a line of text that
+   will not wrap can otherwise widen the column past its share and shove
+   its neighbours sideways. Everything here ellipsizes into the width it
+   is given instead. */
 .we-readout {
+    width: 0;
+    min-width: 100%;
+    margin-top: 0.25rem;
+    line-height: 1.15rem;
+}
+.we-readout small { font-size: 0.75rem; }
+.we-readout-row {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    min-height: 1.3rem;
-    margin-top: 0.25rem;
-    line-height: 1.3rem;
+    min-width: 0;
+    min-height: 1.15rem;
 }
-.we-readout > .we-info {
+/* Both halves are laid out at zero basis so neither can push the other
+   off its end of the row. */
+.we-readout .we-info {
     flex: 1 1 0;
     min-width: 0;
     white-space: nowrap;
@@ -132,13 +146,23 @@ body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: non
     text-overflow: ellipsis;
 }
 /* Tabular figures so the division numbers do not jitter as they count. */
-.we-readout > .we-scale {
+.we-readout .we-scale {
     flex: 0 1 auto;
+    min-width: 0;
     padding-left: 0.75rem;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     text-align: right;
     font-variant-numeric: tabular-nums;
     cursor: help;
+}
+.we-readout .we-detail {
+    display: block;
+    min-height: 1.15rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Expanded event log. The height is the viewport less the room the card
