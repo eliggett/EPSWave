@@ -122,6 +122,10 @@ class EPSChart {
 
         this.editor = new WaveEditor(canvas, toolbar, {
             color: color,
+            // Only used for the ms/division readout, so it has to be kept in
+            // step wherever the rate is set: here, on import, and on the rate
+            // select.
+            sampleRate: this.sampleRate,
             onChange: (data) => {
                 this.wavesample = data
                 this.refreshPreview()
@@ -220,6 +224,7 @@ class EPSChart {
         this.suggestName(EPSChart.nameFromFile(fileName))
         const nearest = WaveGen.nearestSampleRate(wav.sampleRate)
         this.sampleRate = nearest
+        this.editor.setSampleRate(nearest)
         EPSChart.selectRate(
             document.getElementById(`${this.elementId}_genRate`),
             document.getElementById(`${this.elementId}_genRateAll`),
@@ -588,9 +593,11 @@ class EPSChart {
             this.sampleRate,
             (hz) => {
                 this.sampleRate = hz
+                this.editor.setSampleRate(hz)
                 raisePeriodsForDetune()
                 this.refreshPreview()
             })
+        this.editor.setSampleRate(this.sampleRate)
 
         document.getElementById(`${id}_genBtn`).addEventListener('click', () => {
             this.generate()

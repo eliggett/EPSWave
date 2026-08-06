@@ -55,6 +55,27 @@ class WaveEditor {
     /*** Subdivisions per division, marked as ticks along the centre axes. */
     static GRATICULE_SUBDIVISIONS = 5
 
+    /***
+     * Most period boundary lines to draw at once. Past twenty or so they stop
+     * being markers and become a hatch that hides the waveform, so the interval
+     * steps up instead — every 2nd cycle, every 5th, every 10th — and the
+     * readout says which, so the lines still mean something definite.
+     */
+    static MAX_PERIOD_LINES = 20
+
+    /***
+     * The smallest 1, 2, 5 x 10^n at or above `value`. Keeps the period marker
+     * interval to numbers that are easy to count in your head.
+     */
+    static niceStep(value) {
+        if (!(value > 1)) return 1
+        const power = Math.pow(10, Math.floor(Math.log10(value)))
+        for (const step of [1, 2, 5]) {
+            if (power * step >= value) return power * step
+        }
+        return power * 10
+    }
+
     static theme = 'light'
     static instances = []
 
@@ -96,13 +117,16 @@ class WaveEditor {
         this.viewStart = 0
         this.viewLength = 0
         this.periodSamples = 0
+        // Only used to put a time on the horizontal divisions. Zero means the
+        // host never said, and the readout leaves the time scale out.
+        this.sampleRate = options.sampleRate > 0 ? options.sampleRate : 0
 
         this.tool = WaveEditor.PEN
         // Half open range of samples, [start, end), or null for no selection.
         this.selection = null
         // Where the last click hunt stopped, so repeat presses walk forwards.
         this.lastClickIndex = -1
-        // Transient note shown in the toolbar readout after an operation.
+        // Transient note shown in the readout under the plot after an operation.
         this.status = ''
         this.undoStack = []
         this.undoSamples = 0
@@ -116,6 +140,8 @@ class WaveEditor {
 
         WaveEditor.instances.push(this)
 
+        // Before the toolbar, which reports through it as soon as it is wired.
+        this.buildReadout()
         if (toolbar) this.buildToolbar(toolbar)
         this.attachPointerHandlers()
 
@@ -141,12 +167,21 @@ class WaveEditor {
         } else {
             this.zoomAll()
         }
+        if (options.sampleRate > 0) this.sampleRate = options.sampleRate
         if (!options.keepUndo) this.clearUndo()
         this.render()
+        this.syncControls()
     }
 
     getData() {
         return this.data
+    }
+
+    /*** The rate the buffer plays back at, which is what turns divisions into
+     * milliseconds. Changing it redraws the readout without touching the data. */
+    setSampleRate(hz) {
+        this.sampleRate = hz > 0 ? hz : 0
+        this.syncControls()
     }
 
     /***
@@ -221,6 +256,47 @@ class WaveEditor {
         const half = this.height / 2 - this.padding
         const value = ((this.height / 2 - y) / half) * WaveEditor.PEAK
         return Math.max(-WaveEditor.PEAK, Math.min(WaveEditor.PEAK, Math.round(value)))
+    }
+
+    /***
+     * Screen scale
+     *
+     * What one division of the graticule is worth, for the readout under the
+     * plot. Vertically that is a fixed fraction of full scale, since the rows
+     * split the plot evenly and the outermost pair sit on the clipping limit.
+     */
+    divisionSamples() { return this.viewLength / WaveEditor.GRATICULE_COLUMNS }
+
+    divisionCounts() {
+        return WaveEditor.PEAK / (WaveEditor.GRATICULE_ROWS / 2)
+    }
+
+    /***
+     * The level, in dB below full scale, of a signal whose peak reaches exactly
+     * one division above the zero line.
+     *
+     * Worth being plain about what this is not: the trace is drawn on a linear
+     * amplitude scale, so the divisions are not a ladder of equal decibels —
+     * two divisions is 6 dB up from one, three is another 3.5, and so on. This
+     * is the calibration of the screen, the way a scope's V/div is, and it is
+     * constant because the row count is.
+     */
+    divisionDb() {
+        return 20 * Math.log10(this.divisionCounts() / WaveEditor.PEAK)
+    }
+
+    /***
+     * How many periods apart the cycle markers are drawn, or 0 for none. Steps
+     * through 1, 2, 5, 10 ... so that no more than MAX_PERIOD_LINES land on
+     * screen at once.
+     */
+    periodStride() {
+        if (!(this.periodSamples > 1) || this.viewLength <= 0) return 0
+        const visible = this.viewLength / this.periodSamples
+        // n cycles on screen at a stride of s puts n/s intervals across it and
+        // so n/s + 1 lines, counting the one at each end. The budget is lines,
+        // hence the minus one.
+        return WaveEditor.niceStep(visible / (WaveEditor.MAX_PERIOD_LINES - 1))
     }
 
     /***
@@ -327,20 +403,21 @@ class WaveEditor {
         }
         ctx.stroke()
 
-        // Period boundaries, so a generated wave shows where its cycles fall
-        if (this.periodSamples > 1 && this.viewLength > 0) {
-            const visible = this.viewLength / this.periodSamples
-            if (visible <= 128) {
-                ctx.strokeStyle = palette.period
-                ctx.beginPath()
-                const first = Math.ceil(this.viewStart / this.periodSamples)
-                for (let p = first; p * this.periodSamples <= this.viewStart + this.viewLength; p++) {
-                    const x = this.sampleToX(p * this.periodSamples)
-                    ctx.moveTo(x, 0)
-                    ctx.lineTo(x, this.height)
-                }
-                ctx.stroke()
+        // Period boundaries, so a generated wave shows where its cycles fall.
+        // Only every nth cycle once there are more on screen than the marker
+        // budget allows; the readout carries the n.
+        const stride = this.periodStride()
+        if (stride > 0) {
+            const spacing = this.periodSamples * stride
+            const end = this.viewStart + this.viewLength
+            ctx.strokeStyle = palette.period
+            ctx.beginPath()
+            for (let p = Math.ceil(this.viewStart / spacing); p * spacing <= end; p++) {
+                const x = Math.round(this.sampleToX(p * spacing)) + 0.5
+                ctx.moveTo(x, 0)
+                ctx.lineTo(x, this.height)
             }
+            ctx.stroke()
         }
 
         // Zero line, kept clearly stronger than the graticule so it reads as the
@@ -396,8 +473,38 @@ class WaveEditor {
                 if (value > max) max = value
             }
             if (min === Infinity) continue
-            ctx.moveTo(x + 0.5, this.valueToY(max))
-            ctx.lineTo(x + 0.5, this.valueToY(min) + 0.5)
+            // Reach back one sample, into the column to the left. Columns are
+            // drawn independently, so without this the trace is a row of
+            // disconnected strokes that only looks continuous because
+            // neighbouring columns usually overlap anyway. They do not overlap
+            // where the waveform jumps: at around one sample per column the two
+            // ends of a square wave's edge land in different columns, neither
+            // column sees both, and the edge is missing from the screen
+            // entirely — the top and the bottom of the square get drawn and
+            // nothing joins them. Including the previous column's last sample
+            // guarantees consecutive columns share a value and so always meet.
+            if (from > 0) {
+                const previous = this.data[from - 1]
+                if (previous < min) min = previous
+                if (previous > max) max = previous
+            }
+            // Canvas antialiases paths whether you ask it to or not, and that is
+            // exactly what used to swallow quiet passages: a column whose swing
+            // covers a third of a pixel is drawn at a third of the trace's
+            // alpha, and one that lands inside a single pixel row is drawn as a
+            // zero length segment, which is to say not at all. Rounding the ends
+            // to pixel edges and never letting a column be shorter than one
+            // pixel puts every column on screen at full strength. It costs a
+            // little accuracy on the height of the smallest wiggles, which is
+            // the right trade when the alternative is not seeing them.
+            let top = Math.round(this.valueToY(max))
+            let bottom = Math.round(this.valueToY(min))
+            if (bottom - top < 1) {
+                top = Math.round((top + bottom) / 2)
+                bottom = top + 1
+            }
+            ctx.moveTo(x + 0.5, top)
+            ctx.lineTo(x + 0.5, bottom)
         }
         ctx.stroke()
     }
@@ -1137,6 +1244,55 @@ class WaveEditor {
     }
 
     /***
+     * Readout
+     *
+     * Sits directly under the canvas rather than in the toolbar, where its
+     * changing length used to push the buttons about, and where it was a long
+     * way from the thing it describes. Two halves: what is on screen on the
+     * left, what the screen is calibrated at on the right.
+     */
+    buildReadout() {
+        const row = document.createElement('div')
+        row.className = 'we-readout'
+
+        this.infoEl = document.createElement('small')
+        this.infoEl.className = 'text-muted we-info'
+
+        this.scaleEl = document.createElement('small')
+        this.scaleEl.className = 'text-muted we-scale'
+
+        row.appendChild(this.infoEl)
+        row.appendChild(this.scaleEl)
+        this.canvas.insertAdjacentElement('afterend', row)
+        this.readoutEl = row
+    }
+
+    /*** Milliseconds, or microseconds once a division is shorter than one. */
+    static formatTime(ms) {
+        if (ms >= 100) return `${ms.toFixed(0)} ms`
+        if (ms >= 1) return `${ms.toPrecision(3)} ms`
+        return `${(ms * 1000).toPrecision(3)} µs`
+    }
+
+    /***
+     * What one division of the graticule is worth, for the right hand end of
+     * the readout. The time scale needs a sample rate and is left out without
+     * one; the level scale is always known.
+     */
+    scaleText() {
+        if (this.data.length === 0) return ''
+        const parts = []
+        if (this.sampleRate > 0 && this.viewLength > 0) {
+            const ms = (1000 * this.divisionSamples()) / this.sampleRate
+            parts.push(`${WaveEditor.formatTime(ms)}/div`)
+        }
+        parts.push(`${this.divisionDb().toFixed(1)} dBFS/div`)
+        const stride = this.periodStride()
+        if (stride > 1) parts.push(`cycle marks every ${stride}`)
+        return parts.join(' · ')
+    }
+
+    /***
      * Toolbar
      */
     buildToolbar(container) {
@@ -1145,20 +1301,19 @@ class WaveEditor {
 
         if (this.readOnly) {
             container.innerHTML = `
-                <div class="btn-toolbar justify-content-between mb-1">
+                <div class="btn-toolbar we-toolbar mb-1">
                     <div class="btn-group btn-group-sm">
                         <button class="btn btn-outline-secondary" id="${uid}_zoomIn" title="Zoom in"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
                         <button class="btn btn-outline-secondary" id="${uid}_zoomOut" title="Zoom out"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
                         <button class="btn btn-outline-secondary" id="${uid}_zoomAll" title="Fit"><i class="fa-solid fa-arrows-left-right"></i></button>
                     </div>
                     <span class="btn-group btn-group-sm ml-1" id="${uid}_extra"></span>
-                    <small class="text-muted align-self-center ml-auto" id="${uid}_info"></small>
                 </div>
                 <input type="range" class="custom-range" id="${uid}_scroll" min="0" max="0" value="0" style="display:none">
             `
         } else {
             container.innerHTML = `
-                <div class="btn-toolbar justify-content-between mb-1">
+                <div class="btn-toolbar we-toolbar mb-1">
                     <div class="btn-group btn-group-sm mr-1" role="group">
                         <button class="btn btn-secondary" id="${uid}_pen" title="Draw"><i class="fa-solid fa-pen"></i></button>
                         <button class="btn btn-outline-secondary" id="${uid}_line" title="Straight line"><i class="fa-solid fa-ruler"></i></button>
@@ -1196,7 +1351,6 @@ class WaveEditor {
                         <button class="btn btn-outline-secondary" id="${uid}_undo" title="Undo" disabled><i class="fa-solid fa-rotate-left"></i></button>
                     </div>
                     <span class="btn-group btn-group-sm ml-1" id="${uid}_extra"></span>
-                    <small class="text-muted align-self-center ml-auto" id="${uid}_info"></small>
                 </div>
                 <input type="range" class="custom-range" id="${uid}_scroll" min="0" max="0" value="0" style="display:none">
             `
@@ -1209,7 +1363,6 @@ class WaveEditor {
         byId('zoomAll').addEventListener('click', () => this.zoomAll())
 
         this.scrollEl = byId('scroll')
-        this.infoEl = byId('info')
         // Owner injects buffer level controls such as preview here, so they are
         // available whether or not the slot has a generator.
         this.extraEl = byId('extra')
@@ -1277,6 +1430,18 @@ class WaveEditor {
                 if (this.status) text += ` &middot; <b>${this.status}</b>`
             }
             this.infoEl.innerHTML = text
+        }
+        if (this.scaleEl) {
+            this.scaleEl.innerHTML = this.scaleText()
+            // The linear scale caveat belongs somewhere, and a tooltip is the
+            // one place it can live without crowding the number.
+            this.scaleEl.title = this.data.length === 0 ? ''
+                : `One division is ${Math.round(this.divisionCounts())} of `
+                    + `${WaveEditor.PEAK}, so a waveform peaking exactly one `
+                    + `division from the centre line sits at `
+                    + `${this.divisionDb().toFixed(1)} dBFS. The vertical scale `
+                    + `is linear, so the divisions above that are not evenly `
+                    + `spaced in dB.`
         }
     }
 }

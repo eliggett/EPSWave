@@ -103,6 +103,44 @@ body.dark .eps-name.form-control:focus { border-color: #3dff9e; box-shadow: none
 body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: none; }
 .eps-name.form-control::placeholder { color: #7b8768; }
 
+/* Wave editor toolbar. Bootstrap's justify-content-between shares the
+   free space out between the button groups, so anything on the row that
+   changes width — as the readout used to, every time you zoomed — walks
+   the buttons sideways under the pointer. The groups pack to the left
+   and stay put. */
+.we-toolbar { justify-content: flex-start; }
+
+/* The readout under the canvas: what is on screen on the left, what the
+   screen is calibrated at on the right. min-height reserves the row so
+   the page does not shift when the text appears, and the left half
+   ellipsizes rather than wrapping, which would move the canvas below
+   it. Both halves are laid out at zero basis so neither can push the
+   other off its end of the row. */
+.we-readout {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    min-height: 1.3rem;
+    margin-top: 0.25rem;
+    line-height: 1.3rem;
+}
+.we-readout > .we-info {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* Tabular figures so the division numbers do not jitter as they count. */
+.we-readout > .we-scale {
+    flex: 0 1 auto;
+    padding-left: 0.75rem;
+    white-space: nowrap;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    cursor: help;
+}
+
 /* Expanded event log. The height is the viewport less the room the card
    header, the checkbox row and the page margins take, so the textarea
    fills what is left of the screen and the whole card still fits
