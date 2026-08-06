@@ -428,6 +428,12 @@ class EPSChart {
                                 <i class="fa-solid fa-bolt"></i> Generate
                             </button>
                         </div>
+                        <div class="col-auto">
+                            <button id="${id}_genSave" class="btn btn-sm btn-outline-info"
+                                title="Save this wavesample to this computer as a WAV file">
+                                <i class="fa-solid fa-file-arrow-down"></i> Save
+                            </button>
+                        </div>
                     </div>
                     <small class="text-muted" id="${id}_genInfo"></small>
                 </div>
@@ -602,6 +608,41 @@ class EPSChart {
         document.getElementById(`${id}_genBtn`).addEventListener('click', () => {
             this.generate()
         })
+
+        // Saving reports through the same line the generator writes its summary
+        // to. A file arriving in the downloads folder is easy to miss, and the
+        // one thing worth saying out loud is the rate it was written at, since
+        // that is what decides the pitch it plays back at anywhere else.
+        document.getElementById(`${id}_genSave`).addEventListener('click', () => {
+            const saved = this.saveWav()
+            document.getElementById(`${id}_genInfo`).innerHTML = saved
+                ? `Saved ${this.wavesample.length} samples to ${saved}, `
+                    + `16 bit mono at ${(this.sampleRate / 1000).toFixed(1)} kHz`
+                : 'Nothing to save yet: generate a waveform or load a WAV file first.'
+        })
+    }
+
+    /***
+     * Hands the slot's wavesample to the browser as a WAV file.
+     *
+     * Written at the slot's EPS rate rather than at a standard audio rate, so
+     * the file sounds like what the editor is showing and reloads round trip.
+     * Fine tune has nowhere to go in a WAV header and is left behind: it exists
+     * to cancel the EPS's rate quantisation on the synth, which a file played
+     * at its own written rate does not suffer from.
+     *
+     * Returns the file name, or null when there is nothing to save.
+     */
+    saveWav(){
+        if(!this.wavesample || this.wavesample.length === 0) return null
+        // this.name is already the EPS's twelve character set, so the only
+        // thing left to do is keep spaces and its two punctuation marks out of
+        // a file name. Falls back to the slot's label for an unnamed slot.
+        const base = String(this.name || this.label || 'wavesample')
+            .trim().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '')
+        const fileName = `${base || 'wavesample'}.wav`
+        this.eps.saveFile(this.wavesample, this.sampleRate, fileName)
+        return fileName
     }
 
     /***
