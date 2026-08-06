@@ -144,6 +144,99 @@ window.EPSWaveUI = {
     },
 
     /***
+     * The status panel: #epsStatus for the line of text, #epsProgress for the
+     * bar, and the class `eps-transfer` on every button that talks to the synth.
+     *
+     * There is one of these for the whole page rather than one per card,
+     * because there is one MIDI cable. A transfer takes minutes and the card
+     * that started it may well be behind another tab by the time it finishes,
+     * so the place to look has to be somewhere that is always visible.
+     */
+    status(text, percent = null){
+        const line = document.getElementById("epsStatus")
+        if(line) line.innerHTML = text || "&nbsp;"
+        const bar = document.getElementById("epsProgress")
+        if(!bar) return
+        const known = typeof percent == "number" && percent >= 0
+        bar.style.width = known ? `${Math.max(0, Math.min(100, percent))}%` : "0%"
+        bar.parentElement.classList.toggle("eps-progress-idle", !known)
+    },
+
+    /***
+     * One transfer at a time.
+     *
+     * Before the page had a card per wavesample there was one Get button and
+     * one Upload button, so two overlapping transfers were impossible by
+     * construction. With a button on every tab and two more for the batch
+     * uploads it is a click away, and the EPS answers a sysex command with a
+     * bare acknowledgement carrying nothing to say which command it belongs to.
+     * Two conversations at once are therefore not slow or unreliable, they are
+     * unreadable: each side reads the other's replies as its own.
+     *
+     * Returns null if something is already running, and otherwise the function
+     * that ends it. Put that in a `finally` — a throw that left the page
+     * permanently disabled would be a worse fault than the one being prevented.
+     */
+    startTransfer(what){
+        if(EPSWaveUI.transferring) return null
+        EPSWaveUI.transferring = what
+        const release = EPSWaveUI.hold(what)
+        for(const button of document.querySelectorAll(".eps-transfer")){
+            button.disabled = true
+        }
+        EPSWaveUI.status(what, 0)
+        return (outcome) => {
+            EPSWaveUI.transferring = null
+            release()
+            for(const button of document.querySelectorAll(".eps-transfer")){
+                button.disabled = false
+            }
+            EPSWaveUI.status(outcome || "Ready")
+        }
+    },
+
+    /***
+     * Asks a yes or no question and waits for the answer.
+     *
+     * window.confirm would do, and is deliberately not used: the question worth
+     * asking here is "instrument 3 already holds STRINGS 1, 412 blocks, three
+     * layers — overwrite it?", and that wants a name in a readable typeface and
+     * a button that says Overwrite rather than one that says OK.
+     *
+     * The markup is built here rather than living in the page so that every
+     * page gets the same dialog without carrying a copy of it.
+     */
+    async ask(title, bodyHtml, confirmLabel = "Overwrite", confirmClass = "btn-danger"){
+        return new Promise((resolve) => {
+            const id = "epsAskModal"
+            $(`#${id}`).remove()
+            const modal = $(`
+                <div class="modal fade" id="${id}" tabindex="-1" role="dialog">
+                    <div class="modal-dialog modal-dialog-centered" role="document">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">${title}</h5>
+                            </div>
+                            <div class="modal-body">${bodyHtml}</div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn ${confirmClass}" id="${id}Ok">${confirmLabel}</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`)
+            $("body").append(modal)
+            let answer = false
+            modal.find(`#${id}Ok`).click(() => { answer = true; modal.modal("hide") })
+            // Resolved on the way out rather than on the button, so that the
+            // Cancel button, the backdrop, the close box and the Escape key all
+            // count as no without each needing to be wired.
+            modal.on("hidden.bs.modal", () => { modal.remove(); resolve(answer) })
+            modal.modal({ backdrop: "static", keyboard: true })
+        })
+    },
+
+    /***
      * Hands the browser a file. Used by the log export and by anything that
      * saves an instrument.
      *
@@ -282,6 +375,9 @@ window.EPSWaveUI = {
      * Chrome, and a returned string for older Safari.
      */
     holds: new Set(),
+
+    /*** What is on the wire, or null. See startTransfer. */
+    transferring: null,
 
     guardUnload(){
         if(EPSWaveUI.guarding) return

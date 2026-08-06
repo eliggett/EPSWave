@@ -238,133 +238,29 @@
             <div class="col-sm">
                 <div class="card">
                     <div class="card-header">
-                        Transfer Samples to and From the EPS16+:
+                        Wavesamples: generate, edit, and move to and from the EPS16+
                     </div>
                     <div class="card-body">
-                        <div class="row">
-                            <div class="col-sm">
-                                <div class="row">
-                                    <div class="col-sm">
-                                        <div style="width: 100%;"><canvas id="epsWave_chart"></canvas></div>
-                                    </div>
-                                </div>
-                                <div class="row">
-                                    <div class="col-6">
-                                        <button id="getWS" class="btn btn-info btn-block"><i
-                                                class="fa-solid fa-download"></i> Get Wavesample
-                                            <span id="downloadSpinner" class="spinner-border spinner-border-sm"
-                                                role="status" aria-hidden="true" style="display:none"></span>
-                                            <span id="percentComplete" style="display:none">0%</span>
-                                        </button>
-                                    </div>
-                                    <div class="col-6">
-                                        <button id="download" class="btn btn-info btn-block"><i
-                                                class="fa-solid fa-file-arrow-down"></i> Save Wavesample</button>
-                                    </div>
-                                    <div class="col-12 mt-2">
-                                        <div class="input-group input-group-sm mb-1">
-                                            <div class="input-group-prepend">
-                                                <label class="input-group-text" for="epsName">Name</label>
-                                            </div>
-                                            <input type="text" class="form-control eps-name" id="epsName"
-                                                maxlength="12" placeholder="WAVESAMPLE"
-                                                title="12 characters, sent with the upload. The EPS displays A-Z 0-9 space * + - only">
-                                        </div>
-                                    </div>
-                                    <div class="col-12 mt-2">
-                                        <button id="uploadEps" class="btn btn-info btn-block"><i
-                                                class="fa-solid fa-upload"></i> Upload Edits Back to EPS16+
-                                            <span id="uploadEpsSpinner" class="spinner-border spinner-border-sm"
-                                                role="status" aria-hidden="true" style="display:none"></span>
-                                            <span id="uploadEpsPercent" style="display:none">0%</span>
-                                        </button>
-                                    </div>
-                                    <div class="col-12 mt-2">
-                                        <div class="input-group input-group-sm mb-1">
-                                            <div class="input-group-prepend">
-                                                <label class="input-group-text" for="epsRate">Sample Rate</label>
-                                            </div>
-                                            <select id="epsRate" class="custom-select"></select>
-                                        </div>
-                                        <select id="epsRateAll" class="custom-select custom-select-sm mb-1"
-                                            style="display:none"></select>
-                                        <div class="input-group input-group-sm mb-1">
-                                            <div class="input-group-prepend">
-                                                <label class="input-group-text" for="epsRoot">Root Key</label>
-                                            </div>
-                                            <select id="epsRoot" class="custom-select"></select>
-                                        </div>
-                                        <div class="input-group input-group-sm mb-1">
-                                            <div class="input-group-prepend">
-                                                <label class="input-group-text" for="epsFine">Fine Tune</label>
-                                            </div>
-                                            <input type="number" class="form-control" id="epsFine" value="0"
-                                                min="-99" max="99" step="1">
-                                            <div class="input-group-append">
-                                                <span class="input-group-text">cents</span>
-                                            </div>
-                                        </div>
-                                        <i><small><b>Note:</b> Both are read from the synth with every wavesample
-                                            and sent back with every upload. Change them here to retune a
-                                            wavesample already on the EPS: the rate shifts its pitch, the root key
-                                            moves which note plays it back unshifted. "Other rate" opens the full
-                                            range, 312.5 kHz down to 6.25 kHz.</small></i>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-sm">
-                                <div class="row">
-                                    <div class="col-sm">
-                                        <div style="width: 100%;"><canvas id="localWave_chart"></canvas></div>
-                                    </div>
-                                </div>
-                                <div class="row">
-                                    <div class="col-12" id="localWaveGen"></div>
-                                </div>
-                                <div class="row">
-                                    <div class="col-12">
-                                        <div class="input-group mb-3">
-                                            <div class="input-group-prepend">
-                                                <span class="input-group-text" id="inputGroupFileAddon01"><i
-                                                        class="fa-solid fa-wave-square"></i></span>
-                                            </div>
-                                            <div class="custom-file">
-                                                <input type="file" id="localWave" class="custom-file-input"
-                                                    id="inputGroupFile01" aria-describedby="inputGroupFileAddon01">
-                                                <label class="custom-file-label" for="inputGroupFile01">Drag WAV
-                                                    File Here</label>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="col-12">
-                                        <div class="input-group input-group-sm mb-2">
-                                            <div class="input-group-prepend">
-                                                <label class="input-group-text" for="localName">Name</label>
-                                            </div>
-                                            <input type="text" class="form-control eps-name" id="localName"
-                                                maxlength="12" placeholder="WAVESAMPLE"
-                                                title="12 characters, sent with the upload. The EPS displays A-Z 0-9 space * + - only">
-                                        </div>
-                                    </div>
-                                    <div class="col-12">
-                                        <button id="upload" class="btn btn-info btn-block"><i
-                                                class="fa-solid fa-upload"></i> Upload to EPS16+
-                                            <span id="uploadSpinner" class="spinner-border spinner-border-sm"
-                                                role="status" aria-hidden="true" style="display:none"></span>
-                                            <span id="uploadPercent" style="display:none">0%</span>
-                                        </button>
-                                    </div>
-                                    <div class="col-7"></div>
-                                    <div class="col-12">
-                                        <i><b>Note:</b> Only supports mono wave files and cannot exceed the memory
-                                            of the synth</i><br />
-                                        <i><b>Note:</b> An instrument, layer and wavesample are needed to upload
-                                            into. If you don't have them, they'll be created for you &mdash; or
-                                            use the utility functions above. </i><br />
-                                    </div>
-                                </div>
+                        <!-- One status line for the whole page, because there is one
+                             MIDI cable. A transfer runs for minutes and the tab that
+                             started it may well be hidden behind another by the time
+                             it finishes, so the place to look has to be somewhere
+                             that is always on screen. -->
+                        <div class="eps-lcd mb-3">
+                            <div class="eps-lcd-line" id="epsStatus">READY</div>
+                            <div class="eps-lcd-bar eps-progress-idle">
+                                <div id="epsProgress"></div>
                             </div>
                         </div>
+                        <ul class="nav nav-tabs wave-tabs" id="waveTabs" role="tablist">
+                            <li class="nav-item">
+                                <a class="nav-link wave-tab-add" id="addWaveTab" href="#"
+                                    title="Open another waveform. Every tab is used by the buttons below.">
+                                    <i class="fa-solid fa-plus"></i> Add waveform
+                                </a>
+                            </li>
+                        </ul>
+                        <div class="tab-content pt-3" id="waveTabPanes"></div>
                     </div>
                 </div>
             </div>
@@ -373,53 +269,44 @@
             <div class="col-sm">
                 <div class="card">
                     <div class="card-header">
-                        Upload multiple waveforms at once (can also create transwaves, soundscapes)
+                        Combine every tab into one instrument
                     </div>
                     <div class="card-body">
-                        <div class="row" id="scapes">
-
+                        <div class="form-row align-items-end">
+                            <div class="col-sm-3">
+                                <label class="small mb-1" for="batchInst">Build into instrument</label>
+                                <select id="batchInst" class="custom-select custom-select-sm"></select>
+                            </div>
+                            <div class="col-sm-9">
+                                <i><small id="batchNote" class="text-muted"></small></i>
+                            </div>
                         </div>
-                        <br />
-                        <div class="row">
-                            <div class="col-sm">
-                                <button id="addWave" class="btn btn-info btn-block"><i class="fa-solid fa-plus"></i>
-                                    Add Additional WaveForms
+                        <div class="form-row mt-3">
+                            <div class="col-md-4">
+                                <button id="uploadSeparate" class="btn btn-info btn-block eps-transfer">
+                                    <i class="fa-solid fa-upload"></i> One per instrument
                                 </button>
+                                <small class="form-text text-muted">Each tab becomes its own
+                                    instrument, taking consecutive slots from the one above.</small>
+                            </div>
+                            <div class="col-md-4">
+                                <button id="uploadTranswave" class="btn btn-info btn-block eps-transfer">
+                                    <i class="fa-solid fa-wave-square"></i> Make transwave
+                                </button>
+                                <small class="form-text text-muted">Every tab joined end to end in
+                                    one wavesample, swept by the mod wheel.</small>
+                            </div>
+                            <div class="col-md-4">
+                                <button id="uploadSoundScape" class="btn btn-info btn-block eps-transfer">
+                                    <i class="fa-solid fa-layer-group"></i> Make soundscape
+                                </button>
+                                <small class="form-text text-muted">One tab per layer, crossfaded by
+                                    an LFO. Uses the first 8 tabs.</small>
                             </div>
                         </div>
-                        <hr/>
-                        <div class="row">
+                        <div class="row mt-3" id="morphOverlapRow">
                             <div class="col-sm">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="flexRadioDefault"
-                                        id="flexRadioDefault1" value="simple" checked>
-                                    <label class="form-check-label" for="flexRadioDefault1">
-                                        Upload One Sample per Instrument
-                                    </label>
-                                </div>
-                            </div>
-                            <div class="col-sm">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="flexRadioDefault"
-                                        id="flexRadioDefault2" value="transwave">
-                                    <label class="form-check-label" for="flexRadioDefault2">
-                                        Combine all samples and create a transwave (mod wheel controlled)
-                                    </label>
-                                </div>
-                            </div>
-                            <div class="col-sm">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="flexRadioDefault"
-                                        id="flexRadioDefault3" value="morph">
-                                    <label class="form-check-label" for="flexRadioDefault3">
-                                        Upload all samples into a morphing sound scape (limited to 8 samples)
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="row" id="morphOverlapRow" style="display:none">
-                            <div class="col-sm">
-                                <label for="morphOverlap" class="mb-1"><small>Layer Overlap:
+                                <label for="morphOverlap" class="mb-1"><small>Soundscape layer overlap:
                                     <b><span id="morphOverlapValue">50%</span></b></small></label>
                                 <input type="range" class="custom-range" id="morphOverlap" min="0" max="100"
                                     step="1" value="50">
@@ -429,16 +316,6 @@
                                     up the flat part disappears and two waves are sounding together at every
                                     point in the sweep; at the top three overlap at once, for a thicker morph
                                     in which the individual waves are less distinct.</small></i>
-                            </div>
-                        </div>
-                        <div class="row">
-                            <div class="col-sm">
-                                <button id="uploadSoundScape" class="btn btn-info btn-block"><i
-                                        class="fa-solid fa-upload"></i> Upload Samples
-                                    <span id="uploadSoundScapeSpinner" class="spinner-border spinner-border-sm"
-                                        role="status" aria-hidden="true" style="display:none"></span>
-                                    <span id="percentAllComplete" style="display:none">0%</span>
-                                </button>
                             </div>
                         </div>
                     </div>
@@ -643,46 +520,14 @@
             })
             EPSWaveUI.wireMidi(eps)
 
-            function resetUI(){
-                $("#instNum").val(0) 
-                eps.setInstrumentNumber(0)
-                $("#layerNum").val(0)
-                eps.setLayerNumber(0)
-                $("#waveNum").val(1)
-                eps.setWavesampleNumber(1)
-            }
-
-            let localChart = new EPSChart("localWave", "Uploaded Wavesample", 'rgb(237,1,33)', true, eps)
-            let epsChart = new EPSChart("epsWave", "EPS Wavesample", 'rgb(75,192,192)', false, eps)
-            localChart.mountGenerator("localWaveGen")
-            localChart.mountNameInput("localName")
-            epsChart.mountNameInput("epsName")
-
-            // The EPS slot has no generator, so its rate comes from this select.
-            // It drives the preview pitch, the exported WAV header, and the rate
-            // written back to the synth on upload.
-            const epsRateEl = document.getElementById("epsRate")
-            const epsRateAllEl = document.getElementById("epsRateAll")
-            epsChart.sampleRate = EPSChart.mountRateSelects(
-                epsRateEl, epsRateAllEl, epsChart.sampleRate, (hz) => {
-                    epsChart.sampleRate = hz
-                    epsChart.refreshPreview()
-                })
-
-            const epsRootEl = document.getElementById("epsRoot")
-            epsRootEl.innerHTML = EPSChart.noteOptionsHtml()
-            epsRootEl.value = epsChart.rootKey
-            epsRootEl.addEventListener('change', () => {
-                epsChart.rootKey = parseInt(epsRootEl.value)
-            })
-
-            const epsFineEl = document.getElementById("epsFine")
-            epsFineEl.value = epsChart.fineTune
-            epsFineEl.addEventListener('change', () => {
-                epsFineEl.value = epsChart.setFineTune(parseInt(epsFineEl.value) || 0)
-            })
-
-            let waveScapes = []
+            // Every tab, in the order the tabs are shown. Rebuilt from the DOM
+            // rather than maintained by hand, because the tabs can be dragged
+            // into a new order and that order is what a transwave is
+            // concatenated in and what a soundscape assigns its layers from.
+            let waveTabs = []
+            const tabsInOrder = () => $("#waveTabs .wave-tab").get()
+                .map(el => waveTabs.find(tab => tab.id == $(el).data("tab")))
+                .filter(tab => tab)
 
             // Block size drives every sysex data transfer, up and down. Kept in
             // localStorage because it depends on the interface, not the sample.
@@ -711,7 +556,7 @@
                     length,
                     (percent) => { $("#testPercent").html(`${percent}%`) },
                     (status) => { log(status) },
-                    epsChart.sampleRate)
+                    tabsInOrder()[0] ? tabsInOrder()[0].chart.sampleRate : WaveGen.DEFAULT_SAMPLE_RATE)
 
                 let detail = [report.message]
                 detail.push(`Sent ${report.requested} samples in blocks of ${report.blockSize}`
@@ -737,77 +582,27 @@
                     .html(detail.join("<br />"))
                     .show()
                 for (let line of detail) log(line)
-                if (report.received) epsChart.setWavesample(report.received)
+                if (report.received && tabsInOrder()[0]) tabsInOrder()[0].chart.setWavesample(report.received)
 
                 $("#testSpinner").hide()
                 $("#testPercent").hide().html("0%")
                 $("#runTest").prop("disabled", false)
             })
 
+            // The utility card's three selectors are the only other thing that
+            // addresses the synth, and they set the numbering when they change
+            // rather than when they are used. Every card now sets it on use, so
+            // these have to as well: whichever went last would otherwise decide
+            // where a Create or a Rename landed.
+            const applyUtilityTarget = () => {
+                eps.setInstrumentNumber(parseInt($("#instNum").val()))
+                eps.setLayerNumber(parseInt($("#layerNum").val()))
+                eps.setWavesampleNumber(parseInt($("#waveNum").val()))
+            }
+
             $("#delete").click(() => {
+                applyUtilityTarget()
                 eps.deleteInstrument()
-            })
-            $("#download").click(() => {
-                eps.saveFile(epsChart.wavesample, epsChart.sampleRate)
-            })
-            $("#upload").click(async () => {
-                // Held so that closing the page mid-transfer asks first, and
-                // released in a finally so a throw cannot leave the page stuck
-                // asking forever.
-                const release = EPSWaveUI.hold("uploading a wavesample")
-                $("#uploadSpinner").show()
-                $("#uploadPercent").html("0%").show()
-                try {
-                    // The EPS needs an instrument before a layer and a layer
-                    // before a wavesample. Rather than make that the user's
-                    // problem, whatever is missing is created here. The
-                    // wavesample number can come back different — the EPS
-                    // assigns its own — so the selector is put right if it does.
-                    const ready = await eps.prepareTarget(
-                        { instrument: instName(), layer: layerName() },
-                        (what) => $("#uploadPercent").html(what))
-                    if (!ready.ok) { handleError(`Error: ${ready.message}`); return }
-                    if (ready.created.length > 0 || ready.renumbered) log(ready.message)
-                    if (ready.renumbered) $("#waveNum").val(ready.wavesample)
-                    $("#uploadPercent").html("0%")
-                    await eps.uploadWavToEPS(localChart.wavesample, 1, 0, (percent) => {
-                        $("#uploadPercent").html(`${percent}%`)
-                    }, localChart.sampleRate, localChart.rootKey, localChart.fineTune, localChart.name)
-                } finally {
-                    release()
-                    $("#uploadSpinner").hide()
-                    $("#uploadPercent").hide().html("0%")
-                }
-            })
-            $("#uploadEps").click(async () => {
-                if (!epsChart.wavesample || epsChart.wavesample.length == 0) {
-                    handleError("Error: Nothing to upload, get a wavesample from the EPS first")
-                    return
-                }
-                const release = EPSWaveUI.hold("uploading a wavesample")
-                $("#uploadEpsSpinner").show()
-                $("#uploadEpsPercent").html("0%").show()
-                try {
-                    // The EPS needs an instrument before a layer and a layer
-                    // before a wavesample. Rather than make that the user's
-                    // problem, whatever is missing is created here. The
-                    // wavesample number can come back different — the EPS
-                    // assigns its own — so the selector is put right if it does.
-                    const ready = await eps.prepareTarget(
-                        { instrument: instName(), layer: layerName() },
-                        (what) => $("#uploadEpsPercent").html(what))
-                    if (!ready.ok) { handleError(`Error: ${ready.message}`); return }
-                    if (ready.created.length > 0 || ready.renumbered) log(ready.message)
-                    if (ready.renumbered) $("#waveNum").val(ready.wavesample)
-                    $("#uploadEpsPercent").html("0%")
-                    await eps.uploadWavToEPS(epsChart.wavesample, 1, 0, (percent) => {
-                        $("#uploadEpsPercent").html(`${percent}%`)
-                    }, epsChart.sampleRate, epsChart.rootKey, epsChart.fineTune, epsChart.name)
-                } finally {
-                    release()
-                    $("#uploadEpsSpinner").hide()
-                    $("#uploadEpsPercent").hide().html("0%")
-                }
             })
             // The three name fields in the EPS Functions card. Each filters to
             // the character set the synth can display, exactly as the
@@ -836,211 +631,321 @@
             const wsName = nameField("wsName", EPS16.DEFAULT_WAVESAMPLE_NAME)
 
             $("#createInst").click(async () => {
+                applyUtilityTarget()
                 await eps.createInstrument(instName())
             })
             $("#createLayer").click(async () => {
+                applyUtilityTarget()
                 await eps.createLayer(layerName())
             })
             $("#createSQR").click(async () => {
+                applyUtilityTarget()
                 await eps.createSqrWave(wsName())
             })
             // Rename takes the field as typed rather than the placeholder:
             // renaming something to "UNNAMED INST" because the box was empty
             // would be a surprise, so eps.rename reports it as a mistake.
             $("#renameInst").click(async () => {
+                applyUtilityTarget()
                 await eps.renameInstrument($("#instName").val())
             })
             $("#renameLayer").click(async () => {
+                applyUtilityTarget()
                 await eps.renameLayer($("#layerName").val())
             })
             $("#renameWS").click(async () => {
+                applyUtilityTarget()
                 await eps.renameWavesample($("#wsName").val())
             })
-            // The overlap slider only means anything to the morphing sound
-            // scape, so it follows the mode radios rather than sitting there
-            // doing nothing during a plain upload or a transwave.
+            // The overlap slider belongs to the soundscape button and to
+            // nothing else, which is now said next to it rather than by
+            // appearing and disappearing.
             const syncMorphOverlap = () => {
                 const percent = Number($("#morphOverlap").val())
                 $("#morphOverlapValue").html(`${percent}%`)
                 eps.setMorphOverlap(percent)
             }
             $("#morphOverlap").on("input", syncMorphOverlap)
-            $('input[name="flexRadioDefault"]').change(() => {
-                const mode = $('input[name="flexRadioDefault"]:checked').val()
-                $("#morphOverlapRow").toggle(mode == "morph")
-            })
             syncMorphOverlap()
-            $("#uploadSoundScape").click(async() => {
-                $("#percentAllComplete").html(`0%`)
-                let waves = waveScapes.map(ws => ws.wavesample)
-                let rates = waveScapes.map(ws => ws.sampleRate)
-                let roots = waveScapes.map(ws => ws.rootKey)
-                let tunes = waveScapes.map(ws => ws.fineTune)
-                let names = waveScapes.map(ws => ws.name)
-                console.log(waves)
-                const release = EPSWaveUI.hold("uploading a soundscape")
-                $("#uploadSoundScapeSpinner").show()
-                try {
-                    const value = $('input[name="flexRadioDefault"]:checked').val();
-                    if (value == "simple") {
-                        await eps.uploadToDifferentInstruments(waves, (percent) => { 
-                            $("#percentAllComplete").show()
-                            $("#percentAllComplete").html(`${percent}%`)
-                        }, rates, roots, tunes, names)
-                        resetUI()
-                    } else if (value == "morph") {
-                        await eps.createMorphingWaveTable(waves, (percent) => { 
-                            $("#percentAllComplete").show()
-                            $("#percentAllComplete").html(`${percent}%`)
-                        }, rates, roots, tunes, names)
-                        resetUI()
-                    } else if (value == "transwave") {
-                        await eps.uploadAsTranswave(waves, (percent) => { 
-                            $("#percentAllComplete").show()
-                            $("#percentAllComplete").html(`${percent}%`)
-                        }, rates, roots, tunes, names)
-                        resetUI()
-                    }
-                } finally {
-                    release()
-                    $("#uploadSoundScapeSpinner").hide()
-                    $("#percentAllComplete").hide()
-                }
-            })
-            $("#getWS").click(async () => {
-                const release = EPSWaveUI.hold("reading a wavesample")
-                $("#downloadSpinner").show()
-                $("#percentComplete").show()
-                try {
-                    const epsWavesample = await eps.getWavesampleDataChunked(eps.chunkSize, (wavedata, percentComplete) => {
-                        $("#percentComplete").html(`${percentComplete}%`)
-                        epsChart.setWavesample(wavedata)
-                    })
-                    epsChart.setWavesample(epsWavesample)
-                    // The rate came back in word 131 of the parameter block that
-                    // the download already fetched, so stop making the user guess.
-                    if (eps.lastSampleRate) {
-                        epsChart.sampleRate = EPSChart.selectRate(
-                            epsRateEl, epsRateAllEl, eps.lastSampleRate)
-                        epsChart.refreshPreview()
-                        log(`Wavesample rate read from the EPS: `
-                            + `${(eps.lastSampleRate / 1000).toFixed(1)} kHz (code ${eps.lastSampleRateCode})`)
-                    }
-                    if (typeof eps.lastRootKey == "number") {
-                        epsChart.rootKey = eps.lastRootKey
-                        epsRootEl.value = eps.lastRootKey
-                        log(`Root key read from the EPS: `
-                            + `${WaveGen.noteToName(eps.lastRootKey)} (${eps.lastRootKey})`)
-                    }
-                    // Word 86's scaling is undocumented, so adopt the value only
-                    // when it lands inside the range the parameter page accepts.
-                    // Anything else is logged raw rather than written back later.
-                    if (typeof eps.lastFineTune == "number") {
-                        epsFineEl.value = epsChart.setFineTune(eps.lastFineTune)
-                        log(`Fine tune read from the EPS: ${eps.lastFineTune} cents`)
-                    } else if (typeof eps.lastFineTuneRaw == "number") {
-                        log(`Fine tune raw value ${eps.lastFineTuneRaw} is outside the `
-                            + `documented -99..+99 range, leaving the field alone`)
-                    }
-                    // Words 0 to 11 of the same parameter block. Adopted as if the
-                    // user had typed it, so uploading straight back keeps the name
-                    // the wavesample already had.
-                    if (typeof eps.lastWavesampleName == "string") {
-                        epsChart.setName(eps.lastWavesampleName, true)
-                        // The rename field at the top of the page gets it too, so
-                        // renaming starts from the current name rather than a blank
-                        // box. No extra traffic: this came out of the parameter
-                        // block the download already fetched.
-                        $("#wsName").val(EPS16.sanitizeName(eps.lastWavesampleName))
-                        log(eps.lastWavesampleName.length > 0
-                            ? `Wavesample name read from the EPS: "${eps.lastWavesampleName}"`
-                            : `Wavesample has no name on the EPS`)
-                    }
-                } finally {
-                    release()
-                    $("#downloadSpinner").hide()
-                    $("#percentComplete").hide()
-                    $("#percentComplete").html("0%")
-                }
-            })
-            $("#instNum").change(() => {
-                eps.setInstrumentNumber(parseInt($("#instNum").val()))
-            })
-            $("#layerNum").change(() => {
-                eps.setLayerNumber(parseInt($("#layerNum").val()))
-            })
-            $("#waveNum").change(() => {
-                eps.setWavesampleNumber(parseInt($("#waveNum").val()))
-            })
-            let waveSampleIndex=0
-            $("#addWave").click(() => {
-                let index = waveSampleIndex++ 
-                let chartHtml = ` 
-                    <div class="row">
-                        <div class="col-12">
-                            <div style="width: 100%;"><canvas id="wave${index}_chart"></canvas></div>
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-12" id="wave${index}Gen"></div>
-                    </div>
-                    <div class="row">
-                        <div class="col-12">
-                            <div class="input-group mb-3">
-                                <div class="input-group-prepend">
-                                <span class="input-group-text" id="inputGroupFileAddon01"><i class="fa-solid fa-wave-square"></i></span>
-                                </div>
-                                <div class="custom-file">
-                                <input type="file" id="wave${index}" class="custom-file-input" id="inputGroupFile01" aria-describedby="inputGroupFileAddon01">
-                                <label class="custom-file-label" for="inputGroupFile01">Drag WAV File Here</label>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-12">
-                            <div class="input-group input-group-sm mb-2">
-                                <div class="input-group-prepend">
-                                    <label class="input-group-text" for="wave${index}Name">Name</label>
-                                </div>
-                                <input type="text" class="form-control eps-name" id="wave${index}Name"
-                                    maxlength="12" placeholder="WAVESAMPLE"
-                                    title="12 characters, sent with the upload. The EPS displays A-Z 0-9 space * + - only">
-                            </div>
-                        </div>
-                    </div>
-                    <div class="row">
-                        <div class="col-2">
-                            <button class="btn btn-block" id="wave${index}Btn">
-                                <svg class="svg-inline--fa fa-trash" aria-hidden="true" focusable="false" data-prefix="fas" data-icon="trash" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512" data-fa-i2svg=""><path fill="currentColor" d="M135.2 17.7L128 32H32C14.3 32 0 46.3 0 64S14.3 96 32 96H416c17.7 0 32-14.3 32-32s-14.3-32-32-32H320l-7.2-14.3C307.4 6.8 296.3 0 284.2 0H163.8c-12.1 0-23.2 6.8-28.6 17.7zM416 128H32L53.2 467c1.6 25.3 22.6 45 47.9 45H346.9c25.3 0 46.3-19.7 47.9-45L416 128z"></path></svg>
-                            </button>
-                        </div>
-                    </div>
-                `
-                let div = $("<div>")
-                div.addClass("col-6")
-                div.attr("id", `chart${index}`)
-                div.html(chartHtml)
-                $("#scapes").append(div)
-                let waveChart = new EPSChart(`wave${index}`, `Wave ${index}`, 'rgb(75,192,192)', true, eps)
-                waveChart.mountGenerator(`wave${index}Gen`)
-                waveChart.mountNameInput(`wave${index}Name`)
-                waveScapes.push(waveChart)
-                $(`#wave${index}Btn`).click( () =>{
-                    $(`#chart${index}`).remove()
-                    for(let i=0; i<waveScapes.length; i++){
-                        const wave = waveScapes[i]
-                        if(wave.label == `Wave ${index}`){
-                            wave.preview.stop()
-                            waveScapes.splice(i,1)
-                            break;
-                        }
 
+            /***
+             * The tabs.
+             *
+             * One EPSChart per tab, all of them identical: each can generate,
+             * take a WAV file, be edited, be previewed, be saved, and be read
+             * from or written to the synth. The last tab is the one that makes
+             * another.
+             */
+            let tabSerial = 0
+
+            const paneHtml = (id) => `
+                <div style="width: 100%;"><canvas id="wave${id}_chart"></canvas></div>
+                <div class="row mt-2">
+                    <div class="col-lg-7" id="wave${id}Gen"></div>
+                    <div class="col-lg-5">
+                        <div class="input-group input-group-sm mb-2">
+                            <div class="input-group-prepend">
+                                <label class="input-group-text" for="wave${id}Name">Name</label>
+                            </div>
+                            <input type="text" class="form-control eps-name" id="wave${id}Name"
+                                maxlength="12" placeholder="WAVESAMPLE"
+                                title="12 characters, sent with the upload. The EPS displays A-Z 0-9 space * + - only">
+                        </div>
+                        <div id="wave${id}Transfer"></div>
+                        <div class="input-group input-group-sm mt-3">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text"><i class="fa-solid fa-wave-square"></i></span>
+                            </div>
+                            <div class="custom-file">
+                                <input type="file" id="wave${id}" class="custom-file-input"
+                                    aria-describedby="wave${id}">
+                                <label class="custom-file-label" for="wave${id}">Drag WAV File Here</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>`
+
+            const renumberTabs = () => {
+                let position = 1
+                for (const tab of tabsInOrder()) {
+                    tab.position = position++
+                    // The chart's label travels with it into the status line,
+                    // the log and the name of a saved WAV file, so it has to be
+                    // what the tab says rather than the order the tab was made
+                    // in. Dragging tab five to the front makes it Wave 1
+                    // everywhere or in no useful sense at all.
+                    tab.chart.label = `Wave ${tab.position}`
+                    $(`#waveTab${tab.id} .wave-tab-label`).text(tab.chart.label)
+                }
+                $("#batchNote").html(tabsInOrder().length == 0
+                    ? "No waveforms yet."
+                    : `All ${tabsInOrder().length} tab(s) are used, in the order they are shown `
+                        + "— drag a tab sideways to change that order. Layers and wavesamples are "
+                        + "created as needed inside the chosen instrument.")
+            }
+
+            const showTab = (id) => {
+                $(`#waveTab${id}`).tab("show")
+            }
+
+            const removeTab = (id) => {
+                const index = waveTabs.findIndex(tab => tab.id == id)
+                if (index < 0) return
+                const [gone] = waveTabs.splice(index, 1)
+                gone.chart.preview.stop()
+                const wasActive = $(`#waveTab${id}`).hasClass("active")
+                $(`#waveTabItem${id}`).remove()
+                $(`#wavePane${id}`).remove()
+                renumberTabs()
+                const next = tabsInOrder()[0]
+                if (wasActive && next) showTab(next.id)
+                log(`Closed ${gone.chart.label}`)
+            }
+
+            const addTab = (activate = true) => {
+                const id = ++tabSerial
+                // Before the list item, not before the link inside it, which
+                // would nest every new tab inside the Add button.
+                $("#addWaveTab").closest("li").before(`
+                    <li class="nav-item wave-tab" id="waveTabItem${id}" data-tab="${id}" draggable="true">
+                        <a class="nav-link" id="waveTab${id}" data-toggle="tab"
+                            href="#wavePane${id}" role="tab">
+                            <span class="wave-tab-label">Wave</span>
+                            <span class="wave-tab-close" title="Close this waveform">&times;</span>
+                        </a>
+                    </li>`)
+                $("#waveTabPanes").append(
+                    `<div class="tab-pane fade" id="wavePane${id}" role="tabpanel">${paneHtml(id)}</div>`)
+
+                const chart = new EPSChart(`wave${id}`, `Wave ${id}`, 'rgb(75,192,192)', true, eps)
+                chart.mountGenerator(`wave${id}Gen`)
+                chart.mountNameInput(`wave${id}Name`)
+                chart.mountTransfer(`wave${id}Transfer`)
+
+                const tab = { id, chart, position: 0 }
+                waveTabs.push(tab)
+
+                $(`#waveTabItem${id} .wave-tab-close`).click((event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (waveTabs.length == 1) {
+                        log("Error: the last waveform tab cannot be closed")
+                        return
                     }
+                    removeTab(id)
                 })
 
+                renumberTabs()
+                if (activate) showTab(id)
+                return tab
+            }
+
+            $("#addWaveTab").click((event) => {
+                event.preventDefault()
+                addTab()
             })
-            $("#addWave").click()
+
+            // A canvas in a hidden pane has no width to be measured, so it draws
+            // itself one pixel wide and stays that way until something asks it
+            // to think again. The ResizeObserver inside the editor usually
+            // notices; this is the one line that means it does not have to.
+            $("#waveTabs").on("shown.bs.tab", 'a[data-toggle="tab"]', function () {
+                const id = $(this).closest(".wave-tab").data("tab")
+                const tab = waveTabs.find(entry => entry.id == id)
+                if (tab) tab.chart.editor.resize()
+            })
+
+            /***
+             * Dragging a tab to reorder.
+             *
+             * The order is not decoration: it is the order a transwave is
+             * concatenated in and the order a soundscape's layers sweep
+             * through. Nothing is stored — the tab strip is read back when a
+             * batch upload runs, so what is on screen is what will be sent.
+             */
+            let dragging = null
+            $("#waveTabs")
+                .on("dragstart", ".wave-tab", function (event) {
+                    dragging = this
+                    $(this).addClass("wave-tab-dragging")
+                    event.originalEvent.dataTransfer.effectAllowed = "move"
+                    // Firefox ignores a drag that carries nothing at all.
+                    event.originalEvent.dataTransfer.setData("text/plain", "")
+                })
+                .on("dragend", ".wave-tab", function () {
+                    $(this).removeClass("wave-tab-dragging")
+                    dragging = null
+                    renumberTabs()
+                })
+                .on("dragover", ".wave-tab", function (event) {
+                    if (!dragging || dragging === this) return
+                    event.preventDefault()
+                    const box = this.getBoundingClientRect()
+                    const before = event.originalEvent.clientX < box.left + box.width / 2
+                    $(this)[before ? "before" : "after"](dragging)
+                })
+                .on("drop", ".wave-tab", (event) => event.preventDefault())
+
+            /***
+             * What the batch uploads send.
+             *
+             * Empty tabs are dropped rather than sent as nothing. An empty one
+             * contributes no audio but would still be counted, and both macros
+             * count: the transwave sets its mod wheel range from the number of
+             * waves, and the soundscape spreads its crossfade breakpoints over
+             * them. A tab left open and unused would quietly mistune the sweep.
+             */
+            const batchWaves = () => {
+                const used = tabsInOrder().filter(tab => tab.chart.wavesample.length > 0)
+                const skipped = tabsInOrder().length - used.length
+                if (skipped > 0) log(`Skipping ${skipped} empty tab(s)`)
+                return used.map(tab => tab.chart)
+            }
+
+            /***
+             * Asks about every instrument slot a batch is about to take, before
+             * anything is sent.
+             *
+             * The macros can ask one slot at a time, and for the one per
+             * instrument mode that would mean a question in the middle of a run
+             * with two wavesamples already uploaded and no way back. Asking for
+             * all of them up front means the answer is always given before the
+             * first byte goes out.
+             */
+            const clearSlots = async (slots) => {
+                const taken = []
+                for (const slot of slots) {
+                    const found = await eps.inspectInstrument(slot)
+                    if (!found.exists && !found.reachable) {
+                        handleError(`Error: The EPS did not answer for instrument ${slot + 1}`
+                            + ` (${eps.statusText(found.status)}). Nothing was sent.`)
+                        return false
+                    }
+                    if (found.exists) taken.push(found)
+                }
+                if (taken.length == 0) return true
+                const rows = taken.map(found =>
+                    `<li><b>Instrument ${found.number + 1}</b>: "${found.name || "unnamed"}", `
+                    + `${found.layers} layer(s), ${found.wavesamples} wavesample(s), `
+                    + `${found.sizeBlocks} blocks</li>`).join("")
+                return await EPSWaveUI.ask(
+                    taken.length == 1 ? "That instrument is in use" : "Those instruments are in use",
+                    `<p>This upload would replace what is already on the EPS:</p>
+                     <ul class="mb-2">${rows}</ul>
+                     <p class="mb-0">Deleting an instrument on the synth cannot be undone from here.</p>`,
+                    taken.length == 1 ? "Overwrite it" : "Overwrite them")
+            }
+
+            const runBatch = async (what, slotsFor, run) => {
+                const charts = batchWaves()
+                if (charts.length == 0) {
+                    handleError("Error: nothing to send, every tab is empty")
+                    return
+                }
+                const done = EPSWaveUI.startTransfer(what)
+                if (!done) {
+                    handleError(`Error: ${EPSWaveUI.transferring} is already running`)
+                    return
+                }
+                let outcome = what
+                try {
+                    const start = parseInt($("#batchInst").val())
+                    const slots = slotsFor(start, charts.length)
+                    if (slots[slots.length - 1] >= EPS16.INSTRUMENT_COUNT) {
+                        handleError(`Error: ${charts.length} instruments from number `
+                            + `${start + 1} runs past instrument ${EPS16.INSTRUMENT_COUNT}. `
+                            + "Start lower, or close some tabs.")
+                        return
+                    }
+                    log(`${what}: ${charts.length} waveform(s) into instrument(s) `
+                        + slots.map(slot => slot + 1).join(", "))
+                    if (!await clearSlots(slots)) {
+                        outcome = "Cancelled"
+                        log("Cancelled: the instruments on the EPS were left alone")
+                        return
+                    }
+                    const result = await run(charts, {
+                        slots,
+                        // Already answered, above, for every slot at once.
+                        confirmOverwrite: async () => true
+                    })
+                    outcome = result && result.ok === false
+                        ? "Upload did not complete, see the log" : `${what}: done`
+                } finally {
+                    done(outcome)
+                }
+            }
+
+            const batchArgs = (charts) => [
+                charts.map(chart => chart.wavesample),
+                (percent) => EPSWaveUI.status(EPSWaveUI.transferring, percent),
+                charts.map(chart => chart.sampleRate),
+                charts.map(chart => chart.rootKey),
+                charts.map(chart => chart.fineTune),
+                charts.map(chart => chart.name)
+            ]
+
+            $("#uploadTranswave").click(() => runBatch(
+                "Building a transwave",
+                (start) => [start],
+                (charts, options) => eps.uploadAsTranswave(...batchArgs(charts), options)))
+
+            $("#uploadSoundScape").click(() => runBatch(
+                "Building a soundscape",
+                (start) => [start],
+                (charts, options) => eps.createMorphingWaveTable(...batchArgs(charts), options)))
+
+            $("#uploadSeparate").click(() => runBatch(
+                "Uploading one wavesample per instrument",
+                (start, count) => Array.from({ length: count }, (unused, i) => start + i),
+                (charts, options) => eps.uploadToDifferentInstruments(...batchArgs(charts), options)))
+
+            for (let i = 0; i < EPS16.INSTRUMENT_COUNT; i++) {
+                $("#batchInst").append($("<option>").val(i).html(i + 1))
+            }
+            $("#batchInst").val(0)
+
+            addTab()
 
             // Dark mode is applied in the head and wired next to its switch, so
             // there is nothing to do here beyond repainting the slots that were

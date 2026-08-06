@@ -138,6 +138,12 @@ class EPSChart {
         // liveGenerate.
         this.fromGenerator = false
         this.liveTimer = null
+        // Where this slot reads from and writes to on the synth. Card local: it
+        // reaches the EPS16 object only through applyTarget, immediately before
+        // a transfer.
+        this.instrument = 0
+        this.layer = 0
+        this.wavesampleNumber = 1
         this.preview = new WavePreview()
 
         const canvas = document.getElementById(elementId + "_chart")
@@ -488,12 +494,6 @@ class EPSChart {
                                 <i class="fa-solid fa-bolt"></i> Generate
                             </button>
                         </div>
-                        <div class="col-auto">
-                            <button id="${id}_genSave" class="btn btn-sm btn-outline-info"
-                                title="Save this wavesample to this computer as a WAV file">
-                                <i class="fa-solid fa-file-arrow-down"></i> Save
-                            </button>
-                        </div>
                     </div>
                     <small class="text-muted" id="${id}_genInfo"></small>
                 </div>
@@ -760,13 +760,6 @@ class EPSChart {
         // to. A file arriving in the downloads folder is easy to miss, and the
         // one thing worth saying out loud is the rate it was written at, since
         // that is what decides the pitch it plays back at anywhere else.
-        document.getElementById(`${id}_genSave`).addEventListener('click', () => {
-            const saved = this.saveWav()
-            document.getElementById(`${id}_genInfo`).innerHTML = saved
-                ? `Saved ${this.wavesample.length} samples to ${saved}, `
-                    + `16 bit mono at ${(this.sampleRate / 1000).toFixed(1)} kHz`
-                : 'Nothing to save yet: generate a waveform or load a WAV file first.'
-        })
     }
 
     /***
@@ -790,6 +783,311 @@ class EPSChart {
         const fileName = `${base || 'wavesample'}.wav`
         this.eps.saveFile(this.wavesample, this.sampleRate, fileName)
         return fileName
+    }
+
+    /***
+     * Injects this slot's transfer controls: where it points on the synth, the
+     * two directions it can move a wavesample, and the clipboard.
+     *
+     * Every card gets the whole set. Before this the page had a card that could
+     * receive and not generate beside a card that could generate and not
+     * receive, which is not a design so much as the order the two were written
+     * in, and it meant that editing something off the synth and keeping a copy
+     * involved moving it between two panels that could not talk to each other.
+     */
+    mountTransfer(containerId){
+        const container = document.getElementById(containerId)
+        if(!container) return
+        const id = this.elementId
+
+        const options = (count, from, label) => {
+            let html = ''
+            for(let i = 0; i < count; i++){
+                html += `<option value="${from + i}">${label(from + i)}</option>`
+            }
+            return html
+        }
+
+        container.innerHTML = `
+            <div class="form-row align-items-end">
+                <div class="col">
+                    <label class="small mb-1" for="${id}_tgtInst">Instrument</label>
+                    <select id="${id}_tgtInst" class="custom-select custom-select-sm">
+                        ${options(EPS16.INSTRUMENT_COUNT, 0, (n) => n + 1)}
+                    </select>
+                </div>
+                <div class="col">
+                    <label class="small mb-1" for="${id}_tgtLayer">Layer</label>
+                    <select id="${id}_tgtLayer" class="custom-select custom-select-sm">
+                        ${options(EPSBlocks.LAYER_COUNT, 0, (n) => n + 1)}
+                    </select>
+                </div>
+                <div class="col">
+                    <label class="small mb-1" for="${id}_tgtWave">Wavesample</label>
+                    <select id="${id}_tgtWave" class="custom-select custom-select-sm">
+                        ${options(EPSBlocks.WAVESAMPLE_COUNT - 1, 1, (n) => n)}
+                    </select>
+                </div>
+            </div>
+            <div class="form-row mt-2">
+                <div class="col-6">
+                    <button id="${id}_get" class="btn btn-sm btn-info btn-block eps-transfer"
+                        title="Read this instrument, layer and wavesample off the EPS into this tab">
+                        <i class="fa-solid fa-download"></i> Get from EPS
+                    </button>
+                </div>
+                <div class="col-6">
+                    <button id="${id}_put" class="btn btn-sm btn-info btn-block eps-transfer"
+                        title="Send this tab's wavesample to the EPS, creating what is missing">
+                        <i class="fa-solid fa-upload"></i> Send to EPS
+                    </button>
+                </div>
+            </div>
+            <div class="form-row mt-2">
+                <div class="col-4">
+                    <button id="${id}_copy" class="btn btn-sm btn-outline-secondary btn-block"
+                        title="Copy this wavesample, its rate, root key, fine tune and name">
+                        <i class="fa-regular fa-copy"></i> Copy
+                    </button>
+                </div>
+                <div class="col-4">
+                    <button id="${id}_paste" class="btn btn-sm btn-outline-secondary btn-block"
+                        title="Replace this tab with the copied wavesample">
+                        <i class="fa-regular fa-clipboard"></i> Paste
+                    </button>
+                </div>
+                <div class="col-4">
+                    <button id="${id}_save" class="btn btn-sm btn-outline-info btn-block"
+                        title="Save this wavesample to this computer as a WAV file">
+                        <i class="fa-solid fa-file-arrow-down"></i> Save
+                    </button>
+                </div>
+            </div>
+            <small class="form-text text-muted" id="${id}_tgtInfo"></small>
+        `
+
+        const say = (text) => {
+            document.getElementById(`${id}_tgtInfo`).innerHTML = text
+            if(window.log) window.log(`${this.label}: ${text}`)
+        }
+        const instEl = document.getElementById(`${id}_tgtInst`)
+        const layerEl = document.getElementById(`${id}_tgtLayer`)
+        const waveEl = document.getElementById(`${id}_tgtWave`)
+        instEl.value = this.instrument
+        layerEl.value = this.layer
+        waveEl.value = this.wavesampleNumber
+
+        // Card local state only. Nothing here reaches the EPS16 object; see
+        // applyTarget for why that matters now that every tab has a set of
+        // these.
+        instEl.addEventListener('change', () => { this.instrument = parseInt(instEl.value) })
+        layerEl.addEventListener('change', () => { this.layer = parseInt(layerEl.value) })
+        waveEl.addEventListener('change', () => { this.wavesampleNumber = parseInt(waveEl.value) })
+
+        document.getElementById(`${id}_get`).addEventListener('click', () => this.getFromEps(say))
+        document.getElementById(`${id}_put`).addEventListener('click', () => this.sendToEps(say))
+
+        document.getElementById(`${id}_copy`).addEventListener('click', () => {
+            const held = this.copy()
+            say(held ? `Copied ${held.data.length} samples`
+                    + `${held.name ? ` ("${held.name}")` : ''}, `
+                    + `${(held.sampleRate / 1000).toFixed(1)} kHz, root `
+                    + `${WaveGen.noteToName(held.rootKey)}`
+                : 'Nothing to copy: this tab is empty.')
+        })
+        document.getElementById(`${id}_paste`).addEventListener('click', () => {
+            const held = this.paste()
+            say(held ? `Pasted ${held.data.length} samples from ${held.from}`
+                : 'Nothing has been copied yet.')
+        })
+        document.getElementById(`${id}_save`).addEventListener('click', () => {
+            const saved = this.saveWav()
+            say(saved ? `Saved ${this.wavesample.length} samples to ${saved}, `
+                    + `16 bit mono at ${(this.sampleRate / 1000).toFixed(1)} kHz`
+                : 'Nothing to save yet: generate a waveform or load a WAV file first.')
+        })
+    }
+
+    /***
+     * Reads this slot's wavesample off the synth, along with the four settings
+     * that say how it should sound.
+     *
+     * The rate, root key and fine tune all arrive in the parameter block the
+     * download already fetched, so they are applied rather than left for the
+     * user to guess at, and the generator panel's controls are moved to match.
+     */
+    async getFromEps(say){
+        const done = EPSWaveUI.startTransfer(`Reading ${this.label} from the EPS`)
+        if(!done){
+            say(`Busy: ${EPSWaveUI.transferring}. One transfer at a time.`)
+            return
+        }
+        try{
+            this.applyTarget()
+            const audio = await this.eps.getWavesampleDataChunked(this.eps.chunkSize,
+                (partial, percent) => {
+                    EPSWaveUI.status(`Reading ${this.label} from the EPS`, percent)
+                    this.setWavesample(partial)
+                })
+            if(!audio || audio.length == 0){
+                say(`Nothing came back from instrument ${this.instrument + 1}, `
+                    + `layer ${this.layer + 1}, wavesample ${this.wavesampleNumber}.`)
+                return
+            }
+            this.setWavesample(audio)
+            let note = `Read ${audio.length} samples from instrument `
+                + `${this.instrument + 1}, layer ${this.layer + 1}, `
+                + `wavesample ${this.wavesampleNumber}`
+            if(this.eps.lastSampleRate){
+                this.sampleRate = EPSChart.selectRate(
+                    document.getElementById(`${this.elementId}_genRate`),
+                    document.getElementById(`${this.elementId}_genRateAll`),
+                    this.eps.lastSampleRate)
+                this.editor.setSampleRate(this.sampleRate)
+                this.refreshPreview()
+                note += `, ${(this.eps.lastSampleRate / 1000).toFixed(1)} kHz`
+            }
+            if(typeof this.eps.lastRootKey == 'number'){
+                this.rootKey = this.eps.lastRootKey
+                const rootEl = document.getElementById(`${this.elementId}_genRoot`)
+                if(rootEl) rootEl.value = this.rootKey
+                note += `, root ${WaveGen.noteToName(this.rootKey)}`
+            }
+            if(typeof this.eps.lastFineTune == 'number'){
+                note += `, fine tune ${this.setFineTune(this.eps.lastFineTune)}`
+            }
+            if(this.eps.lastWavesampleName && this.eps.lastWavesampleName.length > 0){
+                this.setName(this.eps.lastWavesampleName, true)
+                note += `, named "${this.eps.lastWavesampleName}"`
+            }
+            say(note)
+        }catch(error){
+            say(`The read failed: ${error.message}`)
+        }finally{
+            done(`Read ${this.label}`)
+        }
+    }
+
+    /***
+     * Sends this slot to the synth, creating whatever is missing on the way.
+     *
+     * prepareTarget builds the instrument, layer and wavesample if they are not
+     * there, so an empty synth needs nothing set up by hand. It can also come
+     * back with a different wavesample number than was asked for — the EPS
+     * assigns its own — and when it does, the card's own selector is moved to
+     * match, because the alternative is a control that quietly disagrees with
+     * where the audio went.
+     */
+    async sendToEps(say){
+        if(!this.wavesample || this.wavesample.length == 0){
+            say('Nothing to send: this tab is empty.')
+            return
+        }
+        const done = EPSWaveUI.startTransfer(`Sending ${this.label} to the EPS`)
+        if(!done){
+            say(`Busy: ${EPSWaveUI.transferring}. One transfer at a time.`)
+            return
+        }
+        try{
+            this.applyTarget()
+            const ready = await this.eps.prepareTarget({},
+                (what) => EPSWaveUI.status(`Sending ${this.label}: ${what}`))
+            if(!ready.ok){
+                say(`Could not prepare instrument ${this.instrument + 1}: ${ready.message}`)
+                return
+            }
+            if(ready.created.length > 0 || ready.renumbered) say(ready.message)
+            if(ready.renumbered){
+                this.wavesampleNumber = ready.wavesample
+                const waveEl = document.getElementById(`${this.elementId}_tgtWave`)
+                if(waveEl) waveEl.value = this.wavesampleNumber
+            }
+            const ok = await this.eps.uploadWavToEPS(this.wavesample, 1, 0,
+                (percent) => EPSWaveUI.status(`Sending ${this.label} to the EPS`, percent),
+                this.sampleRate, this.rootKey, this.fineTune, this.name)
+            say(ok ? `Sent ${this.wavesample.length} samples to instrument `
+                    + `${this.instrument + 1}, layer ${this.layer + 1}, `
+                    + `wavesample ${this.wavesampleNumber}`
+                : 'The upload did not complete; see the log.')
+        }catch(error){
+            say(`The upload failed: ${error.message}`)
+        }finally{
+            done(`Sent ${this.label}`)
+        }
+    }
+
+    /***
+     * The page's own clipboard, shared by every slot.
+     *
+     * Not the system clipboard, on purpose. What is being copied is a
+     * wavesample and everything the EPS needs to play it back — the rate, the
+     * root key, the fine tune and the name — and none of that survives a trip
+     * through text. It exists so that four variations on one waveform for a
+     * transwave can be made by loading the file once, and it keeps the metadata
+     * because a copy that arrives at the wrong pitch is not a copy.
+     */
+    static clipboard = null
+
+    /*** Snapshots this slot. The samples are copied, not shared, so editing
+     *  either side afterwards cannot reach into the other. */
+    copy(){
+        if(!this.wavesample || this.wavesample.length === 0) return null
+        EPSChart.clipboard = {
+            data: this.wavesample.slice(),
+            sampleRate: this.sampleRate,
+            rootKey: this.rootKey,
+            fineTune: this.fineTune,
+            name: this.name,
+            from: this.label
+        }
+        return EPSChart.clipboard
+    }
+
+    /***
+     * Replaces this slot with whatever was copied.
+     *
+     * The name comes across marked as the user's, so that generating or
+     * importing into this slot later does not propose a name over the top of
+     * the one that was deliberately pasted here.
+     */
+    paste(){
+        const held = EPSChart.clipboard
+        if(!held) return null
+        this.sampleRate = held.sampleRate
+        this.editor.setSampleRate(held.sampleRate)
+        EPSChart.selectRate(
+            document.getElementById(`${this.elementId}_genRate`),
+            document.getElementById(`${this.elementId}_genRateAll`),
+            held.sampleRate)
+        this.rootKey = held.rootKey
+        const rootEl = document.getElementById(`${this.elementId}_genRoot`)
+        if(rootEl) rootEl.value = this.rootKey
+        this.setFineTune(held.fineTune)
+        if(held.name) this.setName(held.name, true)
+        // Last, because it repaints and refreshes the preview, and because it
+        // clears fromGenerator: a pasted waveform is not the generator's to
+        // replace when a slider moves.
+        this.setWavesample(held.data.slice())
+        return held
+    }
+
+    /***
+     * Points the EPS at this slot's instrument, layer and wavesample.
+     *
+     * Called immediately before every command this card sends and at no other
+     * time. The three numbers on the EPS16 object are the address every sysex
+     * command carries, and they are global to the connection while the controls
+     * that set them are now per card — so the only safe discipline is that
+     * nobody sets them on change and everybody sets them on use. A card that
+     * relied on them still being what it left them as would work perfectly
+     * until the user touched another tab.
+     */
+    applyTarget(){
+        this.eps.setInstrumentNumber(this.instrument)
+        this.eps.setLayerNumber(this.layer)
+        this.eps.setWavesampleNumber(this.wavesampleNumber)
+        this.eps.debug(`${this.label}: addressing instrument ${this.instrument + 1}, `
+            + `layer ${this.layer + 1}, wavesample ${this.wavesampleNumber}`)
     }
 
     /***
