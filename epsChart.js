@@ -1106,7 +1106,12 @@ class EPSChart {
             from: this.label,
             // A slot with no generator mounted has none to copy, and pasting
             // into one leaves whatever settings it has alone.
-            generator: this.generatorSettings ? this.generatorSettings() : null
+            generator: this.generatorSettings ? this.generatorSettings() : null,
+            // Whether those settings actually describe these samples. True for
+            // a generated waveform, false for an imported file or anything
+            // drawn on the canvas, where the panel is showing settings that
+            // have nothing to do with what is in the buffer.
+            fromGenerator: this.fromGenerator
         }
         return EPSChart.clipboard
     }
@@ -1136,12 +1141,22 @@ class EPSChart {
         // rate that was just set, and because none of it may disturb what
         // lands in the editor.
         if(this.applyGeneratorSettings) this.applyGeneratorSettings(held.generator)
-        // Last, because it repaints and refreshes the preview, and because it
-        // clears fromGenerator: a pasted waveform is not the generator's to
-        // replace when a slider moves. So the controls now describe the
-        // waveform on screen, and moving one of them is a request to build
-        // something else, which still waits for Generate to be pressed.
+        // Repaints and refreshes the preview. Also clears fromGenerator, which
+        // is why the line below comes after it rather than before.
         this.setWavesample(held.data.slice())
+        // Paste reproduces the slot it was copied from, and that includes
+        // whether the controls are live.
+        //
+        // A copied waveform arrives with the settings that made it, so the
+        // panel is telling the truth about what is on screen and moving a
+        // slider can rebuild on the spot — which is the point of pasting a
+        // waveform four times to make four variations of it.
+        //
+        // A copy taken from an imported file or from something drawn on the
+        // canvas arrives guarded, exactly as it was at the other end: nothing
+        // there described those samples, so a nudged slider would replace them
+        // with an unrelated waveform rather than adjust them.
+        this.fromGenerator = held.fromGenerator === true && held.generator != null
         return held
     }
 
