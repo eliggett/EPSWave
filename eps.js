@@ -2177,8 +2177,12 @@ class EPS16 {
             }
             start += length
             this.debug("Percent Complete:", (start / audio.length) * 100)
+            // A number, not a string of one. It used to be interpolated into a
+            // template for no reason, which every caller that only displayed it
+            // got away with and the progress bar did not: a bar has to do
+            // arithmetic with it, and "43" is not 43.
             progressCallback(
-                `${ Math.round((waveIndex + (start/audio.length))/numWaves*100) }`)
+                Math.round((waveIndex + (start / audio.length)) / numWaves * 100))
         }
         // The transfer ends with the EPS acknowledging the last block; section 8
         // has nothing after that. Two unsolicited ACKs used to be sent here, and
@@ -3387,6 +3391,10 @@ class EPS16 {
         // spread over eight as well. Computing them for the full count and then
         // stopping at eight leaves the top of the sweep with no layer assigned
         // to it, which is silence.
+        // Also what the progress is measured against. Counting against every
+        // wave handed in would leave the bar stopping at eight ninths for a
+        // run of nine, since the ninth is never uploaded. These two arguments
+        // reach nothing but the progress arithmetic.
         const layerCount = Math.min(arrayOfWaveTables.length, EPS16.MAX_MORPH_LAYERS)
         this.debugCallback(`Soundscape: ${layerCount} layers, fade ramp `
             + `${this.morphOverlap.toFixed(2)} of a layer spacing`)
@@ -3398,7 +3406,7 @@ class EPS16 {
             this.setLayerNumber(i)
             EPS16.step(options, `${of}: creating the layer and wavesample`)
             //this.setWavesampleNumber(1)
-            if( !(await this.createLayer() && await this.createSqrWave() && this.setWavesampleNumber(i+1) && this.stepping(options, `${of}: sending ${wave.length} samples`) && await this.uploadWavToEPS(wave, arrayOfWaveTables.length, i, progressCallback,
+            if( !(await this.createLayer() && await this.createSqrWave() && this.setWavesampleNumber(i+1) && this.stepping(options, `${of}: sending ${wave.length} samples`) && await this.uploadWavToEPS(wave, layerCount, i, progressCallback,
                 this.perWave(sampleRates, i), this.perWave(rootKeys, i), this.perWave(fineTunes, i),
                 this.perWave(names, i)))){
                 this.errorCallback("Error: Unable to update instrument parameters")

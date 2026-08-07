@@ -157,8 +157,13 @@ window.EPSWaveUI = {
         if(line) line.innerHTML = text || "&nbsp;"
         const bar = document.getElementById("epsProgress")
         if(!bar) return
-        const known = typeof percent == "number" && percent >= 0
-        bar.style.width = known ? `${Math.max(0, Math.min(100, percent))}%` : "0%"
+        // Coerced rather than type checked. Several of the transfer callbacks
+        // grew up feeding a text field and hand out a string of digits, which a
+        // `typeof` test reads as "no percentage known" — so the bar sat still
+        // through entire uploads while the text beside it counted up.
+        const value = percent === null || percent === "" ? NaN : Number(percent)
+        const known = Number.isFinite(value)
+        bar.style.width = known ? `${Math.max(0, Math.min(100, value))}%` : "0%"
         bar.parentElement.classList.toggle("eps-progress-idle", !known)
     },
 
