@@ -668,6 +668,70 @@ class EPSChart {
                 : null
         }
         /***
+         * Every generator control, as a plain object, for the clipboard.
+         *
+         * Read off the controls rather than kept alongside them, so there is no
+         * second copy of the panel's state to fall out of step with it, and so
+         * a control added to the markup later is picked up by adding one line
+         * here rather than by remembering to update a mirror.
+         */
+        this.generatorSettings = () => ({
+            type: typeEl.value,
+            note: parseInt(noteEl.value),
+            periods: parseInt(periodsEl.value) || 1,
+            spread: parseInt(pulseEl.value),
+            amplitude: parseInt(ampEl.value),
+            randomPhase: randomPhaseEl.checked,
+            drift: driftEl.checked,
+            driftCents: parseInt(driftAmountEl.value),
+            trackingHighPass: hpfEl.checked,
+            bandLimited: bandEl.checked,
+            // Travels with the rest so a pasted period count keeps knowing
+            // whether it was this panel's suggestion or a number someone typed.
+            autoPeriods: this.autoPeriods
+        })
+
+        /***
+         * Puts those controls back, and does not rebuild.
+         *
+         * Assigning to `value` and `checked` fires no events, so none of the
+         * listeners below run and the pasted samples stay exactly as they were
+         * copied. That is the point: paste moves a waveform *and* the settings
+         * that describe it, and a paste that regenerated would hand back
+         * something subtly different from what was copied — a super saw re-rolls
+         * its random phases, so it would not even be the same waveform twice.
+         *
+         * configureSpread runs first, to lay the panel out for the incoming
+         * waveform — labels, slider range, which rows are shown, and the whole
+         * preset a super saw drops in — and the saved figures then go over the
+         * top of it, so what was copied wins over what the preset would have
+         * chosen.
+         */
+        this.applyGeneratorSettings = (saved) => {
+            if(!saved) return
+            typeEl.value = saved.type
+            configureSpread()
+            noteEl.value = saved.note
+            pulseEl.value = saved.spread
+            ampEl.value = saved.amplitude
+            randomPhaseEl.checked = saved.randomPhase
+            driftEl.checked = saved.drift
+            driftAmountEl.value = saved.driftCents
+            driftGroupEl.style.display = saved.drift ? '' : 'none'
+            hpfEl.checked = saved.trackingHighPass
+            bandEl.checked = saved.bandLimited
+            periodsEl.value = saved.periods
+            this.autoPeriods = saved.autoPeriods
+            // Nothing was displaced on the way in — the count came from the
+            // clipboard rather than from this waveform's sizing — so there is
+            // nothing to hand back when the type is next changed.
+            displacedPeriods = null
+            spreadLabel()
+            driftLabel()
+            ampLabel()
+        }
+
+        /***
          * Every control that changes the samples asks for a rebuild. The ones
          * that only change how the wavesample is played on the synth — root
          * key and fine tune — do not, since there is nothing to rebuild.
@@ -893,6 +957,7 @@ class EPSChart {
                     + `${held.name ? ` ("${held.name}")` : ''}, `
                     + `${(held.sampleRate / 1000).toFixed(1)} kHz, root `
                     + `${WaveGen.noteToName(held.rootKey)}`
+                    + (held.generator ? ', with the generator settings' : '')
                 : 'Nothing to copy: this tab is empty.')
         })
         document.getElementById(`${id}_paste`).addEventListener('click', () => {
@@ -1038,7 +1103,10 @@ class EPSChart {
             rootKey: this.rootKey,
             fineTune: this.fineTune,
             name: this.name,
-            from: this.label
+            from: this.label,
+            // A slot with no generator mounted has none to copy, and pasting
+            // into one leaves whatever settings it has alone.
+            generator: this.generatorSettings ? this.generatorSettings() : null
         }
         return EPSChart.clipboard
     }
@@ -1064,9 +1132,15 @@ class EPSChart {
         if(rootEl) rootEl.value = this.rootKey
         this.setFineTune(held.fineTune)
         if(held.name) this.setName(held.name, true)
+        // Before the samples, because laying the panel out reads the sample
+        // rate that was just set, and because none of it may disturb what
+        // lands in the editor.
+        if(this.applyGeneratorSettings) this.applyGeneratorSettings(held.generator)
         // Last, because it repaints and refreshes the preview, and because it
         // clears fromGenerator: a pasted waveform is not the generator's to
-        // replace when a slider moves.
+        // replace when a slider moves. So the controls now describe the
+        // waveform on screen, and moving one of them is a request to build
+        // something else, which still waits for Generate to be pressed.
         this.setWavesample(held.data.slice())
         return held
     }
