@@ -585,7 +585,14 @@ class WaveGen {
                 for (let k = 1; k <= maxHarmonic; k++) {
                     sum += Math.sin(w * k) / k
                 }
-                return type === 'sawUp' ? sum : -sum
+                // Negated for the rising saw, and this is the way round it
+                // goes. The series sums to (pi - wt)/2, which starts at +pi/2
+                // and falls to -pi/2 over the cycle — a saw *down*. Taken the
+                // other way round, as it was, toggling Band limited flipped the
+                // slope of both saws: the picture turned upside down and the
+                // wavesample went out to the synth inverted against the naive
+                // one it was meant to be a cleaner version of.
+                return type === 'sawUp' ? -sum : sum
             case 'square':
                 for (let k = 1; k <= maxHarmonic; k += 2) {
                     sum += Math.sin(w * k) / k
