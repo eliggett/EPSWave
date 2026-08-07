@@ -28,6 +28,7 @@
     <script src="./eps.js"></script>
     <script src="./waveGen.js"></script>
     <script src="./about.js"></script>
+    <script src="./help.js"></script>
     <script src="./epswave.js"></script>
     <script>
         // Settled before the first paint, and in plain DOM, so the theme cannot
@@ -44,6 +45,10 @@
                 <button type="button" class="btn btn-outline-info btn-sm mr-3 flex-shrink-0"
                     data-toggle="modal" data-target="#aboutModal">
                     <i class="fa-solid fa-circle-info"></i> About
+                </button>
+                <button type="button" class="btn btn-outline-info btn-sm mr-3 flex-shrink-0"
+                    data-toggle="modal" data-target="#helpModal">
+                    <i class="fa-solid fa-circle-question"></i> Help
                 </button>
                 <!-- Deliberately destructive, so it is styled as such and
                      confirms before doing anything. -->
@@ -310,6 +315,27 @@
                     </button>
                 </div>
                 <div class="modal-body" id="aboutBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help. Only the frame lives here; everything inside comes from help.js,
+         so that is the one file to edit to change what it says. Shared word for
+         word with the other page. -->
+    <div class="modal fade" id="helpModal" tabindex="-1" role="dialog"
+        aria-labelledby="helpModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title mb-0" id="helpModalLabel">EPSWave Help</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body" id="helpBody"></div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
                 </div>

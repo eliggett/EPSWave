@@ -739,6 +739,7 @@ function escapeHtml(text){
 $(document).ready(function(){
     EPSWaveUI.initLog()
     EPSWaveUI.initAbout()
+    EPSWaveUI.initHelp()
     EPSWaveUI.wireTheme()
 
     librarian.eps = new EPS16(function(inputs, outputs){

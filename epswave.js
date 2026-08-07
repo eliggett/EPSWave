@@ -348,16 +348,32 @@ window.EPSWaveUI = {
     },
 
     /***
-     * Fills #aboutBody from about.js. The fallback matters because the About
-     * box is the one place that says where the project came from, and an empty
-     * panel gives no clue that a file is missing.
+     * Fills a modal body from the script that holds its text.
+     *
+     * The fallback matters because both of these boxes are the only place they
+     * say what they say — where the project came from, or how to get the synth
+     * talking — and an empty panel gives no clue that a file is missing.
+     *
+     * Filled once rather than on every open: neither changes while the page is
+     * up. Missing the element is not an error, so a page can carry one box and
+     * not the other.
      */
-    initAbout(){
-        const body = document.getElementById("aboutBody")
+    initModalText(bodyId, html, file){
+        const body = document.getElementById(bodyId)
         if(!body) return
-        body.innerHTML = window.ABOUT_HTML
-            || "<p class='mb-0'>The About text could not be loaded. "
-             + "Check that <code>about.js</code> is present next to this page.</p>"
+        body.innerHTML = html
+            || `<p class='mb-0'>This text could not be loaded. Check that `
+             + `<code>${file}</code> is present next to this page.</p>`
+    },
+
+    /*** Fills #aboutBody from about.js. */
+    initAbout(){
+        EPSWaveUI.initModalText("aboutBody", window.ABOUT_HTML, "about.js")
+    },
+
+    /*** Fills #helpBody from help.js. */
+    initHelp(){
+        EPSWaveUI.initModalText("helpBody", window.HELP_HTML, "help.js")
     },
 
     /***
