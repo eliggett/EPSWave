@@ -119,6 +119,13 @@ body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: non
 .we-split > canvas { flex: 1 1 0; min-width: 0; }
 .we-split > .we-spectrum { margin-left: 0.5rem; }
 
+/* The scroll bar under the toolbar belongs to the waveform, so with the
+   spectrum showing it stops where the waveform does rather than running
+   on under a display it has nothing to do with. Half the row less half
+   the gap between the two canvases, matching the flex split above.
+   Qualified with .custom-range to outrank Bootstrap's width:100%. */
+.custom-range.we-scroll-half { width: calc(50% - 0.25rem); }
+
 /* The Spectrum checkbox shares a row with button groups, so it needs
    centring against them rather than sitting on the text baseline. */
 .we-spec-toggle { display: inline-flex; align-items: center; }

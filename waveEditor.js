@@ -1397,6 +1397,9 @@ class WaveEditor {
         this.spectrum.canvas.style.display = on ? '' : 'none'
         if (this.spectrumToggleEl) this.spectrumToggleEl.checked = on
         if (this.spectrumToolsEl) this.spectrumToolsEl.style.display = on ? '' : 'none'
+        // The scroll bar scrolls the waveform, so it ends where the waveform
+        // does rather than spanning both displays.
+        if (this.scrollEl) this.scrollEl.classList.toggle('we-scroll-half', on)
         // Both canvases changed width, and neither ResizeObserver has fired yet.
         this.resize()
         if (on) this.spectrum.resize()
