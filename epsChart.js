@@ -133,9 +133,9 @@ class EPSChart {
         // Cents of correction sent with the wavesample, cancelling whatever
         // pitch error the EPS's rate quantisation leaves behind.
         this.fineTune = 0
-        // Whether what is on screen is the generator's to replace. Live
-        // generation only touches a waveform the generator made; see
-        // liveGenerate.
+        // Whether the generator itself made what is on screen. Every control is
+        // live either way; this decides only whether a live rebuild has to save
+        // what it is about to overwrite. See liveGenerate.
         this.fromGenerator = false
         this.liveTimer = null
         // Where this slot reads from and writes to on the synth. Card local: it
@@ -158,8 +158,8 @@ class EPSChart {
             sampleRate: this.sampleRate,
             onChange: (data) => {
                 this.wavesample = data
-                // Hand edits are the user's work, not the generator's, so a
-                // later touch of a slider must not quietly discard them.
+                // Hand edits are the user's work, not the generator's. A slider
+                // will still rebuild over them, but it has to save them first.
                 this.fromGenerator = false
                 this.refreshPreview()
             }
@@ -333,30 +333,26 @@ class EPSChart {
     /***
      * Queues a regeneration after the controls have been still for a moment.
      *
-     * By default this only replaces a waveform the generator itself made. The
-     * panel doubles as the retuning panel for everything else — the sample rate
-     * select is where you retune an imported WAV, and the root key and
-     * fundamental sit in the same card — so a slot holding an import, a
-     * wavesample pulled off the synth, or an edit made on the canvas is left
-     * alone rather than silently thrown away. An empty slot has nothing to lose
-     * and so is live from the start; anywhere else the first press of Generate
-     * is what arms it.
+     * Every control is live, whatever is on screen and whoever put it there.
+     * The panel describes a waveform, so moving anything on it means build me
+     * that waveform, and pressing Generate afterwards is a step that only ever
+     * confirmed what the panel already said.
      *
-     * `force` overrides that, for the one control where the intent is not in
-     * doubt: picking a waveform type can only mean make me that waveform, so it
-     * builds one whatever is on screen and whoever drew it. That also puts the
-     * slot back under the generator, so the sliders go live again with it.
+     * That does mean a slider can throw away a pencil edit, an imported WAV or
+     * a wavesample pulled off the synth. Undo brings it back: generate() puts
+     * whatever it is about to replace on the undo stack first, and a live
+     * rebuild keeps the stack rather than clearing it, so a slider moved by
+     * accident costs one press of the undo button.
      */
     liveGenerate(options = {}){
         if(!EPSChart.LIVE_GENERATE) return
-        if(!options.force && !this.fromGenerator && this.wavesample.length > 0) return
         clearTimeout(this.liveTimer)
         // A live rebuild shows the whole of what it made, exactly as the button
         // does. Holding the old view sounds helpful and is not: most of these
         // controls change the length of the buffer, so the window that was
         // showing three cycles of a saw is a sliver of the front of a super saw
         // thirty times longer, and the display looks wrong rather than zoomed.
-        this.liveTimer = setTimeout(() => this.generate(), EPSChart.LIVE_DELAY_MS)
+        this.liveTimer = setTimeout(() => this.generate({ live: true }), EPSChart.LIVE_DELAY_MS)
     }
 
     /***
@@ -742,12 +738,9 @@ class EPSChart {
          */
         const live = (options) => this.liveGenerate(options)
 
-        // Forced: a new waveform type is an unambiguous request for a new
-        // waveform, so it builds one over an import or over work drawn on the
-        // canvas rather than appearing to do nothing.
         typeEl.addEventListener('change', () => {
             configureSpread()
-            live({ force: true })
+            live()
         })
         configureSpread()
 
@@ -1144,18 +1137,17 @@ class EPSChart {
         // Repaints and refreshes the preview. Also clears fromGenerator, which
         // is why the line below comes after it rather than before.
         this.setWavesample(held.data.slice())
-        // Paste reproduces the slot it was copied from, and that includes
-        // whether the controls are live.
+        // Paste reproduces the slot it was copied from, down to whether the
+        // samples on screen are the generator's own work.
         //
         // A copied waveform arrives with the settings that made it, so the
         // panel is telling the truth about what is on screen and moving a
-        // slider can rebuild on the spot — which is the point of pasting a
-        // waveform four times to make four variations of it.
+        // slider adjusts it — which is the point of pasting a waveform four
+        // times to make four variations of it.
         //
         // A copy taken from an imported file or from something drawn on the
-        // canvas arrives guarded, exactly as it was at the other end: nothing
-        // there described those samples, so a nudged slider would replace them
-        // with an unrelated waveform rather than adjust them.
+        // canvas is nobody's but the user's, exactly as it was at the other
+        // end, so the first slider that rebuilds over it saves it for undo.
         this.fromGenerator = held.fromGenerator === true && held.generator != null
         return held
     }
@@ -1184,8 +1176,14 @@ class EPSChart {
      *
      * Always leaves the editor showing the whole of the new waveform, whether
      * it was the button that asked or a control being moved.
+     *
+     * `live` marks the rebuilds nobody explicitly asked for — a slider moving
+     * rather than the button being pressed — which are the ones that have to be
+     * undoable. The button is a deliberate act and starts the slot clean, as it
+     * always has.
      */
-    generate(){
+    generate(options = {}){
+        const live = options.live === true
         const id = this.elementId
         // Anything queued is about to be done here anyway, and letting it fire
         // afterwards would re-roll the random phases of the waveform the user
@@ -1216,7 +1214,18 @@ class EPSChart {
                 ? parseInt(document.getElementById(`${id}_genDriftAmount`).value) || 0 : 0,
             trackingHighPass: document.getElementById(`${id}_genTrackingHpf`).checked
         })
-        this.setWavesample(result.data, { periodSamples: result.periodSamples })
+        // A live rebuild about to overwrite something the generator did not
+        // make — a pencil edit, an import, a wavesample off the synth — puts it
+        // on the undo stack on its way past. Only once: after this the slot is
+        // the generator's own, and dragging a slider through twenty rebuilds
+        // should leave one thing to undo back to, not twenty.
+        if(live && !this.fromGenerator && this.wavesample.length > 0){
+            this.editor.snapshotAll()
+        }
+        // Live rebuilds keep the stack, so that snapshot survives every later
+        // move of the sliders. The button clears it, as a fresh start should.
+        this.setWavesample(result.data,
+            { periodSamples: result.periodSamples, keepUndo: live })
         // Now the generator's to replace, which is what lets the next slider
         // move rebuild it without asking.
         this.fromGenerator = true
