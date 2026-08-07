@@ -887,6 +887,19 @@
                     handleError(`Error: ${EPSWaveUI.transferring} is already running`)
                     return
                 }
+                // The percentage only covers the audio, which is most of the
+                // time and none of the interesting parts: creating the
+                // instrument, each layer and each wavesample, and the settling
+                // pauses all happen at 0% or at 100%. A soundscape looked
+                // stalled twice per layer without the macro saying what it was
+                // doing. The step and the percentage share the line, the step
+                // resetting the bar because each phase measures itself.
+                let step = ""
+                let percent = null
+                const show = () => EPSWaveUI.status(step ? `${what}: ${step}` : what, percent)
+                const onStep = (text) => { step = text; percent = null; show(); log(`${what}: ${text}`) }
+                const onProgress = (value) => { percent = value; show() }
+
                 let outcome = what
                 try {
                     const start = parseInt($("#batchInst").val())
@@ -907,18 +920,30 @@
                     const result = await run(charts, {
                         slots,
                         // Already answered, above, for every slot at once.
-                        confirmOverwrite: async () => true
+                        confirmOverwrite: async () => true,
+                        onStep,
+                        onProgress
                     })
                     outcome = result && result.ok === false
-                        ? "Upload did not complete, see the log" : `${what}: done`
+                        ? `${what}: did not complete, see the log`
+                        : `${what}: DONE`
+                            + (result && typeof result.instrument == "number"
+                                ? ` — instrument ${result.instrument + 1}` : "")
+                    log(outcome)
+                } catch (error) {
+                    // Without this a throw left the status line showing the last
+                    // thing the run was doing, forever, which reads as a synth
+                    // that stopped answering rather than as a fault here.
+                    outcome = `${what}: failed — ${error.message}`
+                    handleError(`Error: ${outcome}`)
                 } finally {
                     done(outcome)
                 }
             }
 
-            const batchArgs = (charts) => [
+            const batchArgs = (charts, options) => [
                 charts.map(chart => chart.wavesample),
-                (percent) => EPSWaveUI.status(EPSWaveUI.transferring, percent),
+                options.onProgress,
                 charts.map(chart => chart.sampleRate),
                 charts.map(chart => chart.rootKey),
                 charts.map(chart => chart.fineTune),
@@ -928,22 +953,31 @@
             $("#uploadTranswave").click(() => runBatch(
                 "Building a transwave",
                 (start) => [start],
-                (charts, options) => eps.uploadAsTranswave(...batchArgs(charts), options)))
+                (charts, options) => eps.uploadAsTranswave(...batchArgs(charts, options), options)))
 
             $("#uploadSoundScape").click(() => runBatch(
                 "Building a soundscape",
                 (start) => [start],
-                (charts, options) => eps.createMorphingWaveTable(...batchArgs(charts), options)))
+                (charts, options) => eps.createMorphingWaveTable(...batchArgs(charts, options), options)))
 
             $("#uploadSeparate").click(() => runBatch(
                 "Uploading one wavesample per instrument",
                 (start, count) => Array.from({ length: count }, (unused, i) => start + i),
-                (charts, options) => eps.uploadToDifferentInstruments(...batchArgs(charts), options)))
+                (charts, options) => eps.uploadToDifferentInstruments(...batchArgs(charts, options), options)))
 
             for (let i = 0; i < EPS16.INSTRUMENT_COUNT; i++) {
                 $("#batchInst").append($("<option>").val(i).html(i + 1))
             }
             $("#batchInst").val(0)
+
+            // The instrument number at the top of the page and the one the
+            // batch buttons build into are the same idea — which instrument you
+            // are working on — so they follow each other. Two independent
+            // controls with the same label a screen apart is a way to lose an
+            // instrument: set one, read the other, press a button that deletes
+            // what the other one was pointing at.
+            $("#instNum").change(() => $("#batchInst").val($("#instNum").val()))
+            $("#batchInst").change(() => $("#instNum").val($("#batchInst").val()))
 
             addTab()
 
