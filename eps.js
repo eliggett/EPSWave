@@ -1425,6 +1425,170 @@ class EPS16 {
      * unreachable**, and a synth with the first seven loaded reported that it
      * could not create an instrument while the eighth sat empty.
      */
+    /***
+     * What is in an instrument slot, asked without changing anything.
+     *
+     * CREATE INSTRUMENT is the cheaper probe and the one createNextFreeInstrument
+     * uses, but it answers only yes or no, and it answers by *taking* the slot.
+     * Reading the parameter block instead costs one round trip and comes back
+     * with the name and size, which is what turns "instrument 3 is in use" into
+     * a question a user can actually answer.
+     *
+     * The selected instrument is put back before returning, so this can be
+     * called from anywhere without moving the rest of the page's idea of where
+     * it is pointed.
+     *
+     * An unreadable block means either an empty slot or a synth that is not
+     * listening, and those want very different responses from the caller. The
+     * EPS says which by answering $05, Invalid Instrument, to a slot that is
+     * merely empty; anything else — no answer at all, most often — leaves
+     * `reachable` false and the caller should stop rather than assume the slot
+     * is free and create over the top of a synth it cannot see.
+     */
+    /***
+     * Marks a status code as an expected answer for as long as the returned
+     * function has not been called, so the receive handler logs it instead of
+     * reporting it as a fault.
+     *
+     * Asking an empty instrument slot for its parameter block is answered with
+     * $05, Invalid Instrument. That is the answer the probe wants and the only
+     * way to get it, but it arrives by the same path as a real refusal, so
+     * without this every check of an empty slot put "Error: Invalid Instrument"
+     * in front of the user immediately before telling them the slot was free.
+     */
+    expectStatus(codes){
+        this.expected = new Set(codes)
+        return () => { this.expected = null }
+    }
+
+    expecting(code){
+        return this.expected != null && this.expected.has(code)
+    }
+
+    async inspectInstrument(number){
+        const restore = this.instNum
+        const done = this.expectStatus([0x05])
+        this.setInstrumentNumber(number)
+        try{
+            const words = await this.getParamBlock(EPS16.BLOCK_INSTRUMENT)
+            if(words.length == 0){
+                const empty = this.lastStatusCode == 0x05
+                this.debug(`Instrument ${number + 1}: ` + (empty ? "empty"
+                    : `no answer (${this.statusText(this.lastStatusCode)})`))
+                return { number, exists: false, reachable: empty,
+                    status: this.lastStatusCode }
+            }
+            const inst = EPSBlocks.decodeInstrument(words)
+            const found = {
+                number, exists: true, reachable: true,
+                name: inst.name,
+                sizeBlocks: inst.sizeBlocks,
+                layers: inst.layers.filter(l => l.exists).length,
+                wavesamples: inst.wavesamples.filter(w => w.exists).length
+            }
+            this.debug(`Instrument ${number + 1}: "${found.name}", ${found.layers} layer(s), `
+                + `${found.wavesamples} wavesample(s), ${found.sizeBlocks} blocks`)
+            return found
+        }finally{
+            done()
+            this.setInstrumentNumber(restore)
+        }
+    }
+
+    /***
+     * Leaves a fresh, empty instrument in the slot the user asked for, and that
+     * slot selected.
+     *
+     * The alternative, and what the batch macros did before this, is to search
+     * upwards for a free slot and use whatever turns up. That never destroys
+     * anything, which is why it was the right default, but it means the user
+     * cannot say where a sound should go and cannot tell where it went without
+     * reading the log. Here the slot is the user's choice and the only way to
+     * lose work is to be asked and to say yes.
+     *
+     * `confirm` is called only when the slot is occupied, is handed everything
+     * inspectInstrument found, and returning false cancels the whole operation
+     * — the caller gets `cancelled` and nothing has been sent. Overwriting is a
+     * delete followed by a create rather than a create over the top, because
+     * CREATE INSTRUMENT on an occupied slot is refused outright.
+     */
+    async claimInstrumentSlot(number, confirm = async () => false){
+        const slot = Math.max(0, Math.min(EPS16.INSTRUMENT_COUNT - 1, number))
+        const found = await this.inspectInstrument(slot)
+        if(!found.exists && !found.reachable){
+            const why = `Instrument ${slot + 1} could not be read `
+                + `(${this.statusText(found.status)}), so nothing was sent. `
+                + `Check the MIDI connection.`
+            this.errorCallback(`Error: ${why}`)
+            return { ok: false, instrument: slot, message: why }
+        }
+        if(found.exists){
+            if(!await confirm(found)){
+                this.debug(`Instrument ${slot + 1} kept; the upload was cancelled`)
+                return { ok: false, cancelled: true, instrument: slot,
+                    message: `Cancelled: instrument ${slot + 1} "${found.name}" was left alone.` }
+            }
+            this.debug(`Overwriting instrument ${slot + 1} "${found.name}" `
+                + `(${found.sizeBlocks} blocks) at the user's request`)
+            this.setInstrumentNumber(slot)
+            if(!await this.deleteInstrument()){
+                return { ok: false, instrument: slot,
+                    message: `Instrument ${slot + 1} could not be deleted, so nothing was sent.` }
+            }
+            // The synth is not ready for the next command straight after one of
+            // these; see createNextFreeInstrument's neighbours.
+            await this.sleep(EPS16.RESTORE_SETTLE_MS)
+        }
+        this.setInstrumentNumber(slot)
+        if(!await this.createInstrument()){
+            return { ok: false, instrument: slot,
+                message: `Instrument ${slot + 1} could not be created.` }
+        }
+        await this.sleep(EPS16.RESTORE_SETTLE_MS)
+        this.debug(`Using instrument ${slot + 1}`)
+        return { ok: true, instrument: slot, overwrote: found.exists ? found.name : null }
+    }
+
+    /***
+     * The instrument acquisition step the batch macros share.
+     *
+     * Given a slot number it claims that slot, asking first if it is occupied.
+     * Given nothing it does what it has always done and takes the next free one
+     * searching upwards. Keeping both means the macros' numbering is unchanged
+     * for every caller that does not opt in — which includes the librarian's
+     * restore, where searching is still the right behaviour.
+     */
+    async acquireInstrument(options = {}, index = 0){
+        const slots = options.slots
+        if(!slots || slots[index] === undefined){
+            EPS16.step(options, "finding a free instrument")
+            return { ok: await this.createNextFreeInstrument(), instrument: this.instNum }
+        }
+        EPS16.step(options, `claiming instrument ${slots[index] + 1}`)
+        return await this.claimInstrumentSlot(slots[index], options.confirmOverwrite)
+    }
+
+    /***
+     * Says what a long macro is doing right now, for the status line.
+     *
+     * The percentage a transfer reports only covers the audio, which is most of
+     * the time but none of the interesting parts: creating the instrument,
+     * creating each layer and wavesample, and the settling pauses afterwards
+     * all happen at 0% or at 100%, so a soundscape looked stalled twice per
+     * layer. Static so it can be called without a live instance to hand and so
+     * the absent-callback case reads as nothing rather than as a guard.
+     */
+    static step(options, what){
+        if(options && typeof options.onStep == "function") options.onStep(what)
+    }
+
+    /*** step, for use inside an && chain: always true, so it reports without
+     *  taking part in the decision. */
+    stepping(options, what){
+        EPS16.step(options, what)
+        return true
+    }
+
     async createNextFreeInstrument(){
         const start = Math.max(0, Math.min(EPS16.INSTRUMENT_COUNT - 1, this.instNum))
         for(let slot = start; slot < EPS16.INSTRUMENT_COUNT; slot++){
@@ -2013,8 +2177,12 @@ class EPS16 {
             }
             start += length
             this.debug("Percent Complete:", (start / audio.length) * 100)
+            // A number, not a string of one. It used to be interpolated into a
+            // template for no reason, which every caller that only displayed it
+            // got away with and the progress bar did not: a bar has to do
+            // arithmetic with it, and "43" is not 43.
             progressCallback(
-                `${ Math.round((waveIndex + (start/audio.length))/numWaves*100) }`)
+                Math.round((waveIndex + (start / audio.length)) / numWaves * 100))
         }
         // The transfer ends with the EPS acknowledging the last block; section 8
         // has nothing after that. Two unsolicited ACKs used to be sent here, and
@@ -2500,11 +2668,17 @@ class EPS16 {
             // data whose first byte happened to be 01, which logged invented
             // errors during a download.
             if(midiMessage.data.length == 8 && midiMessage.data[4] == 0x1){
-                let message = this.getResponseMessage(this.stripSysexHeader(midiMessage.data))
-                if(message.indexOf("Error") != -1){
+                const stripped = this.stripSysexHeader(midiMessage.data)
+                let message = this.getResponseMessage(stripped)
+                // A refusal that was asked for is not a fault. Probing an empty
+                // instrument slot answers $05, Invalid Instrument, which is the
+                // whole point of the probe and not something to put in front of
+                // the user in red; see expectStatus.
+                const code = stripped.length == 3 && stripped[1] == 0 ? stripped[2] : -1
+                if(message.indexOf("Error") != -1 && !this.expecting(code)){
                     this.errorCallback(message)
                 }
-                this.debug(message)
+                this.debug(this.expecting(code) ? `${message} (expected)` : message)
             }
         }
     }
@@ -3097,26 +3271,47 @@ class EPS16 {
     /***
      * Macros
      */
-    async uploadAsTranswave(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[]){
+    async uploadAsTranswave(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[], options={}){
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
-        if(!(await this.createNextFreeInstrument() && await this.createLayer()
-                && await this.createSqrWave())){
+        const claimed = await this.acquireInstrument(options)
+        if(!claimed.ok){
+            if(!claimed.cancelled){
+                this.errorCallback(claimed.message
+                    || "Error: Could not create an instrument for the transwave")
+            }
+            return claimed
+        }
+        EPS16.step(options, "creating the layer")
+        if(!await this.createLayer()){
             this.errorCallback("Error: Could not create an instrument for the transwave")
-            return
+            return { ok: false, instrument: this.instNum }
+        }
+        EPS16.step(options, "creating the wavesample")
+        if(!await this.createSqrWave()){
+            this.errorCallback("Error: Could not create an instrument for the transwave")
+            return { ok: false, instrument: this.instNum }
         }
         let transwave = []
         for(let wave of arrayOfWaveTables){
             transwave = transwave.concat(wave)
         }
+        EPS16.step(options, `sending ${transwave.length} samples`)
         // Every wave ends up in one wavesample here, so only the first slot's
         // name has anywhere to go.
-        isSuccess = await this.uploadWavToEPS(transwave, 1, 0, progressCallback,
+        // `const`, and not by taste. A class body is strict mode, so the
+        // undeclared assignment this used to be threw a ReferenceError the
+        // moment the audio finished going in — after the samples were sent and
+        // before any of the four modulation settings below. Every transwave
+        // ever made with this ended up as a plain wavesample holding the right
+        // audio with none of the transwave wiring, and the caller's `finally`
+        // tidied the spinner away so it looked like it had worked.
+        const isSuccess = await this.uploadWavToEPS(transwave, 1, 0, progressCallback,
             this.perWave(sampleRates, 0), this.perWave(rootKeys, 0), this.perWave(fineTunes, 0),
             this.perWave(names, 0))
         if(!isSuccess){
             this.errorCallback("Error: Unable to upload transwave to EPS16")
-            return
+            return { ok: false, instrument: this.instNum }
         }
         // Each of these reports for itself now, so the outcome is the AND of
         // them rather than a guess made afterwards from whatever happened to be
@@ -3124,8 +3319,15 @@ class EPS16 {
         // assignment rather than a comparison: it emptied the array, evaluated
         // to 0, and took the failure branch every single time, so a transwave
         // that went in perfectly still reported an error.
+        EPS16.step(options, "waiting for the synth")
         await this.sleep(1000)
+        EPS16.step(options, "setting the mod wheel sweep")
         let ok = true
+        // Pitch LFO amount to zero, the same as every layer of a soundscape
+        // gets. A freshly created wavesample has the LFO wired to pitch by
+        // default, so a transwave wobbles as it plays and the wobble is easy to
+        // mistake for the transwave sweep itself doing something wrong.
+        ok = await this.setParameter(EPS16.PITCH_PAGE, EPS16.PITCH_LFO_AMOUNT_PARAM, 0) && ok
         //set loop end
         ok = await this.setParameter(0x20,0x18,arrayOfWaveTables[0].length) && ok
         //set modulation to transwave
@@ -3140,9 +3342,9 @@ class EPS16 {
             this.errorCallback("Error: The transwave samples were sent, but the EPS refused one "
                 + "of the modulation settings above")
         }
-
+        return { ok, instrument: this.instNum }
     }
-    async uploadToDifferentInstruments(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[]){
+    async uploadToDifferentInstruments(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[], options={}){
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
         let index = 0
@@ -3151,26 +3353,36 @@ class EPS16 {
             // used to end the search quietly and carry on around the outer
             // loop, so the remaining waves went nowhere and the run still
             // reported that it had completed.
-            if(!(await this.createNextFreeInstrument() && await this.createLayer()
-                    && await this.createSqrWave())){
+            const of = `${index + 1} of ${arrayOfWaveTables.length}`
+            const claimed = await this.acquireInstrument(options, index)
+            if(claimed.cancelled) return { ...claimed, uploaded: index }
+            EPS16.step(options, `wave ${of}: creating the layer and wavesample`)
+            if(!(claimed.ok && await this.createLayer() && await this.createSqrWave())){
                 this.errorCallback(`Error: Stopped after ${index} of `
                     + `${arrayOfWaveTables.length} samples, with no instrument left to upload into`)
-                return
+                return { ok: false, uploaded: index, instrument: this.instNum }
             }
+            EPS16.step(options, `wave ${of}: sending ${wave.length} samples`)
             await this.uploadWavToEPS(wave, arrayOfWaveTables.length, index, progressCallback,
                 this.perWave(sampleRates, index), this.perWave(rootKeys, index),
                 this.perWave(fineTunes, index), this.perWave(names, index))
             this.successCallback("Success: Adding new instrument")
             index++
+            EPS16.step(options, "waiting for the synth")
             await this.sleep(500)
         }
         this.successCallback("Complete: Uploading samples")
+        return { ok: true, uploaded: index, instrument: this.instNum }
     }
-    async createMorphingWaveTable(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[]){
+    async createMorphingWaveTable(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[], options={}){
         //enable all patche
-        if(!await this.createNextFreeInstrument()){
-            this.errorCallback("Error: Unable to create instrument for morphing wave forms")
-            return false
+        const claimed = await this.acquireInstrument(options)
+        if(!claimed.ok){
+            if(!claimed.cancelled){
+                this.errorCallback(claimed.message
+                    || "Error: Unable to create instrument for morphing wave forms")
+            }
+            return claimed
         }
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
@@ -3179,6 +3391,10 @@ class EPS16 {
         // spread over eight as well. Computing them for the full count and then
         // stopping at eight leaves the top of the sweep with no layer assigned
         // to it, which is silence.
+        // Also what the progress is measured against. Counting against every
+        // wave handed in would leave the bar stopping at eight ninths for a
+        // run of nine, since the ninth is never uploaded. These two arguments
+        // reach nothing but the progress arithmetic.
         const layerCount = Math.min(arrayOfWaveTables.length, EPS16.MAX_MORPH_LAYERS)
         this.debugCallback(`Soundscape: ${layerCount} layers, fade ramp `
             + `${this.morphOverlap.toFixed(2)} of a layer spacing`)
@@ -3186,15 +3402,19 @@ class EPS16 {
             if(i == EPS16.MAX_MORPH_LAYERS) break
             const bp = this.getCrossFadeBreakPoints(layerCount, i)
             let wave = arrayOfWaveTables[i]
+            const of = `layer ${i + 1} of ${layerCount}`
             this.setLayerNumber(i)
+            EPS16.step(options, `${of}: creating the layer and wavesample`)
             //this.setWavesampleNumber(1)
-            if( !(await this.createLayer() && await this.createSqrWave() && this.setWavesampleNumber(i+1) && await this.uploadWavToEPS(wave, arrayOfWaveTables.length, i, progressCallback,
+            if( !(await this.createLayer() && await this.createSqrWave() && this.setWavesampleNumber(i+1) && this.stepping(options, `${of}: sending ${wave.length} samples`) && await this.uploadWavToEPS(wave, layerCount, i, progressCallback,
                 this.perWave(sampleRates, i), this.perWave(rootKeys, i), this.perWave(fineTunes, i),
                 this.perWave(names, i)))){
                 this.errorCallback("Error: Unable to update instrument parameters")
-                return false
+                return { ok: false, uploaded: i, instrument: this.instNum }
             }
+            EPS16.step(options, `${of}: waiting for the synth`)
             await this.sleep(500)
+            EPS16.step(options, `${of}: setting the crossfade`)
             // The same LFO that sweeps the crossfade is wired to pitch by
             // default, so without this every layer wobbles in pitch as it
             // fades and eight of them together are chaos. Section 9.7 gives
@@ -3217,10 +3437,12 @@ class EPS16 {
             await this.setParameter(0x1C,0x07, 0x0F) // LFO Modulation source
 
             this.setWavesampleNumber(1)
+            EPS16.step(options, `${of}: waiting for the synth`)
             await this.sleep(1000)
 
         }
         this.successCallback("Complete: Uploading samples")
+        return { ok: true, uploaded: layerCount, instrument: this.instNum }
     }
 
 
