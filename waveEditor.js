@@ -89,8 +89,47 @@ class WaveEditor {
      */
     static setTheme(name) {
         WaveEditor.theme = WaveEditor.THEMES[name] ? name : 'light'
-        WaveEditor.instances = WaveEditor.instances.filter(editor => editor.canvas.isConnected)
+        WaveEditor.live()
         for (const editor of WaveEditor.instances) editor.render()
+    }
+
+    /*** Drops editors whose canvas has left the page, such as closed tabs. */
+    static live() {
+        WaveEditor.instances = WaveEditor.instances.filter(editor => editor.canvas.isConnected)
+        return WaveEditor.instances
+    }
+
+    /***
+     * Frequency display, on or off for the whole page at once.
+     *
+     * A per editor setting would let two tabs disagree about how wide the
+     * waveform is, which makes comparing them by eye harder than it needs to
+     * be, so this follows the same shape as the theme: one flag, one setter,
+     * every live editor re-laid out. Each toolbar still carries its own
+     * checkbox next to its own play button; they all move together.
+     */
+    static SPECTRUM_KEY = 'spectrum'
+    static spectrumOn = false
+    static spectrumBooted = false
+
+    /*** Reads the stored preference once, the first time anyone asks. */
+    static spectrumEnabled() {
+        if (!WaveEditor.spectrumBooted) {
+            WaveEditor.spectrumBooted = true
+            WaveEditor.spectrumOn = !!(window.safeStorage
+                && window.safeStorage.get(WaveEditor.SPECTRUM_KEY) === '1')
+        }
+        return WaveEditor.spectrumOn
+    }
+
+    static setSpectrum(on) {
+        WaveEditor.spectrumBooted = true
+        WaveEditor.spectrumOn = on === true
+        if (window.safeStorage) {
+            window.safeStorage.set(WaveEditor.SPECTRUM_KEY, WaveEditor.spectrumOn ? '1' : '0')
+        }
+        WaveEditor.live()
+        for (const editor of WaveEditor.instances) editor.applySpectrum()
     }
 
     /*** Tools */
@@ -114,6 +153,11 @@ class WaveEditor {
         this.readOnly = options.readOnly === true
 
         this.data = []
+        // Bumped by anything that changes a sample or the length, so views
+        // derived from the buffer — currently the spectrum, whose transform is
+        // much the most expensive thing on the page — know when their cached
+        // copy is stale and, just as importantly, when it is not.
+        this.dataVersion = 0
         this.viewStart = 0
         this.viewLength = 0
         this.periodSamples = 0
@@ -140,6 +184,9 @@ class WaveEditor {
 
         WaveEditor.instances.push(this)
 
+        // Before the readout, which attaches itself under whichever element the
+        // canvas ends up inside.
+        this.buildSplit()
         // Before the toolbar, which reports through it as soon as it is wired.
         this.buildReadout()
         if (toolbar) this.buildToolbar(toolbar)
@@ -159,6 +206,7 @@ class WaveEditor {
      */
     setData(data, options = {}) {
         this.data = data ? Array.from(data) : []
+        this.bufferChanged()
         this.selection = null
         this.status = ''
         if (options.periodSamples !== undefined) this.periodSamples = options.periodSamples
@@ -177,11 +225,32 @@ class WaveEditor {
         return this.data
     }
 
+    /***
+     * Records that the buffer is not what it was.
+     *
+     * Called from every place a sample or the length changes, which is fewer
+     * places than it looks: the whole buffer paths all funnel through apply(),
+     * undo() and afterLengthChange(), and freehand drawing goes one sample at a
+     * time through writeSample().
+     *
+     * Not to be confused with recordTouch(), which saves a sample's old value
+     * for undo. This one only says that something, somewhere, is now different.
+     * It has to run before the redraw that follows it, since the redraw is what
+     * asks for a fresh transform.
+     */
+    bufferChanged() {
+        this.dataVersion++
+    }
+
     /*** The rate the buffer plays back at, which is what turns divisions into
      * milliseconds. Changing it redraws the readout without touching the data. */
     setSampleRate(hz) {
         this.sampleRate = hz > 0 ? hz : 0
         this.syncControls()
+        // The frequency axis is in Hz, so a new rate moves every line along it.
+        // It does not change the transform, only what the bins are called, so
+        // this is a redraw and not a recompute.
+        if (this.spectrum) this.spectrum.render()
     }
 
     /***
@@ -314,6 +383,13 @@ class WaveEditor {
     }
 
     render() {
+        // Drawn from the same call so the two halves can never disagree about
+        // what is in the buffer. It costs nothing when it has nothing to do:
+        // the transform is cached against dataVersion, so zooming, panning and
+        // repainting for a theme change all redraw from numbers already worked
+        // out, and only an edit pays for a new one.
+        if (this.spectrum) this.spectrum.render()
+
         const ctx = this.ctx
         const width = this.width
         const height = this.height
@@ -684,6 +760,7 @@ class WaveEditor {
     writeSample(index, value) {
         if (index < 0 || index >= this.data.length) return
         this.recordTouch(index)
+        this.bufferChanged()
         if (this.tool === WaveEditor.SMOOTH) {
             // Pull towards the local average rather than to the pointer, so the
             // brush softens what is already there.
@@ -782,6 +859,7 @@ class WaveEditor {
             }
             this.clampView()
         }
+        this.bufferChanged()
         this.render()
         this.syncControls()
         this.onChange(this.data)
@@ -1142,6 +1220,7 @@ class WaveEditor {
             // anyway and there is no zoom left to preserve.
             this.zoomAll()
         }
+        this.bufferChanged()
         this.render()
         this.syncControls()
         this.onChange(this.data)
@@ -1239,6 +1318,7 @@ class WaveEditor {
                 return
             }
         }
+        this.bufferChanged()
         this.render()
         this.onChange(this.data)
     }
@@ -1278,8 +1358,48 @@ class WaveEditor {
 
         row.appendChild(top)
         row.appendChild(this.detailEl)
-        this.canvas.insertAdjacentElement('afterend', row)
+        // Under the pair of canvases when there are two, not tucked inside the
+        // half the waveform is in.
+        ;(this.splitEl || this.canvas).insertAdjacentElement('afterend', row)
         this.readoutEl = row
+    }
+
+    /***
+     * Puts the canvas into a flex row it can share with the frequency display.
+     *
+     * The alternative — drawing the spectrum into the right hand half of the
+     * editor's own canvas — would mean auditing every coordinate helper and
+     * every pointer handler in this class, all of which are written against the
+     * full width of the canvas. Beside it instead, the editor's canvas simply
+     * becomes narrower, which the ResizeObserver already deals with, and none
+     * of the editing arithmetic changes at all.
+     */
+    buildSplit() {
+        if (typeof WaveSpectrum === 'undefined') return
+        const split = document.createElement('div')
+        split.className = 'we-split'
+        this.canvas.insertAdjacentElement('beforebegin', split)
+        split.appendChild(this.canvas)
+
+        const canvas = document.createElement('canvas')
+        canvas.className = 'we-spectrum'
+        split.appendChild(canvas)
+
+        this.splitEl = split
+        this.spectrum = new WaveSpectrum(canvas, this)
+        this.applySpectrum()
+    }
+
+    /*** Shows or hides this editor's frequency display to match the page. */
+    applySpectrum() {
+        if (!this.spectrum) return
+        const on = WaveEditor.spectrumEnabled()
+        this.spectrum.canvas.style.display = on ? '' : 'none'
+        if (this.spectrumToggleEl) this.spectrumToggleEl.checked = on
+        if (this.spectrumToolsEl) this.spectrumToolsEl.style.display = on ? '' : 'none'
+        // Both canvases changed width, and neither ResizeObserver has fired yet.
+        this.resize()
+        if (on) this.spectrum.resize()
     }
 
     /*** Milliseconds, or microseconds once a division is shorter than one. */
@@ -1323,6 +1443,20 @@ class WaveEditor {
                         <button class="btn btn-outline-secondary" id="${uid}_zoomAll" title="Fit"><i class="fa-solid fa-arrows-left-right"></i></button>
                     </div>
                     <span class="btn-group btn-group-sm ml-1" id="${uid}_extra"></span>
+                    <span class="we-spec-toggle ml-2">
+                        <div class="custom-control custom-checkbox custom-control-inline mr-0">
+                            <input type="checkbox" class="custom-control-input" id="${uid}_spectrum">
+                            <label class="custom-control-label" for="${uid}_spectrum"
+                                title="Show the harmonic content of the wavesample, looped">Spectrum</label>
+                        </div>
+                    </span>
+                    <span class="btn-group btn-group-sm ml-2" id="${uid}_specTools" style="display:none">
+                        <button class="btn btn-outline-secondary" id="${uid}_fzOut" title="Frequency axis: zoom out">Hz &minus;</button>
+                        <button class="btn btn-outline-secondary" id="${uid}_fzIn" title="Frequency axis: zoom in">Hz +</button>
+                        <button class="btn btn-outline-secondary" id="${uid}_azOut" title="Level axis: zoom out">dB &minus;</button>
+                        <button class="btn btn-outline-secondary" id="${uid}_azIn" title="Level axis: zoom in">dB +</button>
+                        <button class="btn btn-outline-secondary" id="${uid}_specFit" title="Fit the spectrum"><i class="fa-solid fa-arrows-left-right"></i></button>
+                    </span>
                 </div>
                 <input type="range" class="custom-range" id="${uid}_scroll" min="0" max="0" value="0" style="display:none">
             `
@@ -1366,6 +1500,20 @@ class WaveEditor {
                         <button class="btn btn-outline-secondary" id="${uid}_undo" title="Undo" disabled><i class="fa-solid fa-rotate-left"></i></button>
                     </div>
                     <span class="btn-group btn-group-sm ml-1" id="${uid}_extra"></span>
+                    <span class="we-spec-toggle ml-2">
+                        <div class="custom-control custom-checkbox custom-control-inline mr-0">
+                            <input type="checkbox" class="custom-control-input" id="${uid}_spectrum">
+                            <label class="custom-control-label" for="${uid}_spectrum"
+                                title="Show the harmonic content of the wavesample, looped">Spectrum</label>
+                        </div>
+                    </span>
+                    <span class="btn-group btn-group-sm ml-2" id="${uid}_specTools" style="display:none">
+                        <button class="btn btn-outline-secondary" id="${uid}_fzOut" title="Frequency axis: zoom out">Hz &minus;</button>
+                        <button class="btn btn-outline-secondary" id="${uid}_fzIn" title="Frequency axis: zoom in">Hz +</button>
+                        <button class="btn btn-outline-secondary" id="${uid}_azOut" title="Level axis: zoom out">dB &minus;</button>
+                        <button class="btn btn-outline-secondary" id="${uid}_azIn" title="Level axis: zoom in">dB +</button>
+                        <button class="btn btn-outline-secondary" id="${uid}_specFit" title="Fit the spectrum"><i class="fa-solid fa-arrows-left-right"></i></button>
+                    </span>
                 </div>
                 <input type="range" class="custom-range" id="${uid}_scroll" min="0" max="0" value="0" style="display:none">
             `
@@ -1379,9 +1527,35 @@ class WaveEditor {
 
         this.scrollEl = byId('scroll')
         // Owner injects buffer level controls such as preview here, so they are
-        // available whether or not the slot has a generator.
+        // available whether or not the slot has a generator. The Spectrum
+        // checkbox sits after this span in the markup, which is what puts it to
+        // the right of the play button the owner drops in.
         this.extraEl = byId('extra')
         this.scrollEl.addEventListener('input', () => this.scrollTo(parseInt(this.scrollEl.value, 10)))
+
+        this.spectrumToggleEl = byId('spectrum')
+        this.spectrumToolsEl = byId('specTools')
+        if (this.spectrumToggleEl && !this.spectrum) {
+            // waveSpectrum.js is not on the page. Nothing to toggle.
+            this.spectrumToggleEl.closest('.we-spec-toggle').style.display = 'none'
+            this.spectrumToggleEl = null
+        }
+        if (this.spectrumToggleEl) {
+            // The setting is the page's, not this editor's, so every other
+            // checkbox follows from here.
+            this.spectrumToggleEl.addEventListener('change', () => {
+                WaveEditor.setSpectrum(this.spectrumToggleEl.checked)
+            })
+            byId('fzIn').addEventListener('click', () => this.spectrum.zoomFrequency(0.5))
+            byId('fzOut').addEventListener('click', () => this.spectrum.zoomFrequency(2))
+            byId('azIn').addEventListener('click', () => this.spectrum.zoomAmplitude(0.5))
+            byId('azOut').addEventListener('click', () => this.spectrum.zoomAmplitude(2))
+            byId('specFit').addEventListener('click', () => {
+                this.spectrum.fit()
+                this.spectrum.render()
+            })
+        }
+        this.applySpectrum()
 
         if (!this.readOnly) {
             this.undoEl = byId('undo')
