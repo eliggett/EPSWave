@@ -138,6 +138,22 @@
             </div>
         </div>
 
+        <!-- One status line for the whole page, and the same panel as the
+             wavesample editor's, for the same reason: there is one MIDI cable,
+             a transfer here runs for twenty minutes, and the place to look for
+             what the synth is doing has to be somewhere that does not move as
+             cards appear and grow underneath it. -->
+        <div class="row mt-3">
+            <div class="col-sm">
+                <div class="eps-lcd">
+                    <div class="eps-lcd-line" id="epsStatus">READY</div>
+                    <div class="eps-lcd-bar eps-progress-idle">
+                        <div id="epsProgress"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- The six actions, grouped by what is on the other end.
 
              Each column is a flex column and its buttons sit in an mt-auto
@@ -240,8 +256,6 @@
                             </button>
                         </div>
                         -->
-                        <div id="librarianStatus" class="alert alert-secondary mb-0 py-2"
-                            style="display:none"></div>
                     </div>
                 </div>
             </div>
