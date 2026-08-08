@@ -25,6 +25,9 @@ To be able to upload a wav file to the EPS16+ you need to:
 7. Go get lunch, return, and try it out. 
 
 ### Video Tutorial
+
+[Overview of EPSWave](https://www.youtube.com/watch?v=KhIjxJBXTsc)
+
 [Overview of how to use the original version (somewhat outdated but very useful demo)](https://youtu.be/-471osvR67s)
 
 ### Current Limitations and Bugs
