@@ -26,6 +26,9 @@
     <script src="./epsEfe.js"></script>
     <script src="./epsWaveFile.js"></script>
     <script src="./eps.js"></script>
+    <script src="./epsBitDepth.js"></script>
+    <script src="./epsProbe.js"></script>
+    <script src="./epsProbeUI.js"></script>
     <script src="./waveGen.js"></script>
     <script src="./about.js"></script>
     <script src="./help.js"></script>
@@ -64,6 +67,22 @@
                 <a href="./index.html" class="btn btn-outline-secondary btn-sm">
                     <i class="fa-solid fa-wave-square"></i> Wavesample editor
                 </a>
+            </div>
+            <!-- Which machine is on the cable. Nothing branches on it yet; see
+                 EPSWaveUI.MODELS for why it is here anyway. -->
+            <div class="col-sm-auto">
+                <div class="input-group input-group-sm">
+                    <div class="input-group-prepend">
+                        <label class="input-group-text" for="connectedModel">Connected model</label>
+                    </div>
+                    <select id="connectedModel" class="custom-select"></select>
+                </div>
+            </div>
+            <div class="col-sm-auto">
+                <div class="custom-control custom-switch">
+                    <input type="checkbox" class="custom-control-input" id="debugMode">
+                    <label class="custom-control-label" for="debugMode">Debug</label>
+                </div>
             </div>
             <div class="col-sm-auto">
                 <div class="custom-control custom-switch">
@@ -271,6 +290,12 @@
                 </div>
             </div>
         </div>
+
+        <!-- Filled by epsProbeUI.js and shown by the Debug switch. Empty in the
+             markup so the two pages cannot drift apart; it sits directly above
+             the Event Log because reading the log is most of what running a
+             probe consists of. -->
+        <div class="row mt-3" id="debugPanel" style="display:none"></div>
 
         <div class="row mt-3">
             <div class="col-sm">

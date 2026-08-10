@@ -25,6 +25,10 @@
     <link rel="stylesheet" href="./epswave.css">
     <script src="./epsBlocks.js"></script>
     <script src="./eps.js"></script>
+    <script src="./epsEfe.js"></script>
+    <script src="./epsBitDepth.js"></script>
+    <script src="./epsProbe.js"></script>
+    <script src="./epsProbeUI.js"></script>
     <script src="./waveGen.js"></script>
     <script src="./wavePreview.js"></script>
     <script src="./waveSpectrum.js"></script>
@@ -65,6 +69,22 @@
                 <a href="./librarian.html" class="btn btn-outline-secondary btn-sm">
                     <i class="fa-solid fa-box-archive"></i> Patch librarian
                 </a>
+            </div>
+            <!-- Which machine is on the cable. Nothing branches on it yet; see
+                 EPSWaveUI.MODELS for why it is here anyway. -->
+            <div class="col-sm-auto">
+                <div class="input-group input-group-sm">
+                    <div class="input-group-prepend">
+                        <label class="input-group-text" for="connectedModel">Connected model</label>
+                    </div>
+                    <select id="connectedModel" class="custom-select"></select>
+                </div>
+            </div>
+            <div class="col-sm-auto">
+                <div class="custom-control custom-switch">
+                    <input type="checkbox" class="custom-control-input" id="debugMode">
+                    <label class="custom-control-label" for="debugMode">Debug</label>
+                </div>
             </div>
             <div class="col-sm-auto">
                 <div class="custom-control custom-switch">
@@ -388,6 +408,12 @@
                 </div>
             </div>
         </div>
+        <!-- Filled by epsProbeUI.js and shown by the Debug switch. Empty in the
+             markup so the two pages cannot drift apart; it sits directly above
+             the Event Log because reading the log is most of what running a
+             probe consists of. -->
+        <div class="row" id="debugPanel" style="display:none"></div>
+
         <div class="row">
             <div class="col-sm">
                 <div class="card">
@@ -549,6 +575,13 @@
                 log(`DEBUG: ${message}`)
             })
             EPSWaveUI.wireMidi(eps)
+
+            // After the two callbacks above, and in this order: the probe
+            // capture wraps whatever is already installed so that starting a
+            // capture does not silence the event log. See EPSProbe.attach.
+            EPSWaveUI.wireModel(eps)
+            EPSProbeUI.init(eps)
+            EPSWaveUI.wireDebug()
 
             // Every tab, in the order the tabs are shown. Rebuilt from the DOM
             // rather than maintained by hand, because the tabs can be dragged

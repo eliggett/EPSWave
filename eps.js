@@ -3086,6 +3086,26 @@ class EPS16 {
     setInstrumentNumber(num){
         this.instNum = num
     }
+    /***
+     * Which machine is believed to be on the other end.
+     *
+     * NOTHING BRANCHES ON THIS, and nothing should until there is a measured
+     * difference to branch on. The sysex frame, the 12 and 16 bit packing, the
+     * command numbers and the response codes are identical across the EPS
+     * Classic and the EPS-16 PLUS — the reference library in
+     * reference/code/eps2.0/ drives both with one code path, and its author
+     * owned a Classic — so a model test today would be a test with nothing on
+     * either side of it.
+     *
+     * It is recorded because the probe captures need it: a capture that does
+     * not say which machine produced it is worth much less than one that does,
+     * and asking the operator to remember is asking for the one field that will
+     * be missing from the one file that mattered.
+     */
+    setModel(model){
+        this.model = model
+        return this.model
+    }
     setLayerNumber(num){
         this.layerNum = num
     }

@@ -30,6 +30,18 @@ To be able to upload a wav file to the EPS16+ you need to:
 
 [Overview of how to use the original version (somewhat outdated but very useful demo)](https://youtu.be/-471osvR67s)
 
+### Do you own an original EPS (not a 16 PLUS)?
+
+We would like EPSWave to support the original EPS Classic, and we are four
+questions short of being able to write it — questions no manual answers, because
+Ensoniq's MIDI specification covers the 16 PLUS only. Answering them needs
+someone with a Classic in front of them and about an hour.
+
+If that is you, **[TESTING.md](TESTING.md)** walks through the whole thing from
+the beginning. It is written for a musician rather than a programmer, it says
+plainly which steps read and which one writes, and the write step affects only
+the synth's memory — reloading from disk undoes it.
+
 ### Current Limitations and Bugs
 1. You need a good midi interface, [some cheap interfaces do not work well with MIDI System Exclusive (sysex) content](https://llamamusic.com/fb01/index.html#cheapmidi). 
 2. Firefox is picky about enabling web midi and may refuse if you are self-hosting or opening the file directly. Chrome is more forgiving. 

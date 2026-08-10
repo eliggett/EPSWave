@@ -758,6 +758,13 @@ $(document).ready(function(){
     })
     EPSWaveUI.wireMidi(librarian.eps)
 
+    // After the two callbacks above, and in this order: the probe capture wraps
+    // whatever is already installed so that starting a capture does not silence
+    // the event log. See EPSProbe.attach.
+    EPSWaveUI.wireModel(librarian.eps)
+    EPSProbeUI.init(librarian.eps)
+    EPSWaveUI.wireDebug()
+
     // Instrument 1-8, matching the front panel rather than the wire, where the
     // same instruments are 0-7.
     for(let i = 0; i < EPS16.INSTRUMENT_COUNT; i++){

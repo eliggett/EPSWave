@@ -57,6 +57,114 @@ window.EPSWaveUI = {
     },
 
     /***
+     * Which machine is on the other end of the cable: #connectedModel.
+     *
+     * Nothing in the app branches on this yet, and that is on purpose. The
+     * transport is identical across the Ensoniq samplers — same manufacturer
+     * byte, same product ID, same word packing, same handshake — so every
+     * command this app sends is already model independent, and the differences
+     * that do exist are in parameter numbers and block layouts that have not
+     * been measured yet.
+     *
+     * It is here anyway for two reasons. It goes into every probe capture, so a
+     * file taken on someone else's machine says what that machine was without
+     * depending on anyone remembering to write it down. And when the first real
+     * difference does turn up, the switch it needs will already be wired, in
+     * the interface and in storage, rather than being a change to two pages and
+     * a class on the day it is least convenient.
+     *
+     * The unselectable entries are honest advertising: those machines are not
+     * supported, and showing them greyed out says so more clearly than leaving
+     * them out, which would just look like nobody had thought about them.
+     */
+    MODELS: [
+        { id: "eps16plus", label: "EPS-16+", supported: true },
+        { id: "epsclassic", label: "EPS Classic", supported: true },
+        { id: "asr10", label: "ASR-10", supported: false },
+        { id: "mirage", label: "Mirage", supported: false }
+    ],
+    DEFAULT_MODEL: "eps16plus",
+
+    model(){
+        const stored = window.safeStorage.get("connectedModel")
+        return EPSWaveUI.MODELS.some(m => m.id == stored && m.supported)
+            ? stored : EPSWaveUI.DEFAULT_MODEL
+    },
+    modelLabel(id){
+        const found = EPSWaveUI.MODELS.find(m => m.id == (id || EPSWaveUI.model()))
+        return found ? found.label : "unknown"
+    },
+
+    /***
+     * Fills and wires #connectedModel, if the page has one. onChange is for
+     * anything that has to react; nothing does yet.
+     */
+    wireModel(eps, onChange){
+        const select = document.getElementById("connectedModel")
+        if(!select) return
+        select.innerHTML = ""
+        for(const model of EPSWaveUI.MODELS){
+            const option = document.createElement("option")
+            option.value = model.id
+            option.textContent = model.supported
+                ? model.label : `${model.label} (not yet)`
+            option.disabled = !model.supported
+            select.appendChild(option)
+        }
+        const apply = (id) => {
+            if(eps && typeof eps.setModel == "function") eps.setModel(id)
+            if(onChange) onChange(id)
+        }
+        select.value = EPSWaveUI.model()
+        apply(select.value)
+        select.addEventListener("change", () => {
+            window.safeStorage.set("connectedModel", select.value)
+            apply(select.value)
+            if(window.log) window.log(`Connected model set to ${EPSWaveUI.modelLabel(select.value)}`)
+        })
+    },
+
+    /***
+     * The debug switch: #debugMode, showing #debugPanel and turning the two log
+     * checkboxes on.
+     *
+     * One switch rather than three, because the three were always wanted
+     * together. Anyone who opens the probe panel wants the MIDI traffic and the
+     * debug lines in the log — that is what the panel is for — and anyone who
+     * does not want the panel does not want a log full of packet dumps either.
+     * The checkboxes stay in the log card so they can still be set
+     * independently afterwards; this only moves them together.
+     *
+     * Deliberately not remembered across reloads. A page that came back with
+     * the probe panel open and MIDI logging on, long after the session that
+     * wanted it, is a page that looks broken.
+     */
+    wireDebug(onChange){
+        const toggle = document.getElementById("debugMode")
+        if(!toggle) return
+        const apply = (on) => {
+            const panel = document.getElementById("debugPanel")
+            if(panel) panel.style.display = on ? "" : "none"
+            for(const id of ["logMidi", "logDebug"]){
+                const box = document.getElementById(id)
+                if(box) box.checked = on
+            }
+            if(onChange) onChange(on)
+        }
+        toggle.checked = false
+        apply(false)
+        toggle.addEventListener("change", () => {
+            apply(toggle.checked)
+            if(window.log){
+                window.log(toggle.checked
+                    ? "Debug mode on: hardware probes shown, MIDI traffic and debug output "
+                        + "are going to this log"
+                    : "Debug mode off")
+            }
+        })
+    },
+
+    /***
      * The event log: #log, and optionally #clearLog, #expandLog with
      * #expandLogLabel and #expandLogIcon, and #exportLog.
      *
