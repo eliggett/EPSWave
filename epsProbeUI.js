@@ -347,14 +347,13 @@ window.EPSProbeUI = {
         // ---- Probe A ----------------------------------------------------
         $("#probeBlocks").click(async () => {
             if(!this.ready()) return
-            const which = this.val("blocksInstruments", "current").trim()
-            const instruments = which.toLowerCase() == "all"
+            // All eight by default. Empty slots answer "Invalid Instrument"
+            // straight away, so the only cost is the instruments that exist —
+            // and those are the evidence.
+            const which = $("input[name=blocksInstruments]:checked").val() || "all"
+            const instruments = which == "all"
                 ? Array.from({ length: EPS16.INSTRUMENT_COUNT }, (_, i) => i)
-                : (which.toLowerCase() == "current" || which == ""
-                    ? [eps.instNum]
-                    : which.split(/[,\s]+/).map(n => parseInt(n, 10) - 1)
-                        .filter(n => n >= 0 && n < EPS16.INSTRUMENT_COUNT))
-            if(instruments.length == 0) return this.say("Error: no valid instrument numbers")
+                : [eps.instNum]
 
             await this.guarded("Block dump", async () => {
                 this.lastBlocks = await this.probe.probeBlocks({
@@ -1007,13 +1006,18 @@ window.EPSProbeUI = {
                         </button>
                     </div>
                     <div class="col-auto mb-2">
-                        <div class="input-group input-group-sm">
-                            <div class="input-group-prepend">
-                                <label class="input-group-text" for="blocksInstruments">Instruments</label>
-                            </div>
-                            <input type="text" class="form-control" id="blocksInstruments"
-                                value="current" style="max-width:9rem"
-                                title="current, all, or a list like 1,2,5">
+                        <span class="mr-2"><small>Instruments:</small></span>
+                        <div class="form-check form-check-inline"
+                            title="All eight slots. Empty ones refuse instantly and cost nothing, and block layout differences only show up in blocks that use the fields in question — so more instruments is strictly better evidence.">
+                            <input class="form-check-input" type="radio" name="blocksInstruments"
+                                id="blocksInstrumentsAll" value="all" checked>
+                            <label class="form-check-label" for="blocksInstrumentsAll">All</label>
+                        </div>
+                        <div class="form-check form-check-inline"
+                            title="Only the instrument selected above. Quicker, and enough if you are chasing something specific.">
+                            <input class="form-check-input" type="radio" name="blocksInstruments"
+                                id="blocksInstrumentsCurrent" value="current">
+                            <label class="form-check-label" for="blocksInstrumentsCurrent">Current</label>
                         </div>
                     </div>
                     <div class="col-auto mb-2">

@@ -193,7 +193,9 @@ the data, timestamped. It is genuinely useful.
 
 Section **3 · Probe A — parameter blocks**.
 
-1. Change the **Instruments** box from `current` to `all`.
+1. Leave **Instruments** on **All** — that is the default and it is what you
+   want. Empty slots refuse instantly and cost nothing, and the more
+   instruments this reads the better the evidence.
 2. Press **Dump blocks**.
 
 Watch the green display panel further up the page. It will count through each
