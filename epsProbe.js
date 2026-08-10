@@ -943,8 +943,19 @@ class EPSProbe {
             for(let done = 0; done < targets.length; done++){
                 this.check()
                 const { page, item } = targets[done]
-                const answer = await this.eps.getParameter(page, item, timeoutMs)
-                const record = { page, item,
+                // getParameterAt, not getParameter: the latter wants the number
+                // already split into its two six bit halves. Passing a page and
+                // an item to it is silent — the synth reads (page << 6) | item,
+                // answers about that parameter instead, and the reply looks
+                // perfectly successful. A sweep built that way reported the
+                // track page and the three envelopes over and over and never
+                // reached master tune. See EPS16.parameterBytes.
+                const answer = await this.eps.getParameterAt(page, item, timeoutMs)
+                const number = EPS16.parameterNumber(page, item)
+                const record = { page, item, number,
+                    // The bytes that actually went out, so the capture can be
+                    // checked against the wire without trusting this comment.
+                    bytes: EPS16.parameterBytes(number),
                     answered: answer.answered, value: answer.value,
                     status: answer.status,
                     statusText: this.eps.statusText(answer.status) }

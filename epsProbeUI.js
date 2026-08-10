@@ -399,7 +399,7 @@ window.EPSProbeUI = {
             const page = this.hex("manualPage", 0x0D)
             const item = this.hex("manualItem", 0x00)
             await this.guarded("Get parameter", async () => {
-                const answer = await eps.getParameter(page, item,
+                const answer = await eps.getParameterAt(page, item,
                     this.num("manualTimeout", 1000))
                 this.capture.event("manual-get", { page, item, ...answer,
                     statusText: eps.statusText(answer.status) })
@@ -417,9 +417,9 @@ window.EPSProbeUI = {
             const item = this.hex("manualItem", 0x00)
             const value = this.num("manualValue", 0)
             await this.guarded("Put parameter", async () => {
-                const before = await eps.getParameter(page, item, this.num("manualTimeout", 1000))
-                const accepted = await eps.setParameter(page, item, value)
-                const after = await eps.getParameter(page, item, this.num("manualTimeout", 1000))
+                const before = await eps.getParameterAt(page, item, this.num("manualTimeout", 1000))
+                const accepted = await eps.setParameterAt(page, item, value)
+                const after = await eps.getParameterAt(page, item, this.num("manualTimeout", 1000))
                 this.capture.event("manual-put", { page, item, value, accepted,
                     before: before.value, after: after.value })
                 this.say(`PUT $${EPSProbeUI.h2(page)}${EPSProbeUI.h2(item)} = ${value}: `

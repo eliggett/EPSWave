@@ -201,9 +201,47 @@ class EPS16 {
      *
      * Section 7.1: one block is 256 words, so one block is 256 samples.
      */
+    /***
+     * THESE TWO ARE NOT A PAGE AND AN ITEM, despite the names. They are the two
+     * six bit MIDI bytes that carry parameter number $0D00, free system blocks.
+     *
+     * Section 4.2 sends a parameter number as "hi byte" and "lo byte", and by
+     * section 2.3 that means a twelve bit number split into two six bit halves —
+     * not the page and the item as separate bytes. So $0D00 goes out as $34 $00,
+     * because $0D00 >> 6 is $34.
+     *
+     * Every setParameter call in this file follows the same convention, which is
+     * why they read oddly: setParameter(0x20, 0x0D) is parameter $080D, the
+     * sample rate, and setParameter(0x1C, 0x07) is $0707, the LFO modulation
+     * source. Use parameterBytes() below rather than working it out by hand.
+     */
     static PING_PAGE = 0x34
     static PING_ITEM = 0x00
     static SAMPLES_PER_BLOCK = 256
+
+    /***
+     * A parameter number from the page and item that section 9 lists it under.
+     * The page is the high byte and the item is the low byte, so pitch envelope
+     * time 1 — page $01, item $03 — is parameter $0103.
+     */
+    static parameterNumber(page, item){
+        return ((page & 0x0F) << 8) | (item & 0xFF)
+    }
+
+    /***
+     * A parameter number as the two six bit bytes that go on the wire.
+     *
+     * This is the conversion that is easy to miss and produces no error when it
+     * is missed: send the page and the item as two bytes and the synth reads
+     * (page << 6) | item, which is a different, perfectly valid parameter
+     * number. It answers about that one instead, so the reply looks like a
+     * success and the values are simply about something else. A sweep built
+     * that way returned the track page and the three envelopes for every page
+     * it asked about, and never reached master tune at all.
+     */
+    static parameterBytes(number){
+        return [(number >> 6) & 0x3F, number & 0x3F]
+    }
 
     /***
      * Wavesample name: section 7.3, word offsets 00 to 11, "12 ASCII bytes, one
@@ -1996,6 +2034,28 @@ class EPS16 {
      * The problem the ACK was meant to fix — the command after a free memory
      * read being NAKed — was the EPS being busy, and is handled where it
      * belongs, in sendCommand.
+     */
+    /***
+     * Reads the parameter that section 9 lists under this page and item.
+     *
+     * The one to use. getParameter below takes the two six bit halves of the
+     * number already packed, which is a wire level detail nothing outside this
+     * file should have to know, and getting it wrong is silent — see
+     * parameterBytes.
+     */
+    async getParameterAt(page, item, timeoutMs = EPS16.COMMAND_TIMER_MS){
+        const [hi, lo] = EPS16.parameterBytes(EPS16.parameterNumber(page, item))
+        return this.getParameter(hi, lo, timeoutMs)
+    }
+    /*** Writes the parameter at this page and item. See getParameterAt. */
+    async setParameterAt(page, item, value){
+        const [hi, lo] = EPS16.parameterBytes(EPS16.parameterNumber(page, item))
+        return this.setParameter(hi, lo, value)
+    }
+    /***
+     * `page` and `item` here are the two six bit halves of the parameter
+     * number, not the page and item from section 9. Kept because every existing
+     * caller passes them that way; new code should use getParameterAt.
      */
     async getParameter(page, item, timeoutMs = EPS16.COMMAND_TIMER_MS){
         const cmd = this.createMIDIMessage(0x08, [page, item])
