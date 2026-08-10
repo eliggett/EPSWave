@@ -921,7 +921,7 @@ class EPSProbe {
      * a little noise in it and the answer is the parameter that moved *by the
      * amount the control moved*, not merely the only one that moved.
      */
-    diffParameters(before, after){
+    diffParameters(before, after, changed = ""){
         const key = (record) => `${record.page},${record.item}`
         const map = new Map(before.values.map(record => [key(record), record]))
         const changes = []
@@ -934,9 +934,14 @@ class EPSProbe {
                 delta: (was.value == null || record.value == null)
                     ? null : record.value - was.value })
         }
-        const report = { before: before.label, after: after.label, changes }
+        // `changed` is what the operator says they altered on the front panel.
+        // It is the other half of the measurement: a list of numbers that moved
+        // means nothing on its own, and the two have to be one record rather
+        // than two entries that happen to be adjacent in the file.
+        const report = { before: before.label, after: after.label, changed, changes }
         this.capture.event("finding", { probe: "parameter-diff", ...report })
-        this.log(`Parameter diff ${before.label} → ${after.label}: `
+        this.log(`Parameter diff ${before.label} → ${after.label}`
+            + (changed ? ` [${changed}]` : "") + ": "
             + (changes.length == 0 ? "nothing changed"
                 : changes.map(c => `$${c.page.toString(16).padStart(2, "0")}`
                     + `${c.item.toString(16).padStart(2, "0")}: ${c.from} → ${c.to}`).join(", ")))

@@ -325,8 +325,20 @@ window.EPSProbeUI = {
             const result = await sweep("B", this.checked("sweepNarrow"))
             if(!result) return
             this.snapshots.B = result
-            const diff = this.probe.diffParameters(this.snapshots.A, result)
+            // Filed with the comparison rather than as a note of its own, so
+            // the numbers that moved and the thing that moved them are one
+            // record. A note added separately is a note that can end up next to
+            // the wrong diff.
+            const changed = this.val("sweepChange").trim()
+            if(!changed){
+                this.say("No change note given. The diff below records which numbers moved, "
+                    + "but not what you moved — which is the half that cannot be recovered later.")
+            }
+            const diff = this.probe.diffParameters(this.snapshots.A, result, changed)
             this.showDiff(diff)
+            // Cleared so the next control cannot inherit this one's description,
+            // which would be worse than having no description at all.
+            $("#sweepChange").val("")
             // B becomes the new baseline, so a run of changes can be walked one
             // at a time without re-sweeping twice for each. Fifteen of these is
             // the realistic budget for a session and halving the sweeps is the
@@ -517,6 +529,10 @@ window.EPSProbeUI = {
 
     showDiff(diff){
         $("#probeOutput").html(`<h6 class="mb-2">What moved between sweeps</h6>`
+            + (diff.changed
+                ? `<p class="mb-2">You changed: <b>${EPSProbeUI.escape(diff.changed)}</b></p>`
+                : `<p class="mb-2 text-warning"><small>No change note was given, so this table `
+                    + `records which numbers moved but not what moved them.</small></p>`)
             + (diff.changes.length == 0
                 ? `<p class="mb-0">Nothing changed. Either the control does not go over MIDI, `
                     + `or it is outside the swept page range.</p>`
@@ -801,6 +817,18 @@ window.EPSProbeUI = {
                     <div class="col-auto mb-2">
                         <input type="text" class="form-control form-control-sm" id="sweepLabel"
                             value="sweep" placeholder="Label" style="max-width:10rem">
+                    </div>
+                    <div class="col-12 mb-2">
+                        <div class="input-group input-group-sm">
+                            <div class="input-group-prepend">
+                                <label class="input-group-text" for="sweepChange">
+                                    Note what has been changed here:
+                                </label>
+                            </div>
+                            <input type="text" class="form-control" id="sweepChange"
+                                placeholder="e.g. master tune 0 to +25 — filed with the diff when you press Snapshot B"
+                                title="Written into the capture alongside the comparison, so the numbers that moved are recorded next to what moved them. Cleared after each diff so it cannot be left over from the previous control.">
+                        </div>
                     </div>
                     <div class="col-12">
                         <div class="form-check">

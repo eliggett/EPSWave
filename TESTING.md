@@ -248,10 +248,11 @@ Then, for each control in the list below, three presses:
 
 1. Change that one control on the synth. Move it a good distance — turn it up by
    ten, not by one.
-2. Type what you changed into the note box in section 2 and press **Add note**.
-   For example: `master tune from 0 to +25`.
+2. Type what you changed into the box marked **Note what has been changed here**,
+   just under the sweep controls. For example: `master tune from 0 to +25`.
+   There is no button to press; it is filed with the comparison automatically.
 3. Press **Snapshot B & diff**. Wait for it to finish. A table appears showing
-   what moved.
+   what moved, with your note above it.
 
 Then change the next control (see the list below) and press **Snapshot B & diff** after eachg control is changed. 
 
