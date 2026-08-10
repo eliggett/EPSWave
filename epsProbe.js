@@ -809,6 +809,24 @@ class EPSProbe {
      * sweep is refusals, which come back immediately; only a page the machine
      * ignores entirely costs the full wait, and paying four seconds for each of
      * those turns a four minute sweep into an hour.
+     *
+     * NARROWED SWEEPS
+     *
+     * Pass `only` — a list of {page, item} — to ask about those numbers and
+     * nothing else. This is what makes the differential test practical. Of the
+     * 512 numbers a default sweep asks about, only some tens ever answer, so a
+     * repeat sweep spends the overwhelming majority of its time re-confirming
+     * that the same several hundred numbers are still invalid. Reading back
+     * only the live ones turns a snapshot from a minute into a few seconds,
+     * and the differential test is a sequence of snapshots — which is the
+     * difference between covering five front panel controls in a session and
+     * covering twenty.
+     *
+     * The trade is that a number which is invalid during the establishing
+     * sweep and becomes valid later is never revisited. For the differential
+     * test, where what changes between snapshots is one control on the front
+     * panel, that is a small risk knowingly taken; the full range is still one
+     * checkbox away.
      */
     async probeParameters(options = {}){
         const pageFrom = options.pageFrom == null ? 0x00 : options.pageFrom
@@ -816,55 +834,76 @@ class EPSProbe {
         const itemFrom = options.itemFrom == null ? 0x00 : options.itemFrom
         const itemTo = options.itemTo == null ? 0x1F : options.itemTo
         const timeoutMs = options.timeoutMs || 400
-        const gap = options.gapMs == null ? 30 : options.gapMs
+        // 150 ms. Measured on an EPS-16 PLUS, which answered consistently
+        // anywhere above about 75; this doubles that, on the grounds that the
+        // machine the probe was written for has never been tested and the
+        // reference library's own between-commands pause is 200.
+        const gap = options.gapMs == null ? 150 : options.gapMs
         const label = options.label || "sweep"
 
+        // Either the numbers we were handed, or every number in the range.
+        // Building the list up front rather than looping over the ranges keeps
+        // the two cases on one code path, so a narrowed sweep cannot drift
+        // away from a full one in how it records or paces itself.
+        const targets = []
+        if(options.only){
+            for(const target of options.only){
+                targets.push({ page: target.page, item: target.item })
+            }
+        }else{
+            for(let page = pageFrom; page <= pageTo; page++){
+                for(let item = itemFrom; item <= itemTo; item++) targets.push({ page, item })
+            }
+        }
+        const narrowed = options.only != null
+
         return this.run("parameters", { pageFrom, pageTo, itemFrom, itemTo,
-                timeoutMs, gapMs: gap, label }, async () => {
+                timeoutMs, gapMs: gap, label, narrowed, count: targets.length }, async () => {
             const values = []
-            const total = (pageTo - pageFrom + 1) * (itemTo - itemFrom + 1)
-            let done = 0
             let answered = 0
 
-            for(let page = pageFrom; page <= pageTo; page++){
-                for(let item = itemFrom; item <= itemTo; item++){
-                    this.check()
-                    const answer = await this.eps.getParameter(page, item, timeoutMs)
-                    done++
-                    const record = { page, item,
-                        answered: answer.answered, value: answer.value,
-                        status: answer.status,
-                        statusText: this.eps.statusText(answer.status) }
-                    values.push(record)
-                    // Only the ones that said something go in the capture as
-                    // their own line. A thousand "invalid parameter number"
-                    // lines would bury the sixty that matter, and the count of
-                    // them is in the result object anyway.
-                    if(answer.value !== null){
-                        answered++
-                        this.capture.event("parameter", { label, ...record })
-                    }
-                    if(done % 16 == 0 || done == total){
-                        this.progress(Math.round((done / total) * 100))
-                        this.status(`Parameter sweep: page $${page.toString(16)
-                            .padStart(2, "0")} item $${item.toString(16).padStart(2, "0")}`
-                            + ` — ${answered} answered of ${done} tried`)
-                    }
-                    await this.breathe(gap)
+            for(let done = 0; done < targets.length; done++){
+                this.check()
+                const { page, item } = targets[done]
+                const answer = await this.eps.getParameter(page, item, timeoutMs)
+                const record = { page, item,
+                    answered: answer.answered, value: answer.value,
+                    status: answer.status,
+                    statusText: this.eps.statusText(answer.status) }
+                values.push(record)
+                // Only the ones that said something go in the capture as their
+                // own line. Five hundred "invalid parameter number" lines would
+                // bury the sixty that matter, and the count of them is in the
+                // result object anyway.
+                if(answer.value !== null){
+                    answered++
+                    this.capture.event("parameter", { label, narrowed, ...record })
                 }
-                // Flushed per page so a sweep that dies half way through has
-                // written everything up to the page it died on.
-                await this.capture.flush()
+                if(done % 16 == 0 || done == targets.length - 1){
+                    this.progress(Math.round(((done + 1) / targets.length) * 100))
+                    this.status(`Parameter sweep${narrowed ? " (narrowed)" : ""}: `
+                        + `page $${page.toString(16).padStart(2, "0")} `
+                        + `item $${item.toString(16).padStart(2, "0")}`
+                        + ` — ${answered} answered of ${done + 1} tried`)
+                    // Flushed as it goes rather than at the end, so a sweep that
+                    // dies half way through has written everything up to the
+                    // point it died.
+                    await this.capture.flush()
+                }
+                await this.breathe(gap)
             }
 
             const live = values.filter(v => v.value !== null)
-            this.capture.event("finding", { probe: "parameters", label,
+            this.capture.event("finding", { probe: "parameters", label, narrowed,
                 tried: values.length, answered: live.length,
                 pages: [...new Set(live.map(v => v.page))] })
-            this.log(`Parameter sweep "${label}": ${live.length} of ${values.length} `
-                + `numbers returned a value, on pages `
+            this.log(`Parameter sweep "${label}"${narrowed ? " (narrowed)" : ""}: `
+                + `${live.length} of ${values.length} numbers returned a value, on pages `
                 + `${[...new Set(live.map(v => "$" + v.page.toString(16).padStart(2, "0")))].join(", ")}`)
-            return { label, values, answered: live.length, tried: values.length }
+            return { label, values, narrowed,
+                answered: live.length, tried: values.length,
+                // The live set, ready to be handed back as `only` next time.
+                live: live.map(v => ({ page: v.page, item: v.item })) }
         })
     }
 

@@ -213,7 +213,7 @@ expected — it is how the app finds out which slots are in use.
 
 ---
 
-# Part 6 — Find the parameter numbers (about 20 minutes)
+# Part 6 — Find the parameter numbers (about 15 minutes)
 
 Section **4 · Probe B — parameter numbers**. This is the most valuable part of
 the session and the only part where the synth needs you to touch it.
@@ -222,8 +222,12 @@ the session and the only part where the synth needs you to touch it.
 
 Press **Sweep**. Leave all the other boxes alone.
 
-This asks your synth about a thousand questions and notes which ones it
-recognises. Give it a few minutes. The display panel counts through.
+This asks your synth 512 questions and notes which ones it recognises. Give it a
+couple of minutes; the display panel counts through.
+
+This is the slow one, and it only happens once. It also tells the app which
+numbers are worth asking about again, so every step after it takes seconds
+rather than minutes.
 
 When it finishes you will see a table of which parameter pages answered. **That
 table is the answer to question 1** — it is the only place the app shows you the
@@ -255,6 +259,12 @@ The app keeps each sweep as the starting point for the next one, so after the
 first control you are paying one sweep per control instead of two. It reminds
 you in the log every time: *"Snapshot B is now the baseline — change the next
 thing and press B again."*
+
+Snapshots are quick — seconds, not minutes — because they only re-read the
+numbers the first sweep found to be real, rather than asking all 512 again.
+That is the checkbox under the buttons, and it is why five controls is a
+comfortable minimum rather than an ambitious target. If you have the patience,
+keep going past five; the list below is a starting point, not a limit.
 
 (If you lose track of where you are, press **Snapshot A** to start a fresh
 comparison from wherever the synth is now, then carry on as above.)

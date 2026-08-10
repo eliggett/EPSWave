@@ -33,6 +33,10 @@ window.EPSProbeUI = {
     capture: null,
     probe: null,
     lastBlocks: null,
+    // Page/item pairs that answered in the most recent full sweep. Snapshots
+    // re-read just these; see the sweep() helper for why only full sweeps are
+    // allowed to write it.
+    liveSet: null,
     snapshots: {},
 
     /***
@@ -259,18 +263,46 @@ window.EPSProbeUI = {
         })
 
         // ---- Probe B ----------------------------------------------------
-        const sweep = async (label) => {
+        /***
+         * One sweep.
+         *
+         * `narrow` asks for the shortcut: re-read only the numbers a previous
+         * full sweep found to be live. It is honoured only once such a sweep
+         * has happened, so the first press is always a full one and establishes
+         * the set — which means the buttons work in any order without anybody
+         * having to press a particular one first.
+         *
+         * Only full sweeps update the remembered set. A narrowed sweep can by
+         * construction only return a subset, so letting one write the set back
+         * would shrink it a little on every press until there was nothing left
+         * to compare.
+         */
+        const sweep = async (label, narrow = false) => {
             if(!this.ready()) return null
-            return this.guarded(`Parameter sweep (${label})`, () =>
+            const only = narrow && this.liveSet && this.liveSet.length ? this.liveSet : null
+            if(narrow && !only){
+                this.say("No full sweep yet, so this one covers the whole range and "
+                    + "becomes the baseline for the quick ones after it.")
+            }
+            const result = await this.guarded(
+                `Parameter sweep (${label})${only ? " — narrowed" : ""}`, () =>
                 this.probe.probeParameters({
                     pageFrom: this.hex("sweepPageFrom", 0x00),
                     pageTo: this.hex("sweepPageTo", 0x0F),
                     itemFrom: this.hex("sweepItemFrom", 0x00),
                     itemTo: this.hex("sweepItemTo", 0x1F),
                     timeoutMs: this.num("sweepTimeout", 400),
-                    gapMs: this.num("sweepGap", 30),
-                    label
+                    gapMs: this.num("sweepGap", 150),
+                    only, label
                 }))
+            if(result && !result.narrowed){
+                this.liveSet = result.live
+                $("#sweepLiveCount").text(result.live.length
+                    ? `${result.live.length} live parameter numbers remembered; `
+                        + `snapshots will re-read just those.`
+                    : "No parameters answered, so snapshots will cover the full range.")
+            }
+            return result
         }
 
         $("#probeParams").click(async () => {
@@ -279,7 +311,7 @@ window.EPSProbeUI = {
         })
 
         $("#probeSnapshotA").click(async () => {
-            const result = await sweep("A")
+            const result = await sweep("A", this.checked("sweepNarrow"))
             if(!result) return
             this.snapshots.A = result
             this.say(`Snapshot A taken: ${result.answered} parameters answered. `
@@ -290,7 +322,7 @@ window.EPSProbeUI = {
 
         $("#probeSnapshotB").click(async () => {
             if(!this.snapshots.A) return this.say("Error: take snapshot A first")
-            const result = await sweep("B")
+            const result = await sweep("B", this.checked("sweepNarrow"))
             if(!result) return
             this.snapshots.B = result
             const diff = this.probe.diffParameters(this.snapshots.A, result)
@@ -762,12 +794,29 @@ window.EPSProbeUI = {
                                 <label class="input-group-text" for="sweepGap">Gap ms</label>
                             </div>
                             <input type="number" class="form-control" id="sweepGap"
-                                value="30" min="0" max="1000" style="max-width:6rem">
+                                value="150" min="0" max="1000" style="max-width:6rem"
+                                title="Idle pause after each answer, before the next question. An EPS-16 PLUS answered consistently anywhere above about 75 ms; 150 doubles that for margin on a machine nobody has measured. The reference library pauses 200 ms between commands.">
                         </div>
                     </div>
                     <div class="col-auto mb-2">
                         <input type="text" class="form-control form-control-sm" id="sweepLabel"
                             value="sweep" placeholder="Label" style="max-width:10rem">
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="sweepNarrow" checked>
+                            <label class="form-check-label" for="sweepNarrow"><small>
+                                <b>Snapshots re-read only the numbers that answered.</b> Of the 512
+                                numbers a full sweep asks about, only some tens ever answer, so
+                                without this each snapshot spends nearly all its time re-confirming
+                                the same several hundred refusals. With it a snapshot takes seconds
+                                instead of a minute, which is what makes it practical to work
+                                through a dozen controls rather than three. The first sweep is
+                                always a full one and establishes the set. The trade: a number that
+                                only becomes valid later is never revisited.
+                            </small></label>
+                        </div>
+                        <small id="sweepLiveCount" class="text-muted"></small>
                     </div>
                 </div>
 
