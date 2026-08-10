@@ -147,8 +147,21 @@ window.EPSProbeUI = {
         return false
     },
 
+    /*** "04 08 0C" from a list of page bytes. */
+    pageList(bytes){
+        return bytes.map(byte => EPSProbeUI.h2(byte)).join(" ")
+    },
+
     wire(){
         const eps = this.eps
+
+        // Filled from the class rather than written into the markup, so the
+        // field and EPS16.PARAMETER_PAGES cannot drift apart.
+        $("#sweepPages").val(EPSProbeUI.pageList(EPS16.instrumentPages()))
+        $("#sweepPagesInstrument").click(() =>
+            $("#sweepPages").val(EPSProbeUI.pageList(EPS16.instrumentPages())))
+        $("#sweepPagesAll").click(() =>
+            $("#sweepPages").val(EPSProbeUI.pageList(EPS16.allParameterPages())))
 
         $("#captureStart").click(async () => {
             if(this.capture && this.capture.open){
@@ -763,6 +776,13 @@ window.EPSProbeUI = {
                 number. Then: <b>Snapshot A</b>, change one control on the synth, note
                 what you changed, <b>Snapshot B</b>. The number that moved is that
                 control.</small></p>
+                <p class="mb-2"><small>Reading and writing whole instruments and
+                wavesamples goes over the block commands and hardly uses parameter
+                numbers at all &mdash; about eleven of them, none of which differ between
+                the two machines. So for that purpose this probe is confirmation rather
+                than discovery, and probe A above is the one that matters. It earns its
+                place on the pages where the two references contradict each other:
+                wavesample word 105, and the envelope levels.</small></p>
                 <div class="form-row align-items-center mb-3">
                     <div class="col-auto mb-2">
                         <button id="probeParams" class="btn btn-primary btn-sm eps-transfer">
@@ -798,14 +818,27 @@ window.EPSProbeUI = {
                                 </label>
                             </div>
                             <input type="text" class="form-control" id="sweepPages"
-                                value="00 04 08 0C 10 14 18 1C 20 24 28 2C 30 34 38"
-                                title="The pages section 9 documents, in the order it lists them: track, envelopes 1-3, pitch, filter, amp, LFO, wavesample, layer, instrument, sequence, effects, system/MIDI, edit context. Adding anything else is exploring undefined territory — an EPS-16 PLUS crashed with Error 129 when asked for effects items past $09, which is why the effects page stops there whatever the item range says.">
+                                title="Which of section 9's parameter pages to ask about. The default is the pages an instrument is made of.">
+                            <div class="input-group-append">
+                                <button class="btn btn-outline-secondary" id="sweepPagesInstrument"
+                                    type="button" title="Envelopes, pitch, filter, amp, LFO, wavesample, layer and instrument — everything an instrument is made of, and nothing else.">
+                                    Instrument &amp; wavesample
+                                </button>
+                                <button class="btn btn-outline-warning" id="sweepPagesAll"
+                                    type="button" title="Adds the track, sequencer, effects, system/MIDI and edit context pages. None of them affect reading or writing instruments, and the effects page is where this synth has crashed.">
+                                    Everything
+                                </button>
+                            </div>
                         </div>
-                        <small class="text-muted">Section 9's own page list. The effects page
-                        <code>$30</code> is capped at item <code>$09</code> regardless of the
-                        range above &mdash; past that an EPS-16 PLUS crashes with
-                        <b>Error 129</b>. Adding pages not listed here is exploring, and
-                        exploring has already taken a synth down twice.</small>
+                        <small class="text-muted">The default is <b>the pages an instrument is
+                        made of</b>: its envelopes, pitch, filter, amp and LFO pages, the
+                        wavesample, the layer and the instrument. Reading and writing
+                        instruments and wavesamples does not depend on the sequencer, the
+                        system settings or the effects &mdash; and the effects page
+                        <code>$30</code> is where an EPS-16 PLUS crashed with
+                        <b>Error 129</b>, twice. <b>Everything</b> adds those pages back if you
+                        are deliberately exploring; the effects page stays capped at item
+                        <code>$09</code> either way.</small>
                     </div>
                     <div class="col-auto mb-2">
                         <div class="input-group input-group-sm">

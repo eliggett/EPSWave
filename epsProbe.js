@@ -916,9 +916,12 @@ class EPSProbe {
     static SILENCE_IS_A_CRASH = 6
 
     async probeParameters(options = {}){
-        // Section 9's own index: the SysEx high byte each table is headed with.
-        const pages = options.pages
-            || EPS16.PARAMETER_PAGES.map(page => page.byte)
+        // The pages an instrument is made of, by default — see
+        // EPS16.PARAMETER_PAGES. Not every page section 9 documents, because
+        // reading and writing instruments and wavesamples does not depend on
+        // the sequencer, the system settings or the effects, and the effects
+        // page is where the machine has been seen to crash.
+        const pages = options.pages || EPS16.instrumentPages()
         const itemFrom = options.itemFrom == null ? 0x00 : options.itemFrom
         const itemTo = options.itemTo == null ? 0x1F : options.itemTo
         const timeoutMs = options.timeoutMs || 400

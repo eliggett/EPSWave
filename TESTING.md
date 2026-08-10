@@ -221,17 +221,25 @@ exactly like a control having moved.
 
 ---
 
-# Part 6 — Find the parameter numbers (about 15 minutes)
+# Part 6 — Find the parameter numbers (about 10 minutes)
 
-Section **4 · Probe B — parameter numbers**. This is the most valuable part of
-the session and the only part where the synth needs you to touch it.
+Section **4 · Probe B — parameter numbers**. This is the part where the synth
+needs you to touch it.
+
+The app is being built to do two things with your machine: read and write whole
+instruments, and read and write wavesamples. Both of those travel as complete
+blocks of data rather than as individual settings, so this part is narrower than
+it looks — it covers the pages an instrument is actually made of, and leaves the
+sequencer, the system settings and the effects alone. **The effects page is where
+an EPS-16 PLUS has crashed, and it is not swept by default.**
 
 ## 6.1 The first sweep
 
-Press **Sweep**. Leave all the other boxes alone.
+Press **Sweep**. Leave all the other boxes alone — the page list is already set
+to the ones that matter.
 
-This asks your synth 512 questions and notes which ones it recognises. Give it a
-couple of minutes; the display panel counts through.
+This asks your synth about 320 questions and notes which ones it recognises.
+Give it a couple of minutes; the display panel counts through.
 
 This is the slow one, and it only happens once. It also tells the app which
 numbers are worth asking about again, so every step after it takes seconds
@@ -278,19 +286,29 @@ keep going past five; the list below is a starting point, not a limit.
 (If you lose track of where you are, press **Snapshot A** to start a fresh
 comparison from wherever the synth is now, then carry on as above.)
 
-**The controls, in this order:**
+**The controls, in this order.** These are not arbitrary — each one settles a
+place where our two reference documents contradict each other, in the order of
+how much trouble the disagreement would cause:
 
-1. **Master tune** — press **System**, scroll to the tuning page
-2. **A filter cutoff** — press **5 · Filter**, change FC1 cutoff
-3. **Wavesample volume** — press **6 · Amp**
-4. **Pan** — also on the Amp page
-5. **An envelope level** — press **1 · Env 1**, change one of the levels
+1. **Wavesample pan** — press **6 · Amp**, change Pan. The two references
+   disagree outright about where pan lives, and getting it wrong means every
+   restored instrument comes back with its stereo image scrambled.
+2. **An envelope level** — press **1 · Env 1** and change **Level 1 Soft**, then
+   do a second round changing **Level 4 Hard**. One reference gives both of
+   those the same number, which cannot be right, and the two rounds together
+   say which one it actually is.
+3. **Root key** — press **4 · Pitch**. The app writes this on every upload.
+4. **Layer velocity range** — press **9 · Layer**, change Velocity Low.
+5. **Instrument transpose** — press **Instrument**, change the transpose amount.
 
 Five is plenty. Three is useful. If you tire of it, stop wherever you are.
 
 > ⚠️ **Do not change the MIDI base channel.** The messages the app sends are
 > addressed by base channel, so the moment you change it the synth stops
 > listening and the session ends.
+>
+> ⚠️ **Do not go to the Effects pages.** Nothing there is being tested, and it
+> is where the machine has crashed.
 
 Some numbers will appear in every single table — free memory changes on its own,
 for instance. Ignore those. The one we want is the one that moved by about the

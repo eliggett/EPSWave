@@ -266,18 +266,35 @@ class EPS16 {
      * run $00 to $08, so the cap covers all of it and still stops short of what
      * hurts a 16 PLUS.
      */
+    /***
+     * `instrument: true` marks the pages that make up an instrument and its
+     * wavesamples — which is to say, the ones that matter if all you want to do
+     * is read and write instruments and wavesamples.
+     *
+     * That is the whole of section 7's three blocks expressed one parameter at
+     * a time: the wavesample's own fields, its three envelopes, and its pitch,
+     * filter, amp and LFO pages, plus the layer and the instrument. What it
+     * leaves out is everything about the machine rather than the sound — the
+     * sequencer, the track mixer, the system and MIDI settings, the edit
+     * context, and the effects.
+     *
+     * Leaving the effects page out is also what makes the default safe. Both
+     * times an EPS-16 PLUS crashed with "Error 129 — Reboot?" it had just been
+     * asked about effects, and effects have nothing to do with either of those
+     * two capabilities.
+     */
     static PARAMETER_PAGES = [
         { byte: 0x00, name: "track" },
-        { byte: 0x04, name: "envelope 1" },
-        { byte: 0x08, name: "envelope 2" },
-        { byte: 0x0C, name: "envelope 3" },
-        { byte: 0x10, name: "pitch" },
-        { byte: 0x14, name: "filter" },
-        { byte: 0x18, name: "amp" },
-        { byte: 0x1C, name: "LFO" },
-        { byte: 0x20, name: "wavesample" },
-        { byte: 0x24, name: "layer" },
-        { byte: 0x28, name: "instrument" },
+        { byte: 0x04, name: "envelope 1", instrument: true },
+        { byte: 0x08, name: "envelope 2", instrument: true },
+        { byte: 0x0C, name: "envelope 3", instrument: true },
+        { byte: 0x10, name: "pitch", instrument: true },
+        { byte: 0x14, name: "filter", instrument: true },
+        { byte: 0x18, name: "amp", instrument: true },
+        { byte: 0x1C, name: "LFO", instrument: true },
+        { byte: 0x20, name: "wavesample", instrument: true },
+        { byte: 0x24, name: "layer", instrument: true },
+        { byte: 0x28, name: "instrument", instrument: true },
         { byte: 0x2C, name: "sequence" },
         { byte: 0x30, name: "effects (16+) / MIDI (Classic)", maxItem: 0x09 },
         { byte: 0x34, name: "system/MIDI" },
@@ -286,6 +303,15 @@ class EPS16 {
 
     static parameterPage(highByte){
         return EPS16.PARAMETER_PAGES.find(page => page.byte == highByte) || null
+    }
+
+    /*** The pages an instrument is made of. The default for a sweep. */
+    static instrumentPages(){
+        return EPS16.PARAMETER_PAGES.filter(page => page.instrument).map(page => page.byte)
+    }
+    /*** Every page section 9 documents, effects and system settings included. */
+    static allParameterPages(){
+        return EPS16.PARAMETER_PAGES.map(page => page.byte)
     }
 
     /***
