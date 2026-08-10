@@ -92,6 +92,18 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
             self.close_connection = True
 
     def log_error(self, fmt, *args):
+        # An idle kept-alive connection hitting the timeout above is the normal
+        # end of that connection's life, not a fault. BaseHTTPRequestHandler
+        # catches the timeout itself and logs "Request timed out: ..." before
+        # this wrapper ever sees the exception, so it has to be filtered here.
+        #
+        # It arrives in bursts of six, which is how many connections a browser
+        # opens per host, roughly `timeout` seconds after the page finished
+        # loading. That lands in the middle of whatever you happened to be
+        # doing at the time and reads like a fault in it — which is exactly how
+        # it was first reported, against a block dump it had nothing to do with.
+        if fmt.startswith('Request timed out'):
+            return
         # The base class routes 404s through here as well as real faults; keep
         # them, but without the alarming formatting.
         self.log_message(fmt, *args)
