@@ -2852,14 +2852,7 @@ class EPS16 {
             this.errorCallback("Error: No MIDI output selected, cannot send to the EPS16+")
             return false
         }
-        let packet = [
-            0xF0,
-            0x0F,
-            0x03,
-            this.baseChannel & 0x0F
-        ]
-        packet = packet.concat(message)
-        packet.push(0xf7)
+        const packet = this.sysexPacket(message)
         console.log("Send ->", packet)
         this.midiCallback("->", packet)
         // Anything still sitting in the queue belongs to a command that has
@@ -3244,8 +3237,113 @@ class EPS16 {
         if(params.length == 0) return 0
         return this.readSampleRate(params)
     }
+    /***
+     * Which instrument this app puts in the header of the messages it sends.
+     *
+     * THIS DOES NOT TOUCH THE SYNTH. Every command carries an edit context, so
+     * changing this changes who the next command is about — but the machine's
+     * own selection, the one lit on the front panel and the one section 9.11
+     * calls Current Edit Instr., is untouched and stays wherever the player
+     * left it. For that, see selectInstrumentOnSynth.
+     */
     setInstrumentNumber(num){
         this.instNum = num
+    }
+    /*** Section 4.3 command 40, VIRTUAL BUTTON PRESS. */
+    static COMMAND_VIRTUAL_BUTTON = 0x40
+    /***
+     * Section 6 button numbers. Instruments 1 to 8 are 00 to 07, and the
+     * Classic agrees: reference/code/eps2.0/include/eps.h gives the same
+     * BUT_INST_1 through BUT_INST_8.
+     */
+    static BUTTON_INSTRUMENT_1 = 0x00
+    /*** Section 9.11, the machine's own idea of what is selected. */
+    static EDIT_CONTEXT_PAGE = 0x38
+    static EDIT_CONTEXT_INSTRUMENT_ITEM = 0x00
+
+    /***
+     * The bytes of a VIRTUAL BUTTON PRESS, without the sysex frame.
+     *
+     * NO EDIT CONTEXT. Command 40 sits in section 4.3, whose preamble says all
+     * instrument editing commands carry the instrument, layer and wavesample —
+     * but 40's own parameter list is two bytes of button number and nothing
+     * else, and the worked example in section 6 is `F0 0F 03 00 40 00 14 F7`,
+     * eight bytes with no context in them. epsPushButton in
+     * reference/code/eps2.0/libsrc/button.c builds exactly those eight bytes.
+     * Two sources and a shipped implementation agree, so the preamble is the
+     * one that is wrong here.
+     */
+    buttonMessage(button){
+        return [EPS16.COMMAND_VIRTUAL_BUTTON, (button >> 6) & 0x3F, button & 0x3F]
+    }
+    /*** The complete packet, frame and all, as it goes onto the wire. */
+    sysexPacket(message){
+        return [0xF0, 0x0F, 0x03, this.baseChannel & 0x0F].concat(message, [0xF7])
+    }
+    /*** A packet written the way this project's logs and the manual write them. */
+    static packetHex(bytes){
+        return Array.from(bytes)
+            .map(b => Number(b).toString(16).toUpperCase().padStart(2, "0")).join(" ")
+    }
+    /***
+     * Presses a button on the front panel, for real.
+     *
+     * Routed through sendCommand so a busy synth is waited out rather than
+     * counted as a refusal.
+     */
+    async pushButton(button, label){
+        return await this.sendCommand(this.buttonMessage(button),
+            label || `virtual button press $${EPS16.packetHex([button])}`)
+    }
+    /***
+     * Moves the synth's own selection to an instrument, and says whether it
+     * went.
+     *
+     * There is no command that sets the current edit instrument as a value.
+     * Section 9.11 lists it as "receive only", which per NOTE 1 of section 9
+     * means it answers a GET but is not sent when the front panel changes; it
+     * is not a promise that a PUT will be honoured. Pressing the button is what
+     * a person would do and is the one route both machines document.
+     *
+     * The result is read back rather than assumed. An ACK only says the packet
+     * was understood, and the whole reason this exists is that something which
+     * looked like it selected an instrument turned out not to.
+     */
+    async selectInstrumentOnSynth(number, say = () => {}){
+        const button = EPS16.BUTTON_INSTRUMENT_1 + number
+        const packet = this.sysexPacket(this.buttonMessage(button))
+        say(`Switching to instrument number ${number + 1} using command: `
+            + EPS16.packetHex(packet)
+            + ` (VIRTUAL BUTTON PRESS, button $${EPS16.packetHex([button])} = `
+            + `Instrument ${number + 1})`)
+
+        const status = await this.pushButton(button, `select instrument ${number + 1}`)
+        this.setInstrumentNumber(number)
+
+        say(`Verifying by reading the current instrument number and current `
+            + `instrument name`)
+        const current = await this.getParameter(EPS16.EDIT_CONTEXT_PAGE,
+            EPS16.EDIT_CONTEXT_INSTRUMENT_ITEM)
+        const reported = current.answered ? current.value : null
+        say(reported == null
+            ? `Current Edit Instr. ($38 $00) did not answer`
+              + (current.status >= 0 ? `: ${this.statusText(current.status)}` : "")
+            : `Current Edit Instr. ($38 $00) = ${reported} (instrument ${reported + 1})`)
+
+        const params = await this.getInstrumentParams()
+        const name = params.length ? this.lastInstrumentName : null
+        say(name == null
+            ? `The instrument block did not come back, so there is no name to read`
+            : `Instrument name: "${name}"`)
+
+        const ok = status == 0x00 && reported === number
+        say(ok
+            ? `Instrument ${number + 1} is selected on the synth.`
+            : `Instrument ${number + 1} is NOT confirmed selected `
+              + `(button press ${this.statusText(status)}, `
+              + `synth says ${reported == null ? "nothing" : reported + 1}).`)
+
+        return { ok, requested: number, reported, name, status, packet }
     }
     /***
      * Which machine is believed to be on the other end.

@@ -213,10 +213,28 @@ from the EPS-16 PLUS figures in brackets, that is a discovery, not a fault.
 The empty instrument slots will report "Invalid Instrument". That is correct and
 expected — it is how the app finds out which slots are in use.
 
-The last line will say something like *"Now addressing instrument 1, layer 1,
-wavesample 1"*. The dump walks all eight instruments, and every question the app
-asks afterwards is about whichever one it is pointed at, so it deliberately
-returns to instrument 1 at the end. That keeps everything in Part 6 comparable.
+The dump walks all eight instruments, and every question the app asks afterwards
+is about whichever one it is pointed at, so it deliberately goes back to
+instrument 1 at the end. That keeps everything in Part 6 comparable. The last few
+lines are it doing that and checking that it worked:
+
+```
+Switching to instrument number 1 using command: F0 0F 03 00 40 00 00 F7 (VIRTUAL BUTTON PRESS, button $00 = Instrument 1)
+Verifying by reading the current instrument number and current instrument name
+Current Edit Instr. ($38 $00) = 0 (instrument 1)
+Instrument name: "GRAND-PNO"
+Instrument 1 is selected on the synth.
+Now addressing instrument 1, layer 1, wavesample 1
+```
+
+It presses the **Instrument 1** button for you, exactly as if you had reached
+over and pressed it, then reads the selection back rather than assuming it took.
+**Glance at the synth's display and check that it agrees**, and check that the
+name in the log is the instrument you have in slot 1. If the last line instead
+says *"Instrument 1 is NOT confirmed selected"*, press **Instrument 1** on the
+front panel yourself before carrying on, and please mention it when you send the
+files — that would itself be a finding.
+
 **Do not change the instrument selection during Part 6** — the app warns you if
 two sweeps were taken against different ones, because the difference looks
 exactly like a control having moved.

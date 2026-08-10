@@ -593,7 +593,7 @@ class EPSProbe {
                 //
                 // Parking somewhere fixed and known makes the selection a
                 // constant rather than a variable nobody was tracking.
-                this.parkOn(EPSProbe.RESTING_INSTRUMENT, found)
+                await this.parkOn(EPSProbe.RESTING_INSTRUMENT, found)
             }
 
             // The measurement this probe exists for, stated plainly so it is
@@ -639,7 +639,7 @@ class EPSProbe {
      * So the dump's own findings are used where they are available, and where
      * they are not it falls back to the first of each and says so.
      */
-    parkOn(instrumentNumber, found = []){
+    async parkOn(instrumentNumber, found = []){
         const entry = found.find(i => i && !i.empty && i.number == instrumentNumber)
         let layer = 0
         let wavesample = 1
@@ -652,11 +652,34 @@ class EPSProbe {
             if(liveLayer){ layer = liveLayer.layer; informed = true }
             if(liveWs){ wavesample = liveWs.number; informed = true }
         }
+        // Two separate things, and the second is the one that was missing.
+        //
+        // These three lines only change who the *next message* is addressed to.
+        // The synth's own selection — the instrument lit on the front panel —
+        // is a different piece of state entirely, and nothing here touched it,
+        // which is why a dump kept ending with instrument 8 selected however
+        // often this said it had parked on 1.
         this.eps.setInstrumentNumber(instrumentNumber)
         this.eps.setLayerNumber(layer)
         this.eps.setWavesampleNumber(wavesample)
 
-        const target = { instrument: instrumentNumber, layer, wavesample, informed }
+        // So press the button, and then check, out loud, that it took.
+        const selection = await this.eps.selectInstrumentOnSynth(instrumentNumber,
+            text => this.log(text))
+        this.capture.event("finding", { probe: "addressing", what: "selected on the synth",
+            requested: selection.requested, reported: selection.reported,
+            name: selection.name, ok: selection.ok, status: selection.status,
+            packet: EPS16.packetHex(selection.packet),
+            note: "VIRTUAL BUTTON PRESS of the Instrument button, then Current "
+                + "Edit Instr. ($38 $00) and the instrument block's name read "
+                + "back to confirm it." })
+        if(!selection.ok){
+            this.log(`NOTE: the synth did not confirm instrument ${instrumentNumber + 1}. `
+                + `Anything read after this may be about a different instrument.`)
+        }
+
+        const target = { instrument: instrumentNumber, layer, wavesample, informed,
+            selected: selection.ok, reported: selection.reported, name: selection.name }
         this.capture.event("finding", { probe: "addressing", what: "parked",
             ...target,
             note: "Everything after this addresses these numbers until something "

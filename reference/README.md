@@ -23,6 +23,8 @@ The items under [disks](disks/) really are instruments (likely from disks) which
 
 The files in [code/eps2.0/](code/eps2.0/) were found [here](https://web.archive.org/web/20041024220132/http://soundcentral.com/cats/keyboard/ensoniq/info.shtml) using the wayback machine. They represent the work of  Andrew Arensburger in 1992 to manipulate his EPS over MIDI. There is probably some level of EPS-16+ compatibility here but it is unconfirmed. I wish I had found this code before working on EPSWave. Unfortunately, I started the project without it. It's preserved here for future ideas and due to it's historic value. Edit: The code was helpfull in filling in some details about the classic EPS format, which this project can now import. 
 
+The files in [code/eps_disk_util](code/eps_disk_util/) were also found on the Internet Archive of Sound Central. They appear to be a MSDOS disk utility for Ensoniq disks. Totally untested but probably a good reference if you're working on raw disk access. 
+
 ## What is the disk format document?
 
 [epsdiskformat.txt](epsdiskformat.txt) is a file I found [here](https://web.archive.org/web/20041024220132/http://soundcentral.com/cats/keyboard/ensoniq/info.shtml). It details the very low-level filesystem and format of the EPS synth disks. If you want to build hardware or software to read the physical disks, start here. 
