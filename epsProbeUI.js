@@ -528,7 +528,14 @@ window.EPSProbeUI = {
     },
 
     showDiff(diff){
+        const where = diff.addressing || {}
         $("#probeOutput").html(`<h6 class="mb-2">What moved between sweeps</h6>`
+            + (where.same === false
+                ? `<p class="mb-2 text-danger"><b>These two sweeps were taken against `
+                    + `different instruments, layers or wavesamples.</b> What moved below is `
+                    + `that change of subject, not the control you changed. Re-take both `
+                    + `snapshots without changing the selection in between.</p>`
+                : "")
             + (diff.changed
                 ? `<p class="mb-2">You changed: <b>${EPSProbeUI.escape(diff.changed)}</b></p>`
                 : `<p class="mb-2 text-warning"><small>No change note was given, so this table `

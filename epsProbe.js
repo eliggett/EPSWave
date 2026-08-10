@@ -578,9 +578,22 @@ class EPSProbe {
                     found.push(entry)
                 }
             }finally{
-                this.eps.instNum = restore.inst
-                this.eps.layerNum = restore.layer
-                this.eps.wsBytes = restore.ws
+                // Not back to wherever it started — onto instrument 1, every
+                // time, including when the dump was stopped or threw.
+                //
+                // Every command carries an instrument, layer and wavesample in
+                // its header, so GET PARAMETER answers about whichever one the
+                // app is currently addressing. A dump walks all eight and used
+                // to leave the app pointed at the last one it touched, which
+                // silently became the subject of every parameter sweep that
+                // followed. Measured on hardware: the values read back really
+                // do change with the selection, so a sweep taken after a dump
+                // and one taken before it were not comparable, and neither was
+                // reliably about anything in particular.
+                //
+                // Parking somewhere fixed and known makes the selection a
+                // constant rather than a variable nobody was tracking.
+                this.parkOn(EPSProbe.RESTING_INSTRUMENT, found)
             }
 
             // The measurement this probe exists for, stated plainly so it is
@@ -604,6 +617,64 @@ class EPSProbe {
 
             return { instruments: found, lengths }
         })
+    }
+
+    /***
+     * Where everything is left pointing when a probe finishes: instrument 1.
+     */
+    static RESTING_INSTRUMENT = 0
+
+    /***
+     * Points the app at a known instrument, and at a layer and wavesample
+     * inside it that actually exist.
+     *
+     * The layer and wavesample matter as much as the instrument. Addressing
+     * instrument 1 layer 1 wavesample 1 sounds safe and is not: plenty of
+     * instruments have no layer 1 or no wavesample 1, and then every layer and
+     * wavesample parameter in a sweep answers with a refusal instead of a
+     * value. That would look like a machine with a much smaller parameter map
+     * than it has, which is exactly the wrong conclusion to hand back from a
+     * session that cannot be repeated.
+     *
+     * So the dump's own findings are used where they are available, and where
+     * they are not it falls back to the first of each and says so.
+     */
+    parkOn(instrumentNumber, found = []){
+        const entry = found.find(i => i && !i.empty && i.number == instrumentNumber)
+        let layer = 0
+        let wavesample = 1
+        let informed = false
+        if(entry){
+            const liveLayer = entry.layers.find(l => l.answered)
+            const liveWs = entry.wavesamples.find(w => w.answered
+                && (!liveLayer || w.layer == liveLayer.layer))
+                || entry.wavesamples.find(w => w.answered)
+            if(liveLayer){ layer = liveLayer.layer; informed = true }
+            if(liveWs){ wavesample = liveWs.number; informed = true }
+        }
+        this.eps.setInstrumentNumber(instrumentNumber)
+        this.eps.setLayerNumber(layer)
+        this.eps.setWavesampleNumber(wavesample)
+
+        const target = { instrument: instrumentNumber, layer, wavesample, informed }
+        this.capture.event("finding", { probe: "addressing", what: "parked",
+            ...target,
+            note: "Everything after this addresses these numbers until something "
+                + "changes them. GET PARAMETER answers about whatever is in the "
+                + "message header, so this is the subject of every later sweep." })
+        this.log(`Now addressing instrument ${instrumentNumber + 1}, layer ${layer + 1}, `
+            + `wavesample ${wavesample}`
+            + (informed ? " (found in the dump)" : " (nothing dumped to go on, so the first of each)"))
+        return target
+    }
+
+    /*** What the app is addressing right now, for the record. */
+    addressing(){
+        return {
+            instrument: this.eps.instNum,
+            layer: this.eps.layerNum,
+            wavesample: (this.eps.wsBytes[0] << 6) | this.eps.wsBytes[1]
+        }
     }
 
     /***
@@ -857,8 +928,15 @@ class EPSProbe {
         }
         const narrowed = options.only != null
 
+        // Which instrument, layer and wavesample this sweep is about. Recorded
+        // because it is not a detail: the values come back for whatever is in
+        // the message header, so two sweeps taken against different selections
+        // are measuring different things however alike their numbers look.
+        const addressing = this.addressing()
+
         return this.run("parameters", { pageFrom, pageTo, itemFrom, itemTo,
-                timeoutMs, gapMs: gap, label, narrowed, count: targets.length }, async () => {
+                timeoutMs, gapMs: gap, label, narrowed, count: targets.length,
+                addressing }, async () => {
             const values = []
             let answered = 0
 
@@ -894,13 +972,15 @@ class EPSProbe {
             }
 
             const live = values.filter(v => v.value !== null)
-            this.capture.event("finding", { probe: "parameters", label, narrowed,
+            this.capture.event("finding", { probe: "parameters", label, narrowed, addressing,
                 tried: values.length, answered: live.length,
                 pages: [...new Set(live.map(v => v.page))] })
-            this.log(`Parameter sweep "${label}"${narrowed ? " (narrowed)" : ""}: `
+            this.log(`Parameter sweep "${label}"${narrowed ? " (narrowed)" : ""} `
+                + `on instrument ${addressing.instrument + 1}, layer ${addressing.layer + 1}, `
+                + `wavesample ${addressing.wavesample}: `
                 + `${live.length} of ${values.length} numbers returned a value, on pages `
                 + `${[...new Set(live.map(v => "$" + v.page.toString(16).padStart(2, "0")))].join(", ")}`)
-            return { label, values, narrowed,
+            return { label, values, narrowed, addressing,
                 answered: live.length, tried: values.length,
                 // The live set, ready to be handed back as `only` next time.
                 live: live.map(v => ({ page: v.page, item: v.item })) }
@@ -934,11 +1014,26 @@ class EPSProbe {
                 delta: (was.value == null || record.value == null)
                     ? null : record.value - was.value })
         }
+        // Two sweeps taken against different instruments, layers or wavesamples
+        // are not comparable, and the difference does not announce itself: the
+        // table looks exactly like a table of parameters that moved because
+        // somebody turned a knob. This is how that confound was found in the
+        // first place, so it is checked rather than trusted.
+        const targetKey = (a) => a ? `${a.instrument},${a.layer},${a.wavesample}` : "unknown"
+        const sameTarget = targetKey(before.addressing) == targetKey(after.addressing)
+
         // `changed` is what the operator says they altered on the front panel.
         // It is the other half of the measurement: a list of numbers that moved
         // means nothing on its own, and the two have to be one record rather
         // than two entries that happen to be adjacent in the file.
-        const report = { before: before.label, after: after.label, changed, changes }
+        const report = { before: before.label, after: after.label, changed, changes,
+            addressing: { before: before.addressing || null, after: after.addressing || null,
+                same: sameTarget } }
+        if(!sameTarget){
+            this.log(`WARNING: these two sweeps were taken against different targets `
+                + `(${targetKey(before.addressing)} then ${targetKey(after.addressing)}), so what moved `
+                + `below is the change of subject, not the control you changed.`)
+        }
         this.capture.event("finding", { probe: "parameter-diff", ...report })
         this.log(`Parameter diff ${before.label} → ${after.label}`
             + (changed ? ` [${changed}]` : "") + ": "

@@ -211,6 +211,14 @@ from the EPS-16 PLUS figures in brackets, that is a discovery, not a fault.
 The empty instrument slots will report "Invalid Instrument". That is correct and
 expected — it is how the app finds out which slots are in use.
 
+The last line will say something like *"Now addressing instrument 1, layer 1,
+wavesample 1"*. The dump walks all eight instruments, and every question the app
+asks afterwards is about whichever one it is pointed at, so it deliberately
+returns to instrument 1 at the end. That keeps everything in Part 6 comparable.
+**Do not change the instrument selection during Part 6** — the app warns you if
+two sweeps were taken against different ones, because the difference looks
+exactly like a control having moved.
+
 ---
 
 # Part 6 — Find the parameter numbers (about 15 minutes)
