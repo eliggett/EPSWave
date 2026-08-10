@@ -96,6 +96,61 @@ window.EPSWaveUI = {
     },
 
     /***
+     * Every part of the debug layer, wired so that it cannot take the rest of
+     * the app down with it.
+     *
+     * THIS GUARD IS NOT THEORETICAL. These three calls sit part way through the
+     * page's start up, before the editor builds its tabs. Rename one of the new
+     * script files, or let one 404 out of a stale cache, and `EPSProbeUI` is
+     * simply not defined: the ReferenceError propagates out of the ready
+     * handler and everything after it never runs. Measured on a tree with
+     * epsProbeUI.js removed, the editor came up with one tab instead of two,
+     * one canvas instead of three and half its buttons missing — a page that
+     * looks loaded and is not.
+     *
+     * The probes are a diagnostic aid for a handful of people characterising an
+     * unfamiliar machine. Nobody's sampler transfer should ever fail because of
+     * them, so a failure here costs the Debug switch and nothing else.
+     */
+    wireDebugTools(eps){
+        // The model dropdown is part of this file and is wired on its own, so
+        // it survives the probes being unavailable.
+        try{
+            EPSWaveUI.wireModel(eps)
+        }catch(error){
+            console.error("EPSWave: the model selector could not be wired.", error)
+        }
+        try{
+            // Both, checked up front. A half wired panel is worse than none: the
+            // switch would fold the page away and reveal an empty card, and the
+            // failure would only show up later as a dead button.
+            // EPSProbe is named bare, not as window.EPSProbe. A top level
+            // `class` declaration lives in the global lexical scope, so the
+            // name resolves but the window property is undefined — the same
+            // trap that once silently skipped every canvas repaint. EPSProbeUI
+            // is an object literal assigned to window, so either form works
+            // there; this one matches how each is actually declared.
+            if(!window.EPSProbeUI || typeof EPSProbe == "undefined"
+                    || typeof EPSCapture == "undefined"){
+                throw new Error("epsProbe.js or epsProbeUI.js did not load")
+            }
+            EPSProbeUI.init(eps)
+            EPSWaveUI.wireDebug()
+            return true
+        }catch(error){
+            console.error("EPSWave: the debug tools could not be set up, so they "
+                + "have been switched off. The rest of the app is unaffected.", error)
+            // Take the switch away rather than leave one that does nothing.
+            const toggle = document.getElementById("debugMode")
+            const holder = toggle ? toggle.closest(".custom-control") : null
+            if(holder) holder.style.display = "none"
+            const panel = document.getElementById("debugPanel")
+            if(panel) panel.style.display = "none"
+            return false
+        }
+    },
+
+    /***
      * Fills and wires #connectedModel, if the page has one. onChange is for
      * anything that has to react; nothing does yet.
      */

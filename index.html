@@ -576,12 +576,11 @@
             })
             EPSWaveUI.wireMidi(eps)
 
-            // After the two callbacks above, and in this order: the probe
-            // capture wraps whatever is already installed so that starting a
-            // capture does not silence the event log. See EPSProbe.attach.
-            EPSWaveUI.wireModel(eps)
-            EPSProbeUI.init(eps)
-            EPSWaveUI.wireDebug()
+            // After the two callbacks above: the probe capture wraps whatever
+            // is already installed so that starting a capture does not silence
+            // the event log. See EPSProbe.attach. Guarded, because the tabs are
+            // built below this line — see EPSWaveUI.wireDebugTools.
+            EPSWaveUI.wireDebugTools(eps)
 
             // Every tab, in the order the tabs are shown. Rebuilt from the DOM
             // rather than maintained by hand, because the tabs can be dragged
