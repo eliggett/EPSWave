@@ -174,6 +174,7 @@ window.EPSProbeUI = {
             id: "ws-pan",
             title: "Wavesample pan",
             button: "6 &middot; Amp",
+            block: "wavesample",
             what: "Change <b>Pan</b> by a good distance &mdash; from centre to hard "
                 + "left, say, or from 0 to -50.",
             why: "This is the disagreement that matters most. Section 7.3 of the "
@@ -185,33 +186,38 @@ window.EPSProbeUI = {
                 + "image scrambled."
         },
         {
-            id: "env-l1s",
-            title: "Envelope 1, Level 1 Soft",
+            id: "env-l2s",
+            title: "Envelope 1, Level 2 Soft",
             button: "1 &middot; Env 1",
-            what: "Find <b>Level 1</b> and change its <b>soft</b> value &mdash; the one "
-                + "that applies when you play gently. Move it a long way.",
-            why: "The 1992 library gives Level 1 Soft and Level 4 Hard the same "
-                + "parameter number, which cannot be true of both. The EPS-16 PLUS "
-                + "manual says that number is Level 4 Hard and that Level 1 Soft is "
-                + "the next one along, a number the library does not list at all. "
-                + "This step and the next one together say which is which on your "
-                + "machine."
+            block: "wavesample",
+            what: "Find <b>Level 2</b> and change its <b>soft</b> value &mdash; the one "
+                + "that applies when you play gently. Move it a long way, to 99 or to 0.",
+            why: "Two documents describe this envelope and they number its levels "
+                + "differently: your manual counts the five levels 1 to 5, and the "
+                + "MIDI specification counts the same five 0 to 4. So the level your "
+                + "panel calls 2 is the one the specification calls 1 &mdash; and that "
+                + "is the one where the 1992 library contradicts itself, giving Level "
+                + "1 Soft and Level 4 Hard the same number. This step and the next "
+                + "one together say which of them actually owns it."
         },
         {
-            id: "env-l4h",
-            title: "Envelope 1, Level 4 Hard",
+            id: "env-l5h",
+            title: "Envelope 1, Level 5 Hard",
             button: "1 &middot; Env 1",
-            what: "Now change <b>Level 4</b>'s <b>hard</b> value &mdash; the sustain "
-                + "level when you play firmly. Again, move it a long way.",
-            why: "The other half of the previous question. If the two steps move "
-                + "different numbers, the manual is right and the library has a "
-                + "typo. If they move the same number, something stranger is going "
-                + "on and we very much want to know."
+            block: "wavesample",
+            what: "Now change <b>Level 5</b>'s <b>hard</b> value &mdash; the last level, "
+                + "as it sounds when you play firmly. Again, move it a long way.",
+            why: "The other half of the previous question: your panel's Level 5 is the "
+                + "specification's Level 4. If these two steps move different numbers "
+                + "then the specification is right and the library has a typo we can "
+                + "correct. If they move the same number, something stranger is "
+                + "happening and we very much want to know about it."
         },
         {
             id: "root-key",
             title: "Root key",
             button: "4 &middot; Pitch",
+            block: "wavesample",
             what: "Change the <b>root key</b> by an octave or so.",
             why: "The app writes this every time it sends a wavesample, so it has "
                 + "to be right. Both references agree on where it lives, which "
@@ -222,6 +228,7 @@ window.EPSProbeUI = {
             id: "layer-velocity",
             title: "Layer velocity range",
             button: "9 &middot; Layer",
+            block: "layer",
             what: "Change <b>velocity low</b> from 0 to something well above it, 64 "
                 + "for instance.",
             why: "On the EPS-16 PLUS the layer's settings are packed two to a word, "
@@ -234,6 +241,7 @@ window.EPSProbeUI = {
             id: "inst-transpose",
             title: "Instrument transpose",
             button: "Instrument",
+            block: "instrument",
             what: "Change the <b>transpose</b> amount by a few semitones.",
             why: "Transposition is stored as a signed value, and signed values are "
                 + "where two machines most often disagree about which half of a "
@@ -462,8 +470,21 @@ window.EPSProbeUI = {
                 if(!baseline) return null
 
                 const done = []
+                const blockKinds = {
+                    wavesample: EPS16.BLOCK_WAVESAMPLE,
+                    layer: EPS16.BLOCK_LAYER,
+                    instrument: EPS16.BLOCK_INSTRUMENT
+                }
+
                 for(let index = 0; index < EPSProbeUI.GUIDED_STEPS.length; index++){
                     const step = EPSProbeUI.GUIDED_STEPS[index]
+                    // The block as it stands before the control is touched.
+                    // Taken now rather than reused from an earlier step, so the
+                    // pair either side of the change cannot be separated by
+                    // anything else that happened in between.
+                    const kind = blockKinds[step.block]
+                    const beforeBlock = kind
+                        ? await this.probe.block(kind, `${step.id}: before`) : null
                     this.showStatus(`Guided testing: waiting for you — ${step.title}`, null)
                     const choice = await EPSWaveUI.choose(
                         `Step ${index + 1} of ${EPSProbeUI.GUIDED_STEPS.length}: `
@@ -499,12 +520,26 @@ window.EPSProbeUI = {
                         break
                     }
 
+                    // The block first, because it is one command and the
+                    // parameter sweep is a hundred and fifty. If the operator
+                    // is going to touch the synth again, better it happens
+                    // after both readings than between them.
+                    let blockDiff = null
+                    if(beforeBlock && beforeBlock.answered){
+                        const afterBlock = await this.probe.block(kind, `${step.id}: after`)
+                        if(afterBlock.answered){
+                            blockDiff = this.probe.diffBlocks(
+                                beforeBlock.words, afterBlock.words, step.block)
+                        }
+                    }
+
                     const after = await this.probe.probeParameters(
                         { ...options(), only: this.liveSet, label: step.id })
                     if(!after) break
                     const diff = this.probe.diffParameters(baseline, after, step.title)
-                    this.showDiff(diff)
-                    done.push({ step: step.id, moved: diff.changes.length })
+                    this.showDiff(diff, blockDiff)
+                    done.push({ step: step.id, moved: diff.changes.length,
+                        words: blockDiff ? blockDiff.changes.length : null })
                     if(diff.changes.length == 0){
                         this.say(`Nothing moved for ${step.title}. That is a result too — it may `
                             + `mean this control is not reachable over MIDI on this machine, or `
@@ -750,7 +785,7 @@ window.EPSProbeUI = {
             .show()
     },
 
-    showDiff(diff){
+    showDiff(diff, blockDiff){
         const where = diff.addressing || {}
         $("#probeOutput").html(`<h6 class="mb-2">What moved between sweeps</h6>`
             + (where.same === false
@@ -775,8 +810,37 @@ window.EPSProbeUI = {
                     + `</tbody></table>`
                     + `<p class="mt-2 mb-0"><small>Values that drift on their own — free memory, `
                     + `anything the sequencer touches — turn up here every time. The one you want `
-                    + `is the one that moved by the amount you moved the control.</small></p>`))
+                    + `is the one that moved by the amount you moved the control.</small></p>`)
+            + EPSProbeUI.blockDiffHtml(blockDiff))
             .show()
+    },
+
+    /***
+     * Which words of the parameter block moved, and which half of each.
+     *
+     * The half is the whole point. Both references agree that word 105 holds
+     * pan; they disagree about whether it is the high byte or the low one, and
+     * this is the only thing in the session that answers that directly.
+     */
+    blockDiffHtml(blockDiff){
+        if(!blockDiff) return ""
+        if(blockDiff.changes.length == 0){
+            return `<p class="mt-3 mb-0"><b>${EPSProbeUI.escape(blockDiff.block)} block:</b> `
+                + `no word changed. If a parameter moved above, the two are not the same `
+                + `field &mdash; which is worth knowing on its own.</p>`
+        }
+        return `<h6 class="mt-3 mb-2">Where it lives in the `
+            + `${EPSProbeUI.escape(blockDiff.block)} block</h6>`
+            + `<table class="table table-sm table-bordered mb-0"><thead><tr>`
+            + `<th>Word</th><th>Was</th><th>Now</th><th>Which half</th></tr></thead><tbody>`
+            + blockDiff.changes.map(c => `<tr><td>${c.word}</td>`
+                + `<td>$${EPSProbeUI.h2(c.fromHi)} $${EPSProbeUI.h2(c.fromLo)}</td>`
+                + `<td>$${EPSProbeUI.h2(c.toHi)} $${EPSProbeUI.h2(c.toLo)}</td>`
+                + `<td><b>${c.half}</b>`
+                + (c.half == "low" ? ` (${c.fromLo} &rarr; ${c.toLo})`
+                    : c.half == "high" ? ` (${c.fromHi} &rarr; ${c.toHi})` : "")
+                + `</td></tr>`).join("")
+            + `</tbody></table>`
     },
 
     /***

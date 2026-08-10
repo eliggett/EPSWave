@@ -1116,6 +1116,49 @@ class EPSProbe {
     }
 
     /***
+     * Two parameter blocks, word by word.
+     *
+     * This is what the differential test was missing. Watching which parameter
+     * number moves says what a control is called on the wire; watching which
+     * word of the block moves says where it lives in the data an instrument is
+     * actually made of — and that is the question that decides whether writing
+     * an instrument back to a machine works.
+     *
+     * The high and low halves are reported separately because that is the exact
+     * form the disagreement takes. Section 7.3 and eps.h agree that word 105
+     * holds pan and disagree about which half of it, and no amount of reading
+     * parameter numbers settles that. One block dump either side of somebody
+     * moving the pan control does, in one line.
+     */
+    diffBlocks(before, after, label){
+        const changes = []
+        const shared = Math.min(before.length, after.length)
+        for(let word = 0; word < shared; word++){
+            if(before[word] == after[word]) continue
+            changes.push({ word,
+                from: before[word], to: after[word],
+                fromHi: (before[word] >> 8) & 0xFF, toHi: (after[word] >> 8) & 0xFF,
+                fromLo: before[word] & 0xFF, toLo: after[word] & 0xFF,
+                half: (before[word] >> 8) != (after[word] >> 8)
+                    ? ((before[word] & 0xFF) != (after[word] & 0xFF) ? "both" : "high")
+                    : "low" })
+        }
+        const report = { block: label, words: shared, changes }
+        this.capture.event("finding", { probe: "block-diff", ...report })
+        if(changes.length == 0){
+            this.log(`${label} block: nothing changed.`)
+        }else{
+            this.log(`${label} block: ` + changes.map(c =>
+                `word ${c.word} $${EPSProbe.hex4(c.from)}→$${EPSProbe.hex4(c.to)} `
+                + `(${c.half} byte: ${c.half == "low" ? `${c.fromLo}→${c.toLo}`
+                    : `${c.fromHi}→${c.toHi}`})`).join(", "))
+        }
+        return report
+    }
+
+    static hex4(value){ return Number(value).toString(16).toUpperCase().padStart(4, "0") }
+
+    /***
      * PROBE C — wavedata.
      *
      * Two halves. The read half is safe on any machine: pull samples out of the

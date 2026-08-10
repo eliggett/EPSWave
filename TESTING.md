@@ -266,6 +266,16 @@ Each dialog also offers:
 There are six controls. Getting through three is useful; all six is a good
 session. Nothing is lost if you stop early.
 
+**A note on the envelope steps.** Two of them ask for envelope levels. Your
+manual numbers the five levels 1 to 5; the MIDI specification numbers the same
+five 0 to 4. The dialogs use *your* numbering, the one printed on the synth and
+in your manual, so just do what they say — the offset is ours to worry about.
+
+**Each step also reads the data block** either side of your change, not just the
+parameter list. That is what tells us which word of an instrument holds each
+setting, and which half of that word, which is the single most useful thing this
+whole session produces.
+
 **If a step reports that nothing moved**, that is a result, not a failure. It may
 mean the control is not reachable over MIDI on your machine, which is exactly
 the sort of thing we are trying to find out. Carry on to the next step.
