@@ -287,8 +287,8 @@ window.EPSProbeUI = {
             const result = await this.guarded(
                 `Parameter sweep (${label})${only ? " — narrowed" : ""}`, () =>
                 this.probe.probeParameters({
-                    pageFrom: this.hex("sweepPageFrom", 0x00),
-                    pageTo: this.hex("sweepPageTo", 0x0F),
+                    pages: EPSProbeUI.parseBytes(this.val("sweepPages")).length
+                        ? EPSProbeUI.parseBytes(this.val("sweepPages")) : undefined,
                     itemFrom: this.hex("sweepItemFrom", 0x00),
                     itemTo: this.hex("sweepItemTo", 0x1F),
                     timeoutMs: this.num("sweepTimeout", 400),
@@ -782,17 +782,6 @@ window.EPSProbeUI = {
                     <div class="col-auto mb-2">
                         <div class="input-group input-group-sm">
                             <div class="input-group-prepend">
-                                <label class="input-group-text">Pages $</label>
-                            </div>
-                            <input type="text" class="form-control" id="sweepPageFrom" value="00"
-                                style="max-width:4rem">
-                            <input type="text" class="form-control" id="sweepPageTo" value="0F"
-                                style="max-width:4rem">
-                        </div>
-                    </div>
-                    <div class="col-auto mb-2">
-                        <div class="input-group input-group-sm">
-                            <div class="input-group-prepend">
                                 <label class="input-group-text">Items $</label>
                             </div>
                             <input type="text" class="form-control" id="sweepItemFrom" value="00"
@@ -800,6 +789,23 @@ window.EPSProbeUI = {
                             <input type="text" class="form-control" id="sweepItemTo" value="1F"
                                 style="max-width:4rem">
                         </div>
+                    </div>
+                    <div class="col-12 mb-2">
+                        <div class="input-group input-group-sm">
+                            <div class="input-group-prepend">
+                                <label class="input-group-text" for="sweepPages">
+                                    Pages (SysEx high bytes) $
+                                </label>
+                            </div>
+                            <input type="text" class="form-control" id="sweepPages"
+                                value="00 04 08 0C 10 14 18 1C 20 24 28 2C 30 34 38"
+                                title="The pages section 9 documents, in the order it lists them: track, envelopes 1-3, pitch, filter, amp, LFO, wavesample, layer, instrument, sequence, effects, system/MIDI, edit context. Adding anything else is exploring undefined territory — an EPS-16 PLUS crashed with Error 129 when asked for effects items past $09, which is why the effects page stops there whatever the item range says.">
+                        </div>
+                        <small class="text-muted">Section 9's own page list. The effects page
+                        <code>$30</code> is capped at item <code>$09</code> regardless of the
+                        range above &mdash; past that an EPS-16 PLUS crashes with
+                        <b>Error 129</b>. Adding pages not listed here is exploring, and
+                        exploring has already taken a synth down twice.</small>
                     </div>
                     <div class="col-auto mb-2">
                         <div class="input-group input-group-sm">

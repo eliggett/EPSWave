@@ -668,6 +668,8 @@ class EPSProbe {
         return target
     }
 
+    static hex2(value){ return Number(value).toString(16).toUpperCase().padStart(2, "0") }
+
     /*** What the app is addressing right now, for the record. */
     addressing(){
         return {
@@ -899,9 +901,24 @@ class EPSProbe {
      * panel, that is a small risk knowingly taken; the full range is still one
      * checkbox away.
      */
+    /***
+     * How many silent commands in a row mean the machine has gone, rather than
+     * one reply being missed.
+     *
+     * An invalid parameter number is answered — with $03, immediately — so
+     * silence is not how a synth says no. Six in a row is a machine that has
+     * stopped listening, and on an EPS-16 PLUS that has been seen to mean
+     * "Error 129 — Reboot?" on the display. Carrying on from there sends
+     * hundreds more commands into the void, wastes the rest of a session that
+     * may not be repeatable, and buries the one parameter that caused it under
+     * a wall of identical silence.
+     */
+    static SILENCE_IS_A_CRASH = 6
+
     async probeParameters(options = {}){
-        const pageFrom = options.pageFrom == null ? 0x00 : options.pageFrom
-        const pageTo = options.pageTo == null ? 0x0F : options.pageTo
+        // Section 9's own index: the SysEx high byte each table is headed with.
+        const pages = options.pages
+            || EPS16.PARAMETER_PAGES.map(page => page.byte)
         const itemFrom = options.itemFrom == null ? 0x00 : options.itemFrom
         const itemTo = options.itemTo == null ? 0x1F : options.itemTo
         const timeoutMs = options.timeoutMs || 400
@@ -922,8 +939,14 @@ class EPSProbe {
                 targets.push({ page: target.page, item: target.item })
             }
         }else{
-            for(let page = pageFrom; page <= pageTo; page++){
-                for(let item = itemFrom; item <= itemTo; item++) targets.push({ page, item })
+            for(const page of pages){
+                // Where a page has a documented end, stop there. The effects
+                // page is not merely undefined past item $09, it is dangerous;
+                // see EPS16.PARAMETER_PAGES.
+                const known = EPS16.parameterPage(page)
+                const last = known && known.maxItem != null
+                    ? Math.min(itemTo, known.maxItem) : itemTo
+                for(let item = itemFrom; item <= last; item++) targets.push({ page, item })
             }
         }
         const narrowed = options.only != null
@@ -934,11 +957,13 @@ class EPSProbe {
         // are measuring different things however alike their numbers look.
         const addressing = this.addressing()
 
-        return this.run("parameters", { pageFrom, pageTo, itemFrom, itemTo,
+        return this.run("parameters", { pages, itemFrom, itemTo,
                 timeoutMs, gapMs: gap, label, narrowed, count: targets.length,
                 addressing }, async () => {
             const values = []
             let answered = 0
+            let silent = 0
+            let crashedAt = null
 
             for(let done = 0; done < targets.length; done++){
                 this.check()
@@ -960,6 +985,27 @@ class EPSProbe {
                     status: answer.status,
                     statusText: this.eps.statusText(answer.status) }
                 values.push(record)
+
+                // Silence is not how a synth refuses; it answers $03 for that.
+                // A run of it means the machine has stopped listening, and the
+                // last thing it was asked is the interesting part.
+                silent = answer.answered ? 0 : silent + 1
+                if(silent >= EPSProbe.SILENCE_IS_A_CRASH){
+                    crashedAt = values[values.length - silent] || record
+                    const where = EPS16.parameterPage(crashedAt.page)
+                    this.capture.event("finding", { probe: "parameters",
+                        what: "the synth stopped answering", label,
+                        lastAnswered: values.filter(v => v.answered).slice(-1)[0] || null,
+                        firstSilent: crashedAt, silentInARow: silent })
+                    this.log(`STOPPED: the synth went quiet after `
+                        + `$${EPSProbe.hex2(crashedAt.page)} $${EPSProbe.hex2(crashedAt.item)}`
+                        + `${where ? ` (${where.name} page)` : ""}`
+                        + ` and has not answered ${silent} commands since. Check its display — `
+                        + `if it is showing an error, note the number in the capture and `
+                        + `reboot it. The sweep has stopped rather than sending hundreds more `
+                        + `commands into the dark.`)
+                    break
+                }
                 // Only the ones that said something go in the capture as their
                 // own line. Five hundred "invalid parameter number" lines would
                 // bury the sixty that matter, and the count of them is in the
@@ -984,14 +1030,14 @@ class EPSProbe {
 
             const live = values.filter(v => v.value !== null)
             this.capture.event("finding", { probe: "parameters", label, narrowed, addressing,
-                tried: values.length, answered: live.length,
+                tried: values.length, answered: live.length, crashedAt,
                 pages: [...new Set(live.map(v => v.page))] })
             this.log(`Parameter sweep "${label}"${narrowed ? " (narrowed)" : ""} `
                 + `on instrument ${addressing.instrument + 1}, layer ${addressing.layer + 1}, `
                 + `wavesample ${addressing.wavesample}: `
                 + `${live.length} of ${values.length} numbers returned a value, on pages `
                 + `${[...new Set(live.map(v => "$" + v.page.toString(16).padStart(2, "0")))].join(", ")}`)
-            return { label, values, narrowed, addressing,
+            return { label, values, narrowed, addressing, crashedAt,
                 answered: live.length, tried: values.length,
                 // The live set, ready to be handed back as `only` next time.
                 live: live.map(v => ({ page: v.page, item: v.item })) }

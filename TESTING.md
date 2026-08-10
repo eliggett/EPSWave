@@ -388,6 +388,21 @@ your synth sent.
 
 # If something goes wrong
 
+**The synth shows an error and offers to reboot.** This is known to happen, and
+it is not your fault. Asking an EPS-16 PLUS about parameters on the effects page
+past a certain point takes the machine down with *"Error 129 — Reboot?"* — so
+the sweep now stops where the specification stops, and no longer goes there.
+
+If it happens anyway:
+
+1. **Write down the error number exactly** and put it in the note box.
+2. The app notices the silence and stops by itself, and the log names the last
+   parameter it asked for. That parameter is the most valuable single thing you
+   can bring back from the session, so make sure the capture is saved.
+3. Reboot the synth, reload your instruments, and carry on from Part 5.
+
+Nothing about this damages the synth. It reboots to exactly the state it was in.
+
 **A probe seems stuck.** Press **Stop**, top right of the Hardware probes panel.
 It finishes the command in progress and stops cleanly. Everything captured so
 far is kept.

@@ -244,6 +244,51 @@ class EPS16 {
     }
 
     /***
+     * The parameter pages, indexed the way section 9 indexes them: by the
+     * "SysEx High Byte" that goes on the wire, which is the byte these tables
+     * are actually headed with.
+     *
+     * WHY THIS IS A LIST AND NOT A RANGE, AND WHY IT MATTERS
+     *
+     * Sweeping every high byte from $00 to $3F sounds harmless and is not. An
+     * EPS-16 PLUS asked for effects items past $09 answered a few of them and
+     * then died with "Error 129 — Reboot?", twice, on hardware. The effects
+     * page is the one place the specification says outright that some items
+     * neither transmit nor receive, and going past them does not produce a
+     * refusal — it takes the machine down.
+     *
+     * So the sweep walks these and stops where they stop. Anything not listed
+     * here is undefined territory that has already been shown to be dangerous.
+     *
+     * maxItem $09 on the effects page is from section 9.12 and NOTE 2, and is
+     * the same limit readEffect() already uses. It happens to be safe on both
+     * machines: on an original EPS this high byte is the MIDI page, whose items
+     * run $00 to $08, so the cap covers all of it and still stops short of what
+     * hurts a 16 PLUS.
+     */
+    static PARAMETER_PAGES = [
+        { byte: 0x00, name: "track" },
+        { byte: 0x04, name: "envelope 1" },
+        { byte: 0x08, name: "envelope 2" },
+        { byte: 0x0C, name: "envelope 3" },
+        { byte: 0x10, name: "pitch" },
+        { byte: 0x14, name: "filter" },
+        { byte: 0x18, name: "amp" },
+        { byte: 0x1C, name: "LFO" },
+        { byte: 0x20, name: "wavesample" },
+        { byte: 0x24, name: "layer" },
+        { byte: 0x28, name: "instrument" },
+        { byte: 0x2C, name: "sequence" },
+        { byte: 0x30, name: "effects (16+) / MIDI (Classic)", maxItem: 0x09 },
+        { byte: 0x34, name: "system/MIDI" },
+        { byte: 0x38, name: "edit context" }
+    ]
+
+    static parameterPage(highByte){
+        return EPS16.PARAMETER_PAGES.find(page => page.byte == highByte) || null
+    }
+
+    /***
      * Wavesample name: section 7.3, word offsets 00 to 11, "12 ASCII bytes, one
      * byte per word", carried in the high byte like every other word in the
      * block.
