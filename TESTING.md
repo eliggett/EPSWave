@@ -224,84 +224,51 @@ exactly like a control having moved.
 # Part 6 — Find the parameter numbers (about 10 minutes)
 
 Section **4 · Probe B — parameter numbers**. This is the part where the synth
-needs you to touch it.
+needs you to touch it, and the app will tell you exactly what to touch.
 
 The app is being built to do two things with your machine: read and write whole
-instruments, and read and write wavesamples. Both of those travel as complete
-blocks of data rather than as individual settings, so this part is narrower than
-it looks — it covers the pages an instrument is actually made of, and leaves the
-sequencer, the system settings and the effects alone. **The effects page is where
-an EPS-16 PLUS has crashed, and it is not swept by default.**
+instruments, and read and write wavesamples. Both travel as complete blocks of
+data rather than as individual settings, so this part is narrower than it looks —
+it covers the pages an instrument is actually made of, and leaves the sequencer,
+the system settings and the effects alone. **The effects page is where an
+EPS-16 PLUS has crashed, and it is not swept.**
 
-## 6.1 The first sweep
+## Press **Start guided testing**
 
-Press **Sweep**. Leave all the other boxes alone — the page list is already set
-to the ones that matter.
+That is the whole of it. The big green button runs everything in this section
+and talks you through it.
 
-This asks your synth about 320 questions and notes which ones it recognises.
-Give it a couple of minutes; the display panel counts through.
+First it sweeps — about 320 questions, a couple of minutes, while it works out
+which parameter numbers your machine recognises. Then it takes a starting
+reading. Then, for each control in turn, a dialog appears telling you:
 
-This is the slow one, and it only happens once. It also tells the app which
-numbers are worth asking about again, so every step after it takes seconds
-rather than minutes.
+- **which button to press** on the synth's front panel,
+- **what to change**, and roughly how far to move it,
+- **which instrument, layer and wavesample to change it on** — this matters, and
+  the dialog names the exact one the app is reading, because a change made to a
+  different wavesample simply will not show up,
+- **why that control was chosen**, which is worth reading: every one of them
+  settles a specific place where our two reference documents contradict each
+  other.
 
-When it finishes you will see a table of which parameter pages answered. **That
-table is the answer to question 1** — it is the only place the app shows you the
-whole map it just found. The steps below narrow down what the individual numbers
-in it mean.
+Change the control on the synth, then press **I changed it — Continue**. The app
+takes a fresh reading, works out which number moved, and shows you. Then the
+next dialog appears.
 
-If it says *nothing answered*, stop and check SYS-EX is still on.
+Each dialog also offers:
 
-## 6.2 Now the useful part
+- **Skip this one** — if you cannot find the control, or your machine does not
+  have it. Skipping is recorded, and a recorded skip is far more useful to us
+  than a guess.
+- **Stop guided testing** — ends the sequence and keeps everything gathered so
+  far.
 
-We now know which parameter numbers exist, but not what any of them control.
-That is what this does: change one thing, and see which number moved.
+There are six controls. Getting through three is useful; all six is a good
+session. Nothing is lost if you stop early.
 
-**Press Snapshot A once, now.** Wait for it to finish. That is the starting
-point, and you will not need that button again.
-
-Then, for each control in the list below, three presses:
-
-1. Change that one control on the synth. Move it a good distance — turn it up by
-   ten, not by one.
-2. Type what you changed into the box marked **Note what has been changed here**,
-   just under the sweep controls. For example: `master tune from 0 to +25`.
-   There is no button to press; it is filed with the comparison automatically.
-3. Press **Snapshot B & diff**. Wait for it to finish. A table appears showing
-   what moved, with your note above it.
-
-Then change the next control (see the list below) and press **Snapshot B & diff** after eachg control is changed. 
-
-The app keeps each sweep as the starting point for the next one, so after the
-first control you are paying one sweep per control instead of two. It reminds
-you in the log every time: *"Snapshot B is now the baseline — change the next
-thing and press B again."*
-
-Snapshots are quick — seconds, not minutes — because they only re-read the
-numbers the first sweep found to be real, rather than asking all 512 again.
-That is the checkbox under the buttons, and it is why five controls is a
-comfortable minimum rather than an ambitious target. If you have the patience,
-keep going past five; the list below is a starting point, not a limit.
-
-(If you lose track of where you are, press **Snapshot A** to start a fresh
-comparison from wherever the synth is now, then carry on as above.)
-
-**The controls, in this order.** These are not arbitrary — each one settles a
-place where our two reference documents contradict each other, in the order of
-how much trouble the disagreement would cause:
-
-1. **Wavesample pan** — press **6 · Amp**, change Pan. The two references
-   disagree outright about where pan lives, and getting it wrong means every
-   restored instrument comes back with its stereo image scrambled.
-2. **An envelope level** — press **1 · Env 1** and change **Level 1 Soft**, then
-   do a second round changing **Level 4 Hard**. One reference gives both of
-   those the same number, which cannot be right, and the two rounds together
-   say which one it actually is.
-3. **Root key** — press **4 · Pitch**. The app writes this on every upload.
-4. **Layer velocity range** — press **9 · Layer**, change Velocity Low.
-5. **Instrument transpose** — press **Instrument**, change the transpose amount.
-
-Five is plenty. Three is useful. If you tire of it, stop wherever you are.
+**If a step reports that nothing moved**, that is a result, not a failure. It may
+mean the control is not reachable over MIDI on your machine, which is exactly
+the sort of thing we are trying to find out. Carry on to the next step.
 
 > ⚠️ **Do not change the MIDI base channel.** The messages the app sends are
 > addressed by base channel, so the moment you change it the synth stops
@@ -310,9 +277,16 @@ Five is plenty. Three is useful. If you tire of it, stop wherever you are.
 > ⚠️ **Do not go to the Effects pages.** Nothing there is being tested, and it
 > is where the machine has crashed.
 
-Some numbers will appear in every single table — free memory changes on its own,
-for instance. Ignore those. The one we want is the one that moved by about the
-amount you moved the control.
+## Doing it by hand instead
+
+The **Sweep**, **Snapshot A** and **Snapshot B & diff** buttons underneath do
+the same work one step at a time, if you would rather drive it yourself or want
+to chase something the guided list does not cover. The pattern is: press
+**Snapshot A** once, then for each control — change it, type what you changed
+into the **Note what has been changed here** box, and press **Snapshot B & diff**.
+Each comparison becomes the starting point for the next, so it is one press per
+control after the first.
+
 
 ---
 

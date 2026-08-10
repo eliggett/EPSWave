@@ -391,6 +391,51 @@ window.EPSWaveUI = {
     },
 
     /***
+     * A question with more than two answers, and waits for one.
+     *
+     * `ask` above covers yes-or-no. This covers the case where "no" splits into
+     * several different noes — skip this one, or stop altogether — which is
+     * what a guided sequence needs at every step, since somebody working
+     * through it may not have the control the step asks for, or may simply have
+     * had enough.
+     *
+     * `buttons` is [{ id, label, class }] in the order they should appear, and
+     * the resolved value is the id of whichever was pressed, or null if the
+     * dialog was dismissed by the Escape key or the backdrop. Callers have to
+     * treat null as "stop", because a dismissed dialog is not consent to carry
+     * on doing things to somebody's synth.
+     */
+    async choose(title, bodyHtml, buttons){
+        return new Promise((resolve) => {
+            const id = "epsChooseModal"
+            $(`#${id}`).remove()
+            const modal = $(`
+                <div class="modal fade" id="${id}" tabindex="-1" role="dialog">
+                    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">${title}</h5>
+                            </div>
+                            <div class="modal-body">${bodyHtml}</div>
+                            <div class="modal-footer"></div>
+                        </div>
+                    </div>
+                </div>`)
+            const footer = modal.find(".modal-footer")
+            let answer = null
+            for(const button of buttons){
+                $("<button>").attr("type", "button")
+                    .addClass(`btn ${button.class || "btn-secondary"}`)
+                    .html(button.label)
+                    .click(() => { answer = button.id; modal.modal("hide") })
+                    .appendTo(footer)
+            }
+            modal.on("hidden.bs.modal", () => { modal.remove(); resolve(answer) })
+            modal.modal({ backdrop: "static", keyboard: true })
+        })
+    },
+
+    /***
      * Hands the browser a file. Used by the log export and by anything that
      * saves an instrument.
      *

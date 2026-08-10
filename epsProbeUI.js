@@ -152,6 +152,97 @@ window.EPSProbeUI = {
         return bytes.map(byte => EPSProbeUI.h2(byte)).join(" ")
     },
 
+    /***
+     * The guided sequence: what to ask somebody to change, and why.
+     *
+     * WHY EACH OF THESE AND NOT SOMETHING EASIER
+     *
+     * Turning any knob at all would produce a diff, and most of them would tell
+     * us nothing we do not already have written down. Each step here settles a
+     * specific place where the two references we have actively contradict each
+     * other, ordered by how much damage the disagreement does if we guess wrong.
+     * `why` is shown to the operator, because somebody who understands what a
+     * step is for makes better judgement calls than somebody following a list —
+     * they notice when the synth does something unexpected, and they say so.
+     *
+     * `button` is what to press on the front panel, named as the panel names it.
+     * Taken from the button table in reference/code/eps2.0/include/eps.h, which
+     * is the Classic's own layout.
+     */
+    GUIDED_STEPS: [
+        {
+            id: "ws-pan",
+            title: "Wavesample pan",
+            button: "6 &middot; Amp",
+            what: "Change <b>Pan</b> by a good distance &mdash; from centre to hard "
+                + "left, say, or from 0 to -50.",
+            why: "This is the disagreement that matters most. Section 7.3 of the "
+                + "EPS-16 PLUS manual puts pan in the low half of the wavesample's "
+                + "105th word and says the high half is unused. The 1992 library, "
+                + "written against a Classic, reads it from the high half. Both "
+                + "cannot be right, and if we guess wrong then every instrument "
+                + "this app restores to your synth comes back with its stereo "
+                + "image scrambled."
+        },
+        {
+            id: "env-l1s",
+            title: "Envelope 1, Level 1 Soft",
+            button: "1 &middot; Env 1",
+            what: "Find <b>Level 1</b> and change its <b>soft</b> value &mdash; the one "
+                + "that applies when you play gently. Move it a long way.",
+            why: "The 1992 library gives Level 1 Soft and Level 4 Hard the same "
+                + "parameter number, which cannot be true of both. The EPS-16 PLUS "
+                + "manual says that number is Level 4 Hard and that Level 1 Soft is "
+                + "the next one along, a number the library does not list at all. "
+                + "This step and the next one together say which is which on your "
+                + "machine."
+        },
+        {
+            id: "env-l4h",
+            title: "Envelope 1, Level 4 Hard",
+            button: "1 &middot; Env 1",
+            what: "Now change <b>Level 4</b>'s <b>hard</b> value &mdash; the sustain "
+                + "level when you play firmly. Again, move it a long way.",
+            why: "The other half of the previous question. If the two steps move "
+                + "different numbers, the manual is right and the library has a "
+                + "typo. If they move the same number, something stranger is going "
+                + "on and we very much want to know."
+        },
+        {
+            id: "root-key",
+            title: "Root key",
+            button: "4 &middot; Pitch",
+            what: "Change the <b>root key</b> by an octave or so.",
+            why: "The app writes this every time it sends a wavesample, so it has "
+                + "to be right. Both references agree on where it lives, which "
+                + "makes this the step that confirms the others are being read "
+                + "correctly rather than a step that discovers anything."
+        },
+        {
+            id: "layer-velocity",
+            title: "Layer velocity range",
+            button: "9 &middot; Layer",
+            what: "Change <b>velocity low</b> from 0 to something well above it, 64 "
+                + "for instance.",
+            why: "On the EPS-16 PLUS the layer's settings are packed two to a word, "
+                + "with parameters the Classic never had sharing space with ones it "
+                + "did. If that packing differs on your machine, every layer this "
+                + "app writes would land wrong, and the key ranges are where it "
+                + "would show first."
+        },
+        {
+            id: "inst-transpose",
+            title: "Instrument transpose",
+            button: "Instrument",
+            what: "Change the <b>transpose</b> amount by a few semitones.",
+            why: "Transposition is stored as a signed value, and signed values are "
+                + "where two machines most often disagree about which half of a "
+                + "word a number lives in. It is also the last instrument-level "
+                + "setting before the block turns into a table of memory "
+                + "addresses."
+        }
+    ],
+
     wire(){
         const eps = this.eps
 
@@ -321,6 +412,121 @@ window.EPSProbeUI = {
         $("#probeParams").click(async () => {
             const result = await sweep(this.val("sweepLabel", "sweep") || "sweep")
             if(result) this.showSweep(result)
+        })
+
+        /***
+         * Guided mode: the whole of probe B behind one button.
+         *
+         * The manual buttons below it do the same work and are how this was
+         * built, but they ask somebody to hold a procedure in their head —
+         * sweep, then A, then change one thing, then note it, then B, and
+         * remember that B becomes the next A. That is four things to get right
+         * per control, on a borrowed machine, probably once.
+         *
+         * Here the app holds the procedure and the operator holds the synth.
+         * Each step says what to change and why it matters, and offers to skip
+         * it, because somebody may not have that control, may not find it, or
+         * may simply have had enough — and a skipped step recorded as skipped
+         * is worth far more than a step somebody guessed at.
+         */
+        $("#probeGuided").click(async () => {
+            if(!this.ready()) return
+            await this.guarded("Guided testing", async () => {
+                const options = () => ({
+                    pages: EPSProbeUI.parseBytes(this.val("sweepPages")).length
+                        ? EPSProbeUI.parseBytes(this.val("sweepPages")) : undefined,
+                    itemFrom: this.hex("sweepItemFrom", 0x00),
+                    itemTo: this.hex("sweepItemTo", 0x1F),
+                    timeoutMs: this.num("sweepTimeout", 400),
+                    gapMs: this.num("sweepGap", 150)
+                })
+
+                const full = await this.probe.probeParameters({ ...options(), label: "guided" })
+                if(!full) return null
+                if(full.crashedAt){
+                    this.say("Guided testing stopped: the synth stopped answering during the "
+                        + "first sweep. Nothing further was attempted.")
+                    return full
+                }
+                this.liveSet = full.live
+                this.showSweep(full)
+                $("#sweepLiveCount").text(`${full.live.length} live parameter numbers `
+                    + `remembered; each step below re-reads just those.`)
+
+                const where = this.probe.addressing()
+                const target = `instrument ${where.instrument + 1}, layer ${where.layer + 1}, `
+                    + `wavesample ${where.wavesample}`
+
+                let baseline = await this.probe.probeParameters(
+                    { ...options(), only: this.liveSet, label: "guided-start" })
+                if(!baseline) return null
+
+                const done = []
+                for(let index = 0; index < EPSProbeUI.GUIDED_STEPS.length; index++){
+                    const step = EPSProbeUI.GUIDED_STEPS[index]
+                    this.showStatus(`Guided testing: waiting for you — ${step.title}`, null)
+                    const choice = await EPSWaveUI.choose(
+                        `Step ${index + 1} of ${EPSProbeUI.GUIDED_STEPS.length}: `
+                            + EPSProbeUI.escape(step.title),
+                        `<p class="mb-2"><b>On the synth, press `
+                            + `<span class="text-info">${step.button}</span>.</b></p>`
+                        + `<p class="mb-3">${step.what}</p>`
+                        + `<div class="alert alert-secondary py-2 mb-3"><small>`
+                            + `<b>Make sure you are editing ${EPSProbeUI.escape(target)}</b> `
+                            + `&mdash; that is what this app is reading, and a change made to a `
+                            + `different wavesample will simply not show up.</small></div>`
+                        + `<p class="mb-2"><small><b>Why this one:</b> ${step.why}</small></p>`
+                        + `<p class="mb-0"><small>When you have changed it, press Continue and `
+                            + `the app will work out which number moved. It takes a few `
+                            + `seconds.</small></p>`,
+                        [
+                            { id: "stop", label: "Stop guided testing", class: "btn-outline-danger" },
+                            { id: "skip", label: "Skip this one", class: "btn-outline-secondary" },
+                            { id: "go", label: "I changed it &mdash; Continue", class: "btn-primary" }
+                        ])
+
+                    if(choice != "go"){
+                        // Recorded either way. "Nobody tried this" and "somebody
+                        // tried it and nothing moved" are different results, and
+                        // a capture that cannot tell them apart is misleading.
+                        this.capture.note(choice == "skip"
+                            ? `Skipped: ${step.title}` : `Stopped guided testing at: ${step.title}`,
+                            { step: step.id, outcome: choice || "dismissed" })
+                        this.say(choice == "skip"
+                            ? `Skipped ${step.title}`
+                            : `Guided testing stopped at ${step.title}`)
+                        if(choice == "skip") continue
+                        break
+                    }
+
+                    const after = await this.probe.probeParameters(
+                        { ...options(), only: this.liveSet, label: step.id })
+                    if(!after) break
+                    const diff = this.probe.diffParameters(baseline, after, step.title)
+                    this.showDiff(diff)
+                    done.push({ step: step.id, moved: diff.changes.length })
+                    if(diff.changes.length == 0){
+                        this.say(`Nothing moved for ${step.title}. That is a result too — it may `
+                            + `mean this control is not reachable over MIDI on this machine, or `
+                            + `that the change landed on a different wavesample.`)
+                    }
+                    // Each sweep becomes the starting point for the next, so
+                    // every further step costs one sweep rather than two.
+                    baseline = after
+                    if(after.crashedAt){
+                        this.say("Guided testing stopped: the synth stopped answering.")
+                        break
+                    }
+                }
+
+                this.capture.event("finding", { probe: "guided", steps: done,
+                    offered: EPSProbeUI.GUIDED_STEPS.length })
+                this.say(`Guided testing finished: ${done.length} of `
+                    + `${EPSProbeUI.GUIDED_STEPS.length} steps completed`
+                    + (done.length ? `, ${done.filter(d => d.moved > 0).length} of which `
+                        + `moved something.` : "."))
+                return full
+            })
         })
 
         $("#probeSnapshotA").click(async () => {
@@ -783,9 +989,23 @@ window.EPSProbeUI = {
                 than discovery, and probe A above is the one that matters. It earns its
                 place on the pages where the two references contradict each other:
                 wavesample word 105, and the envelope levels.</small></p>
+                <div class="form-row align-items-center mb-2">
+                    <div class="col-auto mb-2">
+                        <button id="probeGuided" class="btn btn-success eps-transfer">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Start guided testing
+                        </button>
+                    </div>
+                    <div class="col mb-2">
+                        <small><b>This is the one to press.</b> It runs the whole of this
+                        section: the first sweep, the starting point, and then one dialog per
+                        control telling you what to change on the synth and why it matters.
+                        Each step can be skipped. Everything below is the same work done by
+                        hand, for when you want to chase something specific.</small>
+                    </div>
+                </div>
                 <div class="form-row align-items-center mb-3">
                     <div class="col-auto mb-2">
-                        <button id="probeParams" class="btn btn-primary btn-sm eps-transfer">
+                        <button id="probeParams" class="btn btn-outline-primary btn-sm eps-transfer">
                             <i class="fa-solid fa-magnifying-glass"></i> Sweep
                         </button>
                     </div>

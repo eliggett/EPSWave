@@ -205,6 +205,18 @@ class EPS16 {
      * THESE TWO ARE NOT A PAGE AND AN ITEM, despite the names. They are the two
      * six bit MIDI bytes that carry parameter number $0D00, free system blocks.
      *
+     * IT IS THE SAME NUMBER ON AN ORIGINAL EPS, which is lucky and worth
+     * knowing, because almost nothing else on that page is. The 16 PLUS
+     * renumbered the system page wholesale — free *disk* blocks moved from
+     * $0D01 to $0D0A, master tune from $0D02 to $0D01, and the Classic's whole
+     * separate MIDI page was folded in on top. Free system blocks is the one
+     * item that stayed put: eps.h defines PSC_FSBLKS and PS16_FSBLKS as $0D00
+     * apiece.
+     *
+     * So the connection test needs no model switch. It is read only, it needs
+     * no instrument, layer or wavesample to exist, and it returns a number that
+     * is useful in its own right, on either machine.
+     *
      * Section 4.2 sends a parameter number as "hi byte" and "lo byte", and by
      * section 2.3 that means a twelve bit number split into two six bit halves —
      * not the page and the item as separate bytes. So $0D00 goes out as $34 $00,
