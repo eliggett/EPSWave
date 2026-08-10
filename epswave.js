@@ -149,6 +149,15 @@ window.EPSWaveUI = {
                 const box = document.getElementById(id)
                 if(box) box.checked = on
             }
+            // Everything the page normally offers, out of the way. A probe
+            // session needs the MIDI ports, the status panel, the probes and
+            // the log, and nothing between them — and on the editor page what
+            // sits between them is the entire wave editor, which is most of the
+            // page. Leaving it there makes the panel something to hunt for.
+            const status = document.getElementById("epsStatus")
+            if(status && panel){
+                EPSWaveUI.hideBetween(status.closest(".eps-lcd") || status, panel, on)
+            }
             if(onChange) onChange(on)
         }
         toggle.checked = false
@@ -162,6 +171,38 @@ window.EPSWaveUI = {
                     : "Debug mode off")
             }
         })
+    },
+
+    /***
+     * Hides everything that sits visually between two elements, wherever they
+     * are in the tree relative to each other.
+     *
+     * The two are at different depths — on the editor page the status panel is
+     * buried inside a card while the probe panel is a top level row — so this
+     * cannot be a walk over one set of siblings. It works outwards instead:
+     * hide everything after `from` among its own siblings, then step up to its
+     * parent and do the same, and again, until it reaches the level where `to`
+     * lives and stops there.
+     *
+     * A class rather than an inline style, because several of the things it
+     * covers carry a `style="display:none"` of their own — the browser support
+     * warning, the collapsed cards — and writing over that would leave them
+     * showing when debug mode is switched off again.
+     */
+    hideBetween(from, to, hidden){
+        let node = from
+        while(node && node.parentElement && node !== document.body){
+            let sibling = node.nextElementSibling
+            while(sibling){
+                // Reaching `to`, or the branch holding it, means everything
+                // between the two has been covered and anything further along
+                // is past it.
+                if(sibling === to || sibling.contains(to)) return
+                sibling.classList.toggle("eps-debug-hidden", hidden)
+                sibling = sibling.nextElementSibling
+            }
+            node = node.parentElement
+        }
     },
 
     /***

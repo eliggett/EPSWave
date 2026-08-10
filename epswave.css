@@ -229,6 +229,12 @@ body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: non
    it reads as off rather than as nought percent of something. */
 .eps-lcd-bar.eps-progress-idle { opacity: 0.35; }
 
+/* Debug mode folds the page away between the status panel and the probes, so
+ * that a probe session is the ports, the status, the probes and the log with
+ * nothing in between. Applied by EPSWaveUI.hideBetween, and !important because
+ * some of what it covers is shown by Bootstrap's own display utilities. */
+.eps-debug-hidden { display: none !important; }
+
 body.dark .eps-lcd {
     background-color: #000000;
     color: #3dff9e;
