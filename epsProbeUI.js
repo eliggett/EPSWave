@@ -615,10 +615,10 @@ window.EPSProbeUI = {
         // ---- Manual -----------------------------------------------------
         $("#manualGet").click(async () => {
             if(!this.ready()) return
-            const page = this.hex("manualPage", 0x0D)
+            const page = this.hex("manualPage", 0x34)
             const item = this.hex("manualItem", 0x00)
             await this.guarded("Get parameter", async () => {
-                const answer = await eps.getParameterAt(page, item,
+                const answer = await eps.getParameter(page, item,
                     this.num("manualTimeout", 1000))
                 this.capture.event("manual-get", { page, item, ...answer,
                     statusText: eps.statusText(answer.status) })
@@ -632,13 +632,13 @@ window.EPSProbeUI = {
 
         $("#manualPut").click(async () => {
             if(!this.ready()) return
-            const page = this.hex("manualPage", 0x0D)
+            const page = this.hex("manualPage", 0x34)
             const item = this.hex("manualItem", 0x00)
             const value = this.num("manualValue", 0)
             await this.guarded("Put parameter", async () => {
-                const before = await eps.getParameterAt(page, item, this.num("manualTimeout", 1000))
-                const accepted = await eps.setParameterAt(page, item, value)
-                const after = await eps.getParameterAt(page, item, this.num("manualTimeout", 1000))
+                const before = await eps.getParameter(page, item, this.num("manualTimeout", 1000))
+                const accepted = await eps.setParameter(page, item, value)
+                const after = await eps.getParameter(page, item, this.num("manualTimeout", 1000))
                 this.capture.event("manual-put", { page, item, value, accepted,
                     before: before.value, after: after.value })
                 this.say(`PUT $${EPSProbeUI.h2(page)}${EPSProbeUI.h2(item)} = ${value}: `
@@ -729,18 +729,22 @@ window.EPSProbeUI = {
         const live = result.values.filter(v => v.value !== null)
         const byPage = {}
         for(const record of live){
-            byPage[record.page] = byPage[record.page] || []
-            byPage[record.page].push(record)
+            byPage[record.high] = byPage[record.high] || []
+            byPage[record.high].push(record)
         }
-        const pages = Object.keys(byPage).map(page => `<tr><td>$${EPSProbeUI.h2(page)}</td>`
-            + `<td>${byPage[page].length}</td>`
-            + `<td><small>${byPage[page].map(r => `$${EPSProbeUI.h2(r.item)}=${r.value}`)
-                .join(", ")}</small></td></tr>`).join("")
+        const pages = Object.keys(byPage).map(high => {
+            const known = EPS16.parameterPage(Number(high))
+            return `<tr><td>$${EPSProbeUI.h2(high)}</td>`
+                + `<td><small>${known ? EPSProbeUI.escape(known.name) : "?"}</small></td>`
+                + `<td>${byPage[high].length}</td>`
+                + `<td><small>${byPage[high].map(r => `$${EPSProbeUI.h2(r.low)}=${r.value}`)
+                    .join(", ")}</small></td></tr>`
+        }).join("")
         $("#probeOutput").html(`<h6 class="mb-2">Parameter sweep "${EPSProbeUI.escape(result.label)}"</h6>`
             + `<p class="mb-2"><small>${live.length} of ${result.tried} numbers returned a value.</small></p>`
             + (pages
                 ? `<table class="table table-sm table-bordered mb-0"><thead><tr>`
-                    + `<th>Page</th><th>Live</th><th>Item = value</th></tr></thead>`
+                    + `<th>Page $</th><th>What</th><th>Live</th><th>Item = value</th></tr></thead>`
                     + `<tbody>${pages}</tbody></table>`
                 : `<p class="mb-0">Nothing answered. Check the base channel and that sysex is on.</p>`))
             .show()
@@ -763,8 +767,9 @@ window.EPSProbeUI = {
                 ? `<p class="mb-0">Nothing changed. Either the control does not go over MIDI, `
                     + `or it is outside the swept page range.</p>`
                 : `<table class="table table-sm table-bordered mb-0"><thead><tr>`
-                    + `<th>Parameter</th><th>Was</th><th>Now</th><th>Change</th></tr></thead><tbody>`
-                    + diff.changes.map(c => `<tr><td>$${EPSProbeUI.h2(c.page)}${EPSProbeUI.h2(c.item)}</td>`
+                    + `<th>Wire bytes</th><th>Was</th><th>Now</th><th>Change</th></tr></thead><tbody>`
+                    + diff.changes.map(c => `<tr><td>$${EPSProbeUI.h2(c.high)} $${EPSProbeUI.h2(c.low)}`
+                        + `<br><small class="text-muted">=$${EPSProbeUI.h2(c.page)}${EPSProbeUI.h2(c.item)}</small></td>`
                         + `<td>${c.from}</td><td>${c.to}</td>`
                         + `<td>${c.delta === null ? "&mdash;" : (c.delta > 0 ? "+" : "") + c.delta}</td></tr>`).join("")
                     + `</tbody></table>`
@@ -1169,9 +1174,10 @@ window.EPSProbeUI = {
                     <div class="col-auto mb-2">
                         <div class="input-group input-group-sm">
                             <div class="input-group-prepend">
-                                <label class="input-group-text">Page/item $</label>
+                                <label class="input-group-text"
+                                    title="The two bytes exactly as section 9 prints them: the SysEx high byte from a table's heading, and a low byte from one of its rows. $34 $00 is free system blocks.">High/low $</label>
                             </div>
-                            <input type="text" class="form-control" id="manualPage" value="0D"
+                            <input type="text" class="form-control" id="manualPage" value="34"
                                 style="max-width:4rem">
                             <input type="text" class="form-control" id="manualItem" value="00"
                                 style="max-width:4rem">

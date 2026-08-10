@@ -936,20 +936,32 @@ class EPSProbe {
         // Building the list up front rather than looping over the ranges keeps
         // the two cases on one code path, so a narrowed sweep cannot drift
         // away from a full one in how it records or paces itself.
+        /***
+         * `high` and `low` are the two bytes that go on the wire, which is also
+         * how section 9 indexes itself: each of its tables is headed with a
+         * "SysEx High Byte" and its rows give low bytes.
+         *
+         * NOTHING HERE CONVERTS ANYTHING, on purpose. The first version of this
+         * carried section 9's high bytes and then passed them through the
+         * page/item packer on the way out, which turned envelope 3 ($0C) into
+         * the effects page ($30) and crashed the machine. Speaking one
+         * representation from the table to the wire removes the conversion, and
+         * with it the chance of doing it backwards.
+         */
         const targets = []
         if(options.only){
             for(const target of options.only){
-                targets.push({ page: target.page, item: target.item })
+                targets.push({ high: target.high, low: target.low })
             }
         }else{
-            for(const page of pages){
+            for(const high of pages){
                 // Where a page has a documented end, stop there. The effects
                 // page is not merely undefined past item $09, it is dangerous;
                 // see EPS16.PARAMETER_PAGES.
-                const known = EPS16.parameterPage(page)
+                const known = EPS16.parameterPage(high)
                 const last = known && known.maxItem != null
                     ? Math.min(itemTo, known.maxItem) : itemTo
-                for(let item = itemFrom; item <= last; item++) targets.push({ page, item })
+                for(let low = itemFrom; low <= last; low++) targets.push({ high, low })
             }
         }
         const narrowed = options.only != null
@@ -970,20 +982,17 @@ class EPSProbe {
 
             for(let done = 0; done < targets.length; done++){
                 this.check()
-                const { page, item } = targets[done]
-                // getParameterAt, not getParameter: the latter wants the number
-                // already split into its two six bit halves. Passing a page and
-                // an item to it is silent — the synth reads (page << 6) | item,
-                // answers about that parameter instead, and the reply looks
-                // perfectly successful. A sweep built that way reported the
-                // track page and the three envelopes over and over and never
-                // reached master tune. See EPS16.parameterBytes.
-                const answer = await this.eps.getParameterAt(page, item, timeoutMs)
-                const number = EPS16.parameterNumber(page, item)
-                const record = { page, item, number,
-                    // The bytes that actually went out, so the capture can be
-                    // checked against the wire without trusting this comment.
-                    bytes: EPS16.parameterBytes(number),
+                const { high, low } = targets[done]
+                // getParameter, which takes the two wire bytes as they are.
+                // Not getParameterAt — that packs a page and an item into them,
+                // and these are already packed.
+                const answer = await this.eps.getParameter(high, low, timeoutMs)
+                // The same number the reference library would call it by, for
+                // anyone reading the capture with eps.h open. Derived here
+                // rather than sent: the wire carries `high` and `low`.
+                const number = (high << 6) | low
+                const record = { high, low, number,
+                    page: (number >> 8) & 0xFF, item: number & 0xFF,
                     answered: answer.answered, value: answer.value,
                     status: answer.status,
                     statusText: this.eps.statusText(answer.status) }
@@ -995,13 +1004,13 @@ class EPSProbe {
                 silent = answer.answered ? 0 : silent + 1
                 if(silent >= EPSProbe.SILENCE_IS_A_CRASH){
                     crashedAt = values[values.length - silent] || record
-                    const where = EPS16.parameterPage(crashedAt.page)
+                    const where = EPS16.parameterPage(crashedAt.high)
                     this.capture.event("finding", { probe: "parameters",
                         what: "the synth stopped answering", label,
                         lastAnswered: values.filter(v => v.answered).slice(-1)[0] || null,
                         firstSilent: crashedAt, silentInARow: silent })
                     this.log(`STOPPED: the synth went quiet after `
-                        + `$${EPSProbe.hex2(crashedAt.page)} $${EPSProbe.hex2(crashedAt.item)}`
+                        + `$${EPSProbe.hex2(crashedAt.high)} $${EPSProbe.hex2(crashedAt.low)}`
                         + `${where ? ` (${where.name} page)` : ""}`
                         + ` and has not answered ${silent} commands since. Check its display — `
                         + `if it is showing an error, note the number in the capture and `
@@ -1019,9 +1028,10 @@ class EPSProbe {
                 }
                 if(done % 16 == 0 || done == targets.length - 1){
                     this.progress(Math.round(((done + 1) / targets.length) * 100))
+                    const known = EPS16.parameterPage(high)
                     this.status(`Parameter sweep${narrowed ? " (narrowed)" : ""}: `
-                        + `page $${page.toString(16).padStart(2, "0")} `
-                        + `item $${item.toString(16).padStart(2, "0")}`
+                        + `$${EPSProbe.hex2(high)} $${EPSProbe.hex2(low)}`
+                        + `${known ? ` (${known.name})` : ""}`
                         + ` — ${answered} answered of ${done + 1} tried`)
                     // Flushed as it goes rather than at the end, so a sweep that
                     // dies half way through has written everything up to the
@@ -1034,16 +1044,16 @@ class EPSProbe {
             const live = values.filter(v => v.value !== null)
             this.capture.event("finding", { probe: "parameters", label, narrowed, addressing,
                 tried: values.length, answered: live.length, crashedAt,
-                pages: [...new Set(live.map(v => v.page))] })
+                pages: [...new Set(live.map(v => v.high))] })
             this.log(`Parameter sweep "${label}"${narrowed ? " (narrowed)" : ""} `
                 + `on instrument ${addressing.instrument + 1}, layer ${addressing.layer + 1}, `
                 + `wavesample ${addressing.wavesample}: `
                 + `${live.length} of ${values.length} numbers returned a value, on pages `
-                + `${[...new Set(live.map(v => "$" + v.page.toString(16).padStart(2, "0")))].join(", ")}`)
+                + `${[...new Set(live.map(v => "$" + EPSProbe.hex2(v.high)))].join(", ")}`)
             return { label, values, narrowed, addressing, crashedAt,
                 answered: live.length, tried: values.length,
                 // The live set, ready to be handed back as `only` next time.
-                live: live.map(v => ({ page: v.page, item: v.item })) }
+                live: live.map(v => ({ high: v.high, low: v.low })) }
         })
     }
 
@@ -1062,14 +1072,15 @@ class EPSProbe {
      * amount the control moved*, not merely the only one that moved.
      */
     diffParameters(before, after, changed = ""){
-        const key = (record) => `${record.page},${record.item}`
+        const key = (record) => `${record.high},${record.low}`
         const map = new Map(before.values.map(record => [key(record), record]))
         const changes = []
         for(const record of after.values){
             const was = map.get(key(record))
             if(!was) continue
             if(was.value === record.value) continue
-            changes.push({ page: record.page, item: record.item,
+            changes.push({ high: record.high, low: record.low,
+                page: record.page, item: record.item,
                 from: was.value, to: record.value,
                 delta: (was.value == null || record.value == null)
                     ? null : record.value - was.value })
@@ -1098,8 +1109,9 @@ class EPSProbe {
         this.log(`Parameter diff ${before.label} → ${after.label}`
             + (changed ? ` [${changed}]` : "") + ": "
             + (changes.length == 0 ? "nothing changed"
-                : changes.map(c => `$${c.page.toString(16).padStart(2, "0")}`
-                    + `${c.item.toString(16).padStart(2, "0")}: ${c.from} → ${c.to}`).join(", ")))
+                : changes.map(c => `$${EPSProbe.hex2(c.high)} $${EPSProbe.hex2(c.low)}`
+                    + ` (=$${c.page.toString(16).padStart(2,"0")}${c.item.toString(16).padStart(2,"0")})`
+                    + `: ${c.from} → ${c.to}`).join(", ")))
         return report
     }
 

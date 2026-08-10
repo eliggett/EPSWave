@@ -237,7 +237,25 @@ class EPS16 {
      * time 1 — page $01, item $03 — is parameter $0103.
      */
     static parameterNumber(page, item){
-        return ((page & 0x0F) << 8) | (item & 0xFF)
+        // Loudly, because the quiet version cost a synth.
+        //
+        // This used to mask the page to four bits. Hand it a SysEx high byte
+        // from the heading of one of section 9's tables — $0C for envelope 3,
+        // say — and it silently produced parameter $0C00, whose wire bytes are
+        // $30 $00: the effects page. The sweep believed it was reading
+        // envelopes and was in fact walking into the one page that crashes an
+        // EPS-16 PLUS, and every log it wrote agreed with it.
+        //
+        // The two representations are both legitimate and they are easy to mix
+        // up, so the mixing has to be an error rather than a different answer.
+        if(page < 0 || page > 0x0F || item < 0 || item > 0xFF){
+            throw new Error(`Parameter page $${page.toString(16)} item `
+                + `$${item.toString(16)} is out of range. A page here is the high byte `
+                + `of the number section 9 lists in its tables ($00-$0F). The bytes in `
+                + `those tables' headings — $00 to $38 — are something else: they are `
+                + `already the wire format, and belong in getParameter, not here.`)
+        }
+        return (page << 8) | item
     }
 
     /***
