@@ -3,3 +3,10 @@ __pycache__/
 .env
 */**.wav
 *.pem
+
+# Claude Code tooling config. Local to the machine and of no use to anyone
+# else: permission grants naming absolute scratchpad paths with a session id
+# in them, which match nothing on another machine and nothing in a later
+# session on this one. The whole directory, so nothing in it turns up in a
+# commit by accident later.
+.claude/

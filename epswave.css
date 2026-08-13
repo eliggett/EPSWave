@@ -229,6 +229,12 @@ body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: non
    it reads as off rather than as nought percent of something. */
 .eps-lcd-bar.eps-progress-idle { opacity: 0.35; }
 
+/* Debug mode folds the page away between the status panel and the probes, so
+ * that a probe session is the ports, the status, the probes and the log with
+ * nothing in between. Applied by EPSWaveUI.hideBetween, and !important because
+ * some of what it covers is shown by Bootstrap's own display utilities. */
+.eps-debug-hidden { display: none !important; }
+
 body.dark .eps-lcd {
     background-color: #000000;
     color: #3dff9e;
@@ -243,6 +249,39 @@ body.dark .eps-lcd-bar > div {
     background-color: #3dff9e;
     box-shadow: 0 0 6px rgba(61, 255, 158, 0.55);
 }
+
+/* MIDI activity lights, one in each port label: green for what arrives, red
+   for what leaves. Off is a dark recessed dot rather than nothing at all,
+   because a light that never lights only means something if you can see it
+   sitting there not lighting — which is the whole question when someone is
+   working out why a transfer is doing nothing. */
+.eps-led {
+    display: inline-block;
+    width: 0.6rem;
+    height: 0.6rem;
+    margin-left: 0.45rem;
+    vertical-align: middle;
+    border-radius: 50%;
+    background-color: #cfd4da;
+    border: 1px solid rgba(0, 0, 0, 0.3);
+    /* Lighting is instant, going dark takes a moment. A single short packet
+       is over in well under one frame, so a symmetric transition would be a
+       flash nobody sees. */
+    transition: background-color 0.3s ease-out, box-shadow 0.3s ease-out;
+}
+.eps-led-on { transition: none; }
+.eps-led-in.eps-led-on {
+    background-color: #2ee66b;
+    box-shadow: 0 0 6px rgba(46, 230, 107, 0.9);
+}
+.eps-led-out.eps-led-on {
+    background-color: #ff3b30;
+    box-shadow: 0 0 6px rgba(255, 59, 48, 0.9);
+}
+/* Deliberately not themed. Dark mode recolours the panels around these, but an
+   unlit light wants to stay a light grey dot in both: sunk to the background it
+   is invisible, and a light you cannot find when it is off tells you nothing
+   when it fails to come on. */
 
 /* The waveform tabs. The close cross only appears on the tab it belongs
    to, so a strip of eight is a strip of names rather than a row of

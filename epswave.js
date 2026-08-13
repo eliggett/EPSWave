@@ -57,6 +57,210 @@ window.EPSWaveUI = {
     },
 
     /***
+     * Which machine is on the other end of the cable: #connectedModel.
+     *
+     * Nothing in the app branches on this yet, and that is on purpose. The
+     * transport is identical across the Ensoniq samplers — same manufacturer
+     * byte, same product ID, same word packing, same handshake — so every
+     * command this app sends is already model independent, and the differences
+     * that do exist are in parameter numbers and block layouts that have not
+     * been measured yet.
+     *
+     * It is here anyway for two reasons. It goes into every probe capture, so a
+     * file taken on someone else's machine says what that machine was without
+     * depending on anyone remembering to write it down. And when the first real
+     * difference does turn up, the switch it needs will already be wired, in
+     * the interface and in storage, rather than being a change to two pages and
+     * a class on the day it is least convenient.
+     *
+     * The unselectable entries are honest advertising: those machines are not
+     * supported, and showing them greyed out says so more clearly than leaving
+     * them out, which would just look like nobody had thought about them.
+     */
+    MODELS: [
+        { id: "eps16plus", label: "EPS-16+", supported: true },
+        { id: "epsclassic", label: "EPS Classic", supported: true },
+        { id: "asr10", label: "ASR-10", supported: false },
+        { id: "mirage", label: "Mirage", supported: false }
+    ],
+    DEFAULT_MODEL: "eps16plus",
+
+    model(){
+        const stored = window.safeStorage.get("connectedModel")
+        return EPSWaveUI.MODELS.some(m => m.id == stored && m.supported)
+            ? stored : EPSWaveUI.DEFAULT_MODEL
+    },
+    modelLabel(id){
+        const found = EPSWaveUI.MODELS.find(m => m.id == (id || EPSWaveUI.model()))
+        return found ? found.label : "unknown"
+    },
+
+    /***
+     * Every part of the debug layer, wired so that it cannot take the rest of
+     * the app down with it.
+     *
+     * THIS GUARD IS NOT THEORETICAL. These three calls sit part way through the
+     * page's start up, before the editor builds its tabs. Rename one of the new
+     * script files, or let one 404 out of a stale cache, and `EPSProbeUI` is
+     * simply not defined: the ReferenceError propagates out of the ready
+     * handler and everything after it never runs. Measured on a tree with
+     * epsProbeUI.js removed, the editor came up with one tab instead of two,
+     * one canvas instead of three and half its buttons missing — a page that
+     * looks loaded and is not.
+     *
+     * The probes are a diagnostic aid for a handful of people characterising an
+     * unfamiliar machine. Nobody's sampler transfer should ever fail because of
+     * them, so a failure here costs the Debug switch and nothing else.
+     */
+    wireDebugTools(eps){
+        // The model dropdown is part of this file and is wired on its own, so
+        // it survives the probes being unavailable.
+        try{
+            EPSWaveUI.wireModel(eps)
+        }catch(error){
+            console.error("EPSWave: the model selector could not be wired.", error)
+        }
+        try{
+            // Both, checked up front. A half wired panel is worse than none: the
+            // switch would fold the page away and reveal an empty card, and the
+            // failure would only show up later as a dead button.
+            // EPSProbe is named bare, not as window.EPSProbe. A top level
+            // `class` declaration lives in the global lexical scope, so the
+            // name resolves but the window property is undefined — the same
+            // trap that once silently skipped every canvas repaint. EPSProbeUI
+            // is an object literal assigned to window, so either form works
+            // there; this one matches how each is actually declared.
+            if(!window.EPSProbeUI || typeof EPSProbe == "undefined"
+                    || typeof EPSCapture == "undefined"){
+                throw new Error("epsProbe.js or epsProbeUI.js did not load")
+            }
+            EPSProbeUI.init(eps)
+            EPSWaveUI.wireDebug()
+            return true
+        }catch(error){
+            console.error("EPSWave: the debug tools could not be set up, so they "
+                + "have been switched off. The rest of the app is unaffected.", error)
+            // Take the switch away rather than leave one that does nothing.
+            const toggle = document.getElementById("debugMode")
+            const holder = toggle ? toggle.closest(".custom-control") : null
+            if(holder) holder.style.display = "none"
+            const panel = document.getElementById("debugPanel")
+            if(panel) panel.style.display = "none"
+            return false
+        }
+    },
+
+    /***
+     * Fills and wires #connectedModel, if the page has one. onChange is for
+     * anything that has to react; nothing does yet.
+     */
+    wireModel(eps, onChange){
+        const select = document.getElementById("connectedModel")
+        if(!select) return
+        select.innerHTML = ""
+        for(const model of EPSWaveUI.MODELS){
+            const option = document.createElement("option")
+            option.value = model.id
+            option.textContent = model.supported
+                ? model.label : `${model.label} (not yet)`
+            option.disabled = !model.supported
+            select.appendChild(option)
+        }
+        const apply = (id) => {
+            if(eps && typeof eps.setModel == "function") eps.setModel(id)
+            if(onChange) onChange(id)
+        }
+        select.value = EPSWaveUI.model()
+        apply(select.value)
+        select.addEventListener("change", () => {
+            window.safeStorage.set("connectedModel", select.value)
+            apply(select.value)
+            if(window.log) window.log(`Connected model set to ${EPSWaveUI.modelLabel(select.value)}`)
+        })
+    },
+
+    /***
+     * The debug switch: #debugMode, showing #debugPanel and turning the two log
+     * checkboxes on.
+     *
+     * One switch rather than three, because the three were always wanted
+     * together. Anyone who opens the probe panel wants the MIDI traffic and the
+     * debug lines in the log — that is what the panel is for — and anyone who
+     * does not want the panel does not want a log full of packet dumps either.
+     * The checkboxes stay in the log card so they can still be set
+     * independently afterwards; this only moves them together.
+     *
+     * Deliberately not remembered across reloads. A page that came back with
+     * the probe panel open and MIDI logging on, long after the session that
+     * wanted it, is a page that looks broken.
+     */
+    wireDebug(onChange){
+        const toggle = document.getElementById("debugMode")
+        if(!toggle) return
+        const apply = (on) => {
+            const panel = document.getElementById("debugPanel")
+            if(panel) panel.style.display = on ? "" : "none"
+            for(const id of ["logMidi", "logDebug"]){
+                const box = document.getElementById(id)
+                if(box) box.checked = on
+            }
+            // Everything the page normally offers, out of the way. A probe
+            // session needs the MIDI ports, the status panel, the probes and
+            // the log, and nothing between them — and on the editor page what
+            // sits between them is the entire wave editor, which is most of the
+            // page. Leaving it there makes the panel something to hunt for.
+            const status = document.getElementById("epsStatus")
+            if(status && panel){
+                EPSWaveUI.hideBetween(status.closest(".eps-lcd") || status, panel, on)
+            }
+            if(onChange) onChange(on)
+        }
+        toggle.checked = false
+        apply(false)
+        toggle.addEventListener("change", () => {
+            apply(toggle.checked)
+            if(window.log){
+                window.log(toggle.checked
+                    ? "Debug mode on: hardware probes shown, MIDI traffic and debug output "
+                        + "are going to this log"
+                    : "Debug mode off")
+            }
+        })
+    },
+
+    /***
+     * Hides everything that sits visually between two elements, wherever they
+     * are in the tree relative to each other.
+     *
+     * The two are at different depths — on the editor page the status panel is
+     * buried inside a card while the probe panel is a top level row — so this
+     * cannot be a walk over one set of siblings. It works outwards instead:
+     * hide everything after `from` among its own siblings, then step up to its
+     * parent and do the same, and again, until it reaches the level where `to`
+     * lives and stops there.
+     *
+     * A class rather than an inline style, because several of the things it
+     * covers carry a `style="display:none"` of their own — the browser support
+     * warning, the collapsed cards — and writing over that would leave them
+     * showing when debug mode is switched off again.
+     */
+    hideBetween(from, to, hidden){
+        let node = from
+        while(node && node.parentElement && node !== document.body){
+            let sibling = node.nextElementSibling
+            while(sibling){
+                // Reaching `to`, or the branch holding it, means everything
+                // between the two has been covered and anything further along
+                // is past it.
+                if(sibling === to || sibling.contains(to)) return
+                sibling.classList.toggle("eps-debug-hidden", hidden)
+                sibling = sibling.nextElementSibling
+            }
+            node = node.parentElement
+        }
+    },
+
+    /***
      * The event log: #log, and optionally #clearLog, #expandLog with
      * #expandLogLabel and #expandLogIcon, and #exportLog.
      *
@@ -242,6 +446,51 @@ window.EPSWaveUI = {
     },
 
     /***
+     * A question with more than two answers, and waits for one.
+     *
+     * `ask` above covers yes-or-no. This covers the case where "no" splits into
+     * several different noes — skip this one, or stop altogether — which is
+     * what a guided sequence needs at every step, since somebody working
+     * through it may not have the control the step asks for, or may simply have
+     * had enough.
+     *
+     * `buttons` is [{ id, label, class }] in the order they should appear, and
+     * the resolved value is the id of whichever was pressed, or null if the
+     * dialog was dismissed by the Escape key or the backdrop. Callers have to
+     * treat null as "stop", because a dismissed dialog is not consent to carry
+     * on doing things to somebody's synth.
+     */
+    async choose(title, bodyHtml, buttons){
+        return new Promise((resolve) => {
+            const id = "epsChooseModal"
+            $(`#${id}`).remove()
+            const modal = $(`
+                <div class="modal fade" id="${id}" tabindex="-1" role="dialog">
+                    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">${title}</h5>
+                            </div>
+                            <div class="modal-body">${bodyHtml}</div>
+                            <div class="modal-footer"></div>
+                        </div>
+                    </div>
+                </div>`)
+            const footer = modal.find(".modal-footer")
+            let answer = null
+            for(const button of buttons){
+                $("<button>").attr("type", "button")
+                    .addClass(`btn ${button.class || "btn-secondary"}`)
+                    .html(button.label)
+                    .click(() => { answer = button.id; modal.modal("hide") })
+                    .appendTo(footer)
+            }
+            modal.on("hidden.bs.modal", () => { modal.remove(); resolve(answer) })
+            modal.modal({ backdrop: "static", keyboard: true })
+        })
+    },
+
+    /***
      * Hands the browser a file. Used by the log export and by anything that
      * saves an instrument.
      *
@@ -306,9 +555,48 @@ window.EPSWaveUI = {
     },
 
     /***
+     * The two MIDI activity lights, keyed by the direction strings EPS16
+     * passes to its MIDI callback.
+     */
+    midiLeds: { "<-": "midiInLed", "->": "midiOutLed" },
+    midiLedTimers: {},
+
+    /***
+     * Flashes one of the port lights.
+     *
+     * Held on for a fixed time after the last packet rather than for the
+     * length of one: a block upload is hundreds of packets a few milliseconds
+     * apart, and a light that tracked them exactly would be a strobe. Each
+     * packet pushes the off back instead, so a transfer reads as one steady
+     * light and a single command as a blink.
+     */
+    blinkMidi(direction){
+        const id = EPSWaveUI.midiLeds[direction]
+        if(!id) return
+        const led = document.getElementById(id)
+        if(!led) return
+        led.classList.add("eps-led-on")
+        clearTimeout(EPSWaveUI.midiLedTimers[id])
+        EPSWaveUI.midiLedTimers[id] = setTimeout(() => {
+            led.classList.remove("eps-led-on")
+        }, 120)
+    },
+
+    /***
      * Wires the port pickers, the browser support warning and #testConnection.
      */
     wireMidi(eps){
+        // Wrapping whatever is already installed, for the same reason
+        // EPSProbe.attach does: the pages set their event logging up before
+        // they call this, and replacing the callback would silence it. The
+        // lights are unconditional — they are for the case where someone has
+        // not found the debug panel and does not know there is a log.
+        const previous = eps.midiCallback
+        eps.setMidiCallback((direction, bytes) => {
+            EPSWaveUI.blinkMidi(direction)
+            if(previous) previous(direction, bytes)
+        })
+
         $("#midiIn").change(event => {
             eps.setInput(event.target.value)
             window.safeStorage.set("midiIn", event.target.value)

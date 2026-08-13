@@ -116,13 +116,27 @@ const librarian = {
         // amounts to in practice is small — see the note above WS_PAN_WORD in
         // epsBlocks.js — and saying so is more useful than a bare label.
         if(!inst.isEps16Plus){
+            // Which of these two applies depends on the connected model, so it
+            // is read at draw time rather than baked in — someone comparing a
+            // Classic file against both machines should see the notice change.
+            const toClassic = EPSWaveUI.model() == "epsclassic"
             html += `<div class="alert alert-secondary py-2 mb-3"><small>
-                This was written by an <b>original EPS</b>, not an EPS-16 PLUS. It can still
-                be sent: both machines lay their layers and wavesamples out identically, and
-                the audio is 13 bit stored in the 16 bit words the EPS-16 PLUS expects.
-                The parameters the EPS-16 PLUS added and the original EPS never had &mdash;
-                the mixer and pan modulators, the boost switch, the LFO rate modulation,
-                the layer delay &mdash; arrive at their defaults.
+                This was written by an <b>original EPS</b>, not an EPS-16 PLUS.
+                ${toClassic
+                    ? `You have an original EPS connected, so it goes back <b>exactly as it
+                       is</b> &mdash; same layout, same pan, same everything. Nothing is
+                       converted and nothing is lost.`
+                    : `It can still be sent to your EPS-16 PLUS: both machines lay their
+                       layers and wavesamples out identically, and the audio is 13 bit
+                       stored in the 16 bit words the EPS-16 PLUS expects. Two things
+                       change. The parameters the EPS-16 PLUS added and the original EPS
+                       never had &mdash; the mixer and pan modulators, the boost switch,
+                       the LFO rate modulation, the layer delay &mdash; arrive at their
+                       defaults. And <b>pan is approximate</b>: the original EPS picks from
+                       a list of eight positions, eight individual outputs and "keyboard",
+                       where the EPS-16 PLUS wants a number from &minus;99 to +99, so a
+                       wavesample sent to an individual output lands somewhere in the
+                       stereo image instead.`}
             </small></div>`
         }
 
@@ -757,6 +771,12 @@ $(document).ready(function(){
         window.log(`DEBUG: ${message}`)
     })
     EPSWaveUI.wireMidi(librarian.eps)
+
+    // After the two callbacks above: the probe capture wraps whatever is
+    // already installed so that starting a capture does not silence the event
+    // log. See EPSProbe.attach. Guarded, because the instrument list and the
+    // rest of the page are built below this line — see wireDebugTools.
+    EPSWaveUI.wireDebugTools(librarian.eps)
 
     // Instrument 1-8, matching the front panel rather than the wire, where the
     // same instruments are 0-7.

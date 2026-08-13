@@ -201,9 +201,148 @@ class EPS16 {
      *
      * Section 7.1: one block is 256 words, so one block is 256 samples.
      */
+    /***
+     * THESE TWO ARE NOT A PAGE AND AN ITEM, despite the names. They are the two
+     * six bit MIDI bytes that carry parameter number $0D00, free system blocks.
+     *
+     * IT IS THE SAME NUMBER ON AN ORIGINAL EPS, which is lucky and worth
+     * knowing, because almost nothing else on that page is. The 16 PLUS
+     * renumbered the system page wholesale — free *disk* blocks moved from
+     * $0D01 to $0D0A, master tune from $0D02 to $0D01, and the Classic's whole
+     * separate MIDI page was folded in on top. Free system blocks is the one
+     * item that stayed put: eps.h defines PSC_FSBLKS and PS16_FSBLKS as $0D00
+     * apiece.
+     *
+     * So the connection test needs no model switch. It is read only, it needs
+     * no instrument, layer or wavesample to exist, and it returns a number that
+     * is useful in its own right, on either machine.
+     *
+     * Section 4.2 sends a parameter number as "hi byte" and "lo byte", and by
+     * section 2.3 that means a twelve bit number split into two six bit halves —
+     * not the page and the item as separate bytes. So $0D00 goes out as $34 $00,
+     * because $0D00 >> 6 is $34.
+     *
+     * Every setParameter call in this file follows the same convention, which is
+     * why they read oddly: setParameter(0x20, 0x0D) is parameter $080D, the
+     * sample rate, and setParameter(0x1C, 0x07) is $0707, the LFO modulation
+     * source. Use parameterBytes() below rather than working it out by hand.
+     */
     static PING_PAGE = 0x34
     static PING_ITEM = 0x00
     static SAMPLES_PER_BLOCK = 256
+
+    /***
+     * A parameter number from the page and item that section 9 lists it under.
+     * The page is the high byte and the item is the low byte, so pitch envelope
+     * time 1 — page $01, item $03 — is parameter $0103.
+     */
+    static parameterNumber(page, item){
+        // Loudly, because the quiet version cost a synth.
+        //
+        // This used to mask the page to four bits. Hand it a SysEx high byte
+        // from the heading of one of section 9's tables — $0C for envelope 3,
+        // say — and it silently produced parameter $0C00, whose wire bytes are
+        // $30 $00: the effects page. The sweep believed it was reading
+        // envelopes and was in fact walking into the one page that crashes an
+        // EPS-16 PLUS, and every log it wrote agreed with it.
+        //
+        // The two representations are both legitimate and they are easy to mix
+        // up, so the mixing has to be an error rather than a different answer.
+        if(page < 0 || page > 0x0F || item < 0 || item > 0xFF){
+            throw new Error(`Parameter page $${page.toString(16)} item `
+                + `$${item.toString(16)} is out of range. A page here is the high byte `
+                + `of the number section 9 lists in its tables ($00-$0F). The bytes in `
+                + `those tables' headings — $00 to $38 — are something else: they are `
+                + `already the wire format, and belong in getParameter, not here.`)
+        }
+        return (page << 8) | item
+    }
+
+    /***
+     * A parameter number as the two six bit bytes that go on the wire.
+     *
+     * This is the conversion that is easy to miss and produces no error when it
+     * is missed: send the page and the item as two bytes and the synth reads
+     * (page << 6) | item, which is a different, perfectly valid parameter
+     * number. It answers about that one instead, so the reply looks like a
+     * success and the values are simply about something else. A sweep built
+     * that way returned the track page and the three envelopes for every page
+     * it asked about, and never reached master tune at all.
+     */
+    static parameterBytes(number){
+        return [(number >> 6) & 0x3F, number & 0x3F]
+    }
+
+    /***
+     * The parameter pages, indexed the way section 9 indexes them: by the
+     * "SysEx High Byte" that goes on the wire, which is the byte these tables
+     * are actually headed with.
+     *
+     * WHY THIS IS A LIST AND NOT A RANGE, AND WHY IT MATTERS
+     *
+     * Sweeping every high byte from $00 to $3F sounds harmless and is not. An
+     * EPS-16 PLUS asked for effects items past $09 answered a few of them and
+     * then died with "Error 129 — Reboot?", twice, on hardware. The effects
+     * page is the one place the specification says outright that some items
+     * neither transmit nor receive, and going past them does not produce a
+     * refusal — it takes the machine down.
+     *
+     * So the sweep walks these and stops where they stop. Anything not listed
+     * here is undefined territory that has already been shown to be dangerous.
+     *
+     * maxItem $09 on the effects page is from section 9.12 and NOTE 2, and is
+     * the same limit readEffect() already uses. It happens to be safe on both
+     * machines: on an original EPS this high byte is the MIDI page, whose items
+     * run $00 to $08, so the cap covers all of it and still stops short of what
+     * hurts a 16 PLUS.
+     */
+    /***
+     * `instrument: true` marks the pages that make up an instrument and its
+     * wavesamples — which is to say, the ones that matter if all you want to do
+     * is read and write instruments and wavesamples.
+     *
+     * That is the whole of section 7's three blocks expressed one parameter at
+     * a time: the wavesample's own fields, its three envelopes, and its pitch,
+     * filter, amp and LFO pages, plus the layer and the instrument. What it
+     * leaves out is everything about the machine rather than the sound — the
+     * sequencer, the track mixer, the system and MIDI settings, the edit
+     * context, and the effects.
+     *
+     * Leaving the effects page out is also what makes the default safe. Both
+     * times an EPS-16 PLUS crashed with "Error 129 — Reboot?" it had just been
+     * asked about effects, and effects have nothing to do with either of those
+     * two capabilities.
+     */
+    static PARAMETER_PAGES = [
+        { byte: 0x00, name: "track" },
+        { byte: 0x04, name: "envelope 1", instrument: true },
+        { byte: 0x08, name: "envelope 2", instrument: true },
+        { byte: 0x0C, name: "envelope 3", instrument: true },
+        { byte: 0x10, name: "pitch", instrument: true },
+        { byte: 0x14, name: "filter", instrument: true },
+        { byte: 0x18, name: "amp", instrument: true },
+        { byte: 0x1C, name: "LFO", instrument: true },
+        { byte: 0x20, name: "wavesample", instrument: true },
+        { byte: 0x24, name: "layer", instrument: true },
+        { byte: 0x28, name: "instrument", instrument: true },
+        { byte: 0x2C, name: "sequence" },
+        { byte: 0x30, name: "effects (16+) / MIDI (Classic)", maxItem: 0x09 },
+        { byte: 0x34, name: "system/MIDI" },
+        { byte: 0x38, name: "edit context" }
+    ]
+
+    static parameterPage(highByte){
+        return EPS16.PARAMETER_PAGES.find(page => page.byte == highByte) || null
+    }
+
+    /*** The pages an instrument is made of. The default for a sweep. */
+    static instrumentPages(){
+        return EPS16.PARAMETER_PAGES.filter(page => page.instrument).map(page => page.byte)
+    }
+    /*** Every page section 9 documents, effects and system settings included. */
+    static allParameterPages(){
+        return EPS16.PARAMETER_PAGES.map(page => page.byte)
+    }
 
     /***
      * Wavesample name: section 7.3, word offsets 00 to 11, "12 ASCII bytes, one
@@ -696,8 +835,33 @@ class EPS16 {
          * What is lost is what the original EPS never had: no effect, and no
          * value for any of the EPS-16 PLUS-only parameters. Both are also true
          * of loading the instrument on the synth from a disk.
+         *
+         * AND WHERE IT IS GOING MATTERS AS MUCH AS WHERE IT CAME FROM. This
+         * used to test the file alone, so a Classic instrument sent back to a
+         * Classic had its pan byte copied into the half of the word that only a
+         * 16 PLUS reads — a conversion between two machines, applied when there
+         * was only ever one machine involved. Harmless in practice, because the
+         * Classic reads the half the value was already in and ignores the other,
+         * but it wrote a byte nobody asked for into somebody's instrument, and
+         * on the one path where the right answer is to change nothing at all.
+         *
+         * Classic to Classic now passes the block through untouched, pan and
+         * everything else, which is what the file already says and what the
+         * machine already understands.
          */
         const original = !inventory.instrument.isEps16Plus
+        const toSixteenPlus = original && !this.isClassic()
+        const toClassic = !original && this.isClassic()
+        if(original && !toSixteenPlus){
+            this.debug("Original EPS instrument going to an original EPS: sending the "
+                + "parameter blocks exactly as they are, pan included.")
+        }
+        if(toClassic){
+            this.debug("EPS-16 PLUS instrument going to an original EPS: pan is being "
+                + "converted from the 16 PLUS's signed number to the Classic's eight "
+                + "display positions. Everything else the 16 PLUS added lives in low "
+                + "bytes the Classic does not read, so it is left alone.")
+        }
         if(original){
             this.successCallback("Success: This is an original EPS instrument. Its layers "
                 + "and wavesamples transfer as they are — the two machines use the same "
@@ -957,12 +1121,25 @@ class EPS16 {
             if(ws.isCopy){
                 block[12] = (remap(ws.copyNumber) << 8) | (block[12] & 0x00FF)
             }
-            if(original){
+            if(toSixteenPlus){
                 const moved = EPSBlocks.adaptWavesampleToEps16Plus(block)
                 if(moved){
-                    this.debug(`wavesample ${ws.number}: carried the original EPS pan `
-                        + `${moved.pan} into the low byte of word ${moved.word}, which is `
-                        + `where the EPS-16 PLUS keeps it`)
+                    this.debug(`wavesample ${ws.number}: original EPS pan ${moved.from} `
+                        + `("${moved.meant}") became EPS-16 PLUS pan ${moved.pan} in the `
+                        + `low byte of word ${moved.word}`
+                        + (moved.lost
+                            ? `. "${moved.lost}" is not a stereo position and the 16 PLUS `
+                              + `has no pan value for it, so this one is centred and the `
+                              + `assignment is lost.`
+                            : `.`))
+                }
+            }else if(toClassic){
+                const moved = EPSBlocks.adaptWavesampleToClassic(block)
+                if(moved){
+                    this.debug(`wavesample ${ws.number}: EPS-16 PLUS pan ${moved.from} `
+                        + `became original EPS position ${moved.position} `
+                        + `("${moved.meant}") in the high byte of word ${moved.word}, `
+                        + `over the ${moved.was} that was there`)
                 }
             }
             this.setLayerNumber(ws.layer == null ? layers[0].number : ws.layer)
@@ -1055,6 +1232,20 @@ class EPS16 {
 
     async readEffect(){
         const none = { readable: false, variation: null, parameters: [] }
+        // An original EPS has no effects, and page $30 is not empty on it — it
+        // is the MIDI settings page. Section 9.2 of the 1989 specification puts
+        // base channel, transmit mode, MIDI in mode, controllers, SysEx enable,
+        // program change, song position and XCTRL at items 0 to 8, where the 16
+        // PLUS put effect parameters. So reading this page on a Classic does
+        // not fail informatively; it succeeds and returns the machine's MIDI
+        // configuration labelled as an effect, with item 9 the only one that
+        // errors. That is worse than not asking.
+        if(this.isClassic()){
+            this.debug("Skipping the effect page: on an original EPS wire high byte $30 is "
+                + "the MIDI settings page (section 9.2), not effects, and the machine has "
+                + "no effects processor to report on.")
+            return { ...none, notOnThisModel: true }
+        }
         // The effect is a bonus on top of an inventory that is already complete
         // and has already cost real time to fetch. Nothing that happens on this
         // page is worth losing that over, so a failure here is reported and
@@ -1997,6 +2188,28 @@ class EPS16 {
      * read being NAKed — was the EPS being busy, and is handled where it
      * belongs, in sendCommand.
      */
+    /***
+     * Reads the parameter that section 9 lists under this page and item.
+     *
+     * The one to use. getParameter below takes the two six bit halves of the
+     * number already packed, which is a wire level detail nothing outside this
+     * file should have to know, and getting it wrong is silent — see
+     * parameterBytes.
+     */
+    async getParameterAt(page, item, timeoutMs = EPS16.COMMAND_TIMER_MS){
+        const [hi, lo] = EPS16.parameterBytes(EPS16.parameterNumber(page, item))
+        return this.getParameter(hi, lo, timeoutMs)
+    }
+    /*** Writes the parameter at this page and item. See getParameterAt. */
+    async setParameterAt(page, item, value){
+        const [hi, lo] = EPS16.parameterBytes(EPS16.parameterNumber(page, item))
+        return this.setParameter(hi, lo, value)
+    }
+    /***
+     * `page` and `item` here are the two six bit halves of the parameter
+     * number, not the page and item from section 9. Kept because every existing
+     * caller passes them that way; new code should use getParameterAt.
+     */
     async getParameter(page, item, timeoutMs = EPS16.COMMAND_TIMER_MS){
         const cmd = this.createMIDIMessage(0x08, [page, item])
         await this.sendData(cmd)
@@ -2272,9 +2485,39 @@ class EPS16 {
         }
         return -1
     }
+    /***
+     * Thirteen bits for an original EPS, sixteen for a 16 PLUS.
+     *
+     * The Classic's converter is 13 bit and the low three bits of every stored
+     * sample are zero. That is not a claim from a manual — neither
+     * specification mentions it, because how you get from sixteen bits to
+     * thirteen is the sender's business and not part of the instrument format.
+     * It is measured: across four original EPS instrument files every sample is
+     * a multiple of 8, 100% at three bits, while bit 3 varies in about half of
+     * them. The same test on EPS-16 PLUS files gives 50%, 25%, 12.5% — the
+     * halving of ordinary sixteen bit audio.
+     *
+     * Truncation, deliberately, and not the dithered rounding EPSBitDepth
+     * defaults to. Dropping the low bits is what the machine does to anything
+     * we send it, so doing it here changes no sample the synth would have kept:
+     * it makes what we send equal to what comes back, which is what turns a
+     * round trip into an exact comparison instead of an approximate one.
+     * EPSBitDepth.to13 with the default rounding and dither is the better
+     * sounding option and is one argument away if it is ever wanted.
+     */
+    quantiseForModel(audio){
+        if(!this.isClassic()) return audio
+        return EPSBitDepth.quantise(audio, EPS16.CLASSIC_SAMPLE_BITS,
+            { round: EPSBitDepth.ROUND_TRUNCATE, dither: false })
+    }
+    static CLASSIC_SAMPLE_BITS = 13
+
     async putWavesampleData(audio, start=0){
         this.debug("OFFSETS", start, audio.length, audio.length + start)
-        let midiData = this.convertTo16BitMidi(audio)
+        // Only the audio. The same packer carries parameter blocks in
+        // sendBlock, where every word is a setting rather than a sample and
+        // clearing the low bits would corrupt the block.
+        let midiData = this.convertTo16BitMidi(this.quantiseForModel(audio))
         let startOffset = this.convertTo12BitMidi([start], 4)
         let endOffset = this.convertTo12BitMidi([audio.length + start], 4)
         let sampleOffsets = startOffset.concat(endOffset)
@@ -2691,14 +2934,7 @@ class EPS16 {
             this.errorCallback("Error: No MIDI output selected, cannot send to the EPS16+")
             return false
         }
-        let packet = [
-            0xF0,
-            0x0F,
-            0x03,
-            this.baseChannel & 0x0F
-        ]
-        packet = packet.concat(message)
-        packet.push(0xf7)
+        const packet = this.sysexPacket(message)
         console.log("Send ->", packet)
         this.midiCallback("->", packet)
         // Anything still sitting in the queue belongs to a command that has
@@ -3083,8 +3319,163 @@ class EPS16 {
         if(params.length == 0) return 0
         return this.readSampleRate(params)
     }
+    /***
+     * Which instrument this app puts in the header of the messages it sends.
+     *
+     * THIS DOES NOT TOUCH THE SYNTH. Every command carries an edit context, so
+     * changing this changes who the next command is about — but the machine's
+     * own selection, the one lit on the front panel and the one section 9.11
+     * calls Current Edit Instr., is untouched and stays wherever the player
+     * left it. For that, see selectInstrumentOnSynth.
+     */
     setInstrumentNumber(num){
         this.instNum = num
+    }
+    /*** Section 4.3 command 40, VIRTUAL BUTTON PRESS. */
+    static COMMAND_VIRTUAL_BUTTON = 0x40
+    /***
+     * Section 6 button numbers. Instruments 1 to 8 are 00 to 07, and the
+     * Classic agrees: reference/code/eps2.0/include/eps.h gives the same
+     * BUT_INST_1 through BUT_INST_8.
+     */
+    static BUTTON_INSTRUMENT_1 = 0x00
+    /*** Section 9.11, the machine's own idea of what is selected. */
+    static EDIT_CONTEXT_PAGE = 0x38
+    static EDIT_CONTEXT_INSTRUMENT_ITEM = 0x00
+
+    /***
+     * The bytes of a VIRTUAL BUTTON PRESS, without the sysex frame.
+     *
+     * NO EDIT CONTEXT. Command 40 sits in section 4.3, whose preamble says all
+     * instrument editing commands carry the instrument, layer and wavesample —
+     * but 40's own parameter list is two bytes of button number and nothing
+     * else, and the worked example in section 6 is `F0 0F 03 00 40 00 14 F7`,
+     * eight bytes with no context in them. epsPushButton in
+     * reference/code/eps2.0/libsrc/button.c builds exactly those eight bytes.
+     * Two sources and a shipped implementation agree, so the preamble is the
+     * one that is wrong here.
+     */
+    buttonMessage(button){
+        return [EPS16.COMMAND_VIRTUAL_BUTTON, (button >> 6) & 0x3F, button & 0x3F]
+    }
+    /*** The complete packet, frame and all, as it goes onto the wire. */
+    sysexPacket(message){
+        return [0xF0, 0x0F, 0x03, this.baseChannel & 0x0F].concat(message, [0xF7])
+    }
+    /*** A packet written the way this project's logs and the manual write them. */
+    static packetHex(bytes){
+        return Array.from(bytes)
+            .map(b => Number(b).toString(16).toUpperCase().padStart(2, "0")).join(" ")
+    }
+    /***
+     * Presses a button on the front panel, for real.
+     *
+     * Routed through sendCommand so a busy synth is waited out rather than
+     * counted as a refusal.
+     */
+    async pushButton(button, label){
+        return await this.sendCommand(this.buttonMessage(button),
+            label || `virtual button press $${EPS16.packetHex([button])}`)
+    }
+    /***
+     * Moves the synth's own selection to an instrument, and says whether it
+     * went.
+     *
+     * There is no command that sets the current edit instrument as a value.
+     * Section 9.11 lists it as "receive only", which per NOTE 1 of section 9
+     * means it answers a GET but is not sent when the front panel changes; it
+     * is not a promise that a PUT will be honoured. Pressing the button is what
+     * a person would do and is the one route both machines document.
+     *
+     * The result is read back rather than assumed. An ACK only says the packet
+     * was understood, and the whole reason this exists is that something which
+     * looked like it selected an instrument turned out not to.
+     */
+    async selectInstrumentOnSynth(number, say = () => {}){
+        const button = EPS16.BUTTON_INSTRUMENT_1 + number
+        const packet = this.sysexPacket(this.buttonMessage(button))
+        say(`Switching to instrument number ${number + 1} using command: `
+            + EPS16.packetHex(packet)
+            + ` (VIRTUAL BUTTON PRESS, button $${EPS16.packetHex([button])} = `
+            + `Instrument ${number + 1})`)
+
+        const status = await this.pushButton(button, `select instrument ${number + 1}`)
+        this.setInstrumentNumber(number)
+
+        say(`Verifying by reading the current instrument number and current `
+            + `instrument name`)
+        const current = await this.getParameter(EPS16.EDIT_CONTEXT_PAGE,
+            EPS16.EDIT_CONTEXT_INSTRUMENT_ITEM)
+        const reported = current.answered ? current.value : null
+        say(reported == null
+            ? `Current Edit Instr. ($38 $00) did not answer`
+              + (current.status >= 0 ? `: ${this.statusText(current.status)}` : "")
+            : `Current Edit Instr. ($38 $00) = ${reported} (instrument ${reported + 1})`)
+
+        const params = await this.getInstrumentParams()
+        const name = params.length ? this.lastInstrumentName : null
+        say(name == null
+            ? `The instrument block did not come back, so there is no name to read`
+            : `Instrument name: "${name}"`)
+
+        const ok = status == 0x00 && reported === number
+        say(ok
+            ? `Instrument ${number + 1} is selected on the synth.`
+            : `Instrument ${number + 1} is NOT confirmed selected `
+              + `(button press ${this.statusText(status)}, `
+              + `synth says ${reported == null ? "nothing" : reported + 1}).`)
+
+        return { ok, requested: number, reported, name, status, packet }
+    }
+    /***
+     * Which machine is believed to be on the other end.
+     *
+     * The transport does not care. The sysex frame, the 12 and 16 bit packing,
+     * the command numbers and the response codes are identical on both machines
+     * — section 2 of Ensoniq's 1989 EPS specification and section 2 of the
+     * EPS-16 PLUS specification are the same document — so nothing about
+     * getting bytes there and back branches on this, and nothing should.
+     *
+     * FOUR THINGS DO BRANCH ON IT, all of them established from Ensoniq's own
+     * two specifications rather than guessed:
+     *
+     *   1. Sample resolution. The Classic keeps thirteen bits. See
+     *      putWavesampleData.
+     *   2. Parameters the Classic does not have. Its volume page has no item
+     *      05, its LFO page no item 08, and its Loop Mod Type stops at 3 where
+     *      the 16 PLUS has 7 for transwaves. See the morph and transwave paths.
+     *   3. The effects page. Wire high byte $30 is effects on a 16 PLUS and the
+     *      MIDI settings page on a Classic, so reading it on the wrong machine
+     *      returns base channel and SysEx-enable dressed up as an effect. See
+     *      readEffect.
+     *   4. Value ranges, which the Classic gives as 0-127 and the 16 PLUS as
+     *      0-99 for most levels and amounts. Nothing this app writes today
+     *      falls outside the Classic's wider range, so there is no conversion
+     *      here — but see reference/eps-classic-vs-16plus.md before adding one.
+     *
+     * It is recorded for the probe captures too: a capture that does not say
+     * which machine produced it is worth much less than one that does, and
+     * asking the operator to remember is asking for the one field that will be
+     * missing from the one file that mattered.
+     */
+    static MODEL_16_PLUS = "eps16plus"
+    static MODEL_CLASSIC = "epsclassic"
+
+    setModel(model){
+        this.model = model
+        return this.model
+    }
+
+    /***
+     * True only when the operator has said the far end is an original EPS.
+     *
+     * Unset means the 16 PLUS, which is what this app has always assumed and
+     * what every code path was written and tested against. An unanswered
+     * question about the model must never silently change behaviour for the
+     * people already using it.
+     */
+    isClassic(){
+        return this.model == EPS16.MODEL_CLASSIC
     }
     setLayerNumber(num){
         this.layerNum = num
@@ -3272,6 +3663,22 @@ class EPS16 {
      * Macros
      */
     async uploadAsTranswave(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[], options={}){
+        // The original EPS has no transwaves. Its Loop Mod Type, section 9.5 of
+        // the 1989 specification, runs 0 to 3 — Off, Loop, Start, Both — where
+        // the 16 PLUS extended the same parameter to 0 to 7 and put TRANSWAV at
+        // 7. Sending 7 to a Classic is an invalid parameter value, so the
+        // machine would refuse one write in the middle of a long upload and
+        // leave a plain wavesample holding transwave audio: a wavetable's worth
+        // of single cycles played as one sample, which sounds like nothing
+        // anybody wanted. Refusing up front costs the operator a minute instead
+        // of twenty.
+        if(this.isClassic()){
+            const message = "The original EPS does not have transwaves — its Loop Mod Type "
+                + "stops at 3, and the 16 PLUS put transwaves at 7. Use a normal upload "
+                + "instead, or switch the connected model if this is really a 16 PLUS."
+            this.errorCallback(`Error: ${message}`)
+            return { ok: false, unsupported: true, message, instrument: this.instNum }
+        }
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
         const claimed = await this.acquireInstrument(options)
@@ -3422,7 +3829,24 @@ class EPS16 {
             // PUT PARAMETER reaches it; this is the front panel's
             // Pitch / LFO AMOUNT set to zero, per layer.
             await this.setParameter(EPS16.PITCH_PAGE, EPS16.PITCH_LFO_AMOUNT_PARAM, 0)
-            await this.setParameter(0x18,0x05, EPS16.MORPH_FADECURVE) // fade curve: CROSSFADE, not LINEAR
+            // Two of the settings below do not exist on an original EPS, and
+            // both are refinements rather than load-bearing. Section 9.9 of the
+            // 1989 specification gives the volume page eight items — 1 to 4, 7,
+            // and 10 to 12 — with no item 05, because the crossfade fadecurve
+            // is a 16 PLUS addition. Section 9.10 gives the LFO page six, with
+            // no item 08, because a second LFO modulation source is a 16 PLUS
+            // addition too. Sending either to a Classic earns an invalid
+            // parameter number and an error in the log for something the
+            // machine was never going to do.
+            //
+            // The crossfade still works without them. The fadecurve falls back
+            // to whatever the front panel last chose, and the LFO keeps the one
+            // modulation source it has.
+            const sixteenPlusOnly = !this.isClassic()
+            if(sixteenPlusOnly){
+                // fade curve: CROSSFADE, not LINEAR
+                await this.setParameter(0x18,0x05, EPS16.MORPH_FADECURVE)
+            }
             await this.setParameter(0x18,0x03, bp.pointA)
             await this.setParameter(0x18,0x0B, bp.pointB)
             await this.setParameter(0x18,0x04, bp.pointC)
@@ -3433,8 +3857,10 @@ class EPS16 {
             await this.setParameter(0x1C,0x03, 127) // LFO depth
             await this.setParameter(0x1C,0x04, 0) // LFO Delay
             await this.setParameter(0x1C,0x05, 1) // LFO Reset
-            await this.setParameter(0x1C,0x08, 0x0F) // LFO Modulation source
-            await this.setParameter(0x1C,0x07, 0x0F) // LFO Modulation source
+            if(sixteenPlusOnly){
+                await this.setParameter(0x1C,0x08, 0x0F) // LFO rate modulation source
+            }
+            await this.setParameter(0x1C,0x07, 0x0F) // LFO modulation source
 
             this.setWavesampleNumber(1)
             EPS16.step(options, `${of}: waiting for the synth`)
