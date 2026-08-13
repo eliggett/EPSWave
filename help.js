@@ -66,9 +66,16 @@ window.HELP_HTML = `
 
     <p class="lead">Testing the connection</p>
     <p>
-        On the wavesample editor page, pick your interface under <b>Midi
-        Input</b> and <b>Midi Output</b> — both, and they are usually the same
+        On the wavesample editor page, pick your interface under <b>MIDI
+        Input</b> and <b>MIDI Output</b> — both, and they are usually the same
         device — then press <b>Test Connection</b>.
+    </p>
+    <p>
+        The two small lights beside those pickers show traffic as it happens:
+        red when this page sends to the EPS, green when the EPS answers. If
+        only the red one flickers, the synth is not being heard or is not
+        replying — check the cable into the EPS and that both ends are set to
+        the same base channel.
     </p>
     <p>
         The test asks the EPS how much free memory it has. Any answer at all

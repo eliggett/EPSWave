@@ -125,7 +125,9 @@
                             <div class="col-sm">
                                 <div class="input-group mb-3">
                                     <div class="input-group-prepend">
-                                        <label class="input-group-text" for="midiIn">Midi Input</label>
+                                        <label class="input-group-text" for="midiIn">MIDI Input<span
+                                                id="midiInLed" class="eps-led eps-led-in"
+                                                title="Lights when the EPS sends something back"></span></label>
                                     </div>
                                     <select id="midiIn" class="custom-select"></select>
                                 </div>
@@ -133,7 +135,9 @@
                             <div class="col-sm">
                                 <div class="input-group mb-3">
                                     <div class="input-group-prepend">
-                                        <label class="input-group-text" for="midiOut">Midi Output</label>
+                                        <label class="input-group-text" for="midiOut">MIDI Output<span
+                                                id="midiOutLed" class="eps-led eps-led-out"
+                                                title="Lights when this page sends to the EPS"></span></label>
                                     </div>
                                     <select id="midiOut" class="custom-select"></select>
                                 </div>

@@ -555,9 +555,48 @@ window.EPSWaveUI = {
     },
 
     /***
+     * The two MIDI activity lights, keyed by the direction strings EPS16
+     * passes to its MIDI callback.
+     */
+    midiLeds: { "<-": "midiInLed", "->": "midiOutLed" },
+    midiLedTimers: {},
+
+    /***
+     * Flashes one of the port lights.
+     *
+     * Held on for a fixed time after the last packet rather than for the
+     * length of one: a block upload is hundreds of packets a few milliseconds
+     * apart, and a light that tracked them exactly would be a strobe. Each
+     * packet pushes the off back instead, so a transfer reads as one steady
+     * light and a single command as a blink.
+     */
+    blinkMidi(direction){
+        const id = EPSWaveUI.midiLeds[direction]
+        if(!id) return
+        const led = document.getElementById(id)
+        if(!led) return
+        led.classList.add("eps-led-on")
+        clearTimeout(EPSWaveUI.midiLedTimers[id])
+        EPSWaveUI.midiLedTimers[id] = setTimeout(() => {
+            led.classList.remove("eps-led-on")
+        }, 120)
+    },
+
+    /***
      * Wires the port pickers, the browser support warning and #testConnection.
      */
     wireMidi(eps){
+        // Wrapping whatever is already installed, for the same reason
+        // EPSProbe.attach does: the pages set their event logging up before
+        // they call this, and replacing the callback would silence it. The
+        // lights are unconditional — they are for the case where someone has
+        // not found the debug panel and does not know there is a log.
+        const previous = eps.midiCallback
+        eps.setMidiCallback((direction, bytes) => {
+            EPSWaveUI.blinkMidi(direction)
+            if(previous) previous(direction, bytes)
+        })
+
         $("#midiIn").change(event => {
             eps.setInput(event.target.value)
             window.safeStorage.set("midiIn", event.target.value)
