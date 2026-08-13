@@ -7,24 +7,32 @@
  * in the Original EPS", so the bottom three bits of anything sent to a Classic
  * are thrown away by the machine whatever we put in them.
  *
- * That leaves a choice about *how* they are thrown away, and it matters more
- * than it sounds. Dropping three bits by truncation is a shift; dropping them
- * by rounding is a shift plus a decision at the halfway point; and dropping
- * them with dither trades a little noise for the removal of the correlated
- * distortion that plain quantisation adds to quiet material. Doing nothing at
- * all and letting the synth truncate is the worst of the three, because it is
- * truncation with a DC offset of half a step on every sample.
+ * MEASURED, not just read. Across the four original EPS instrument files in
+ * reference/disks/EPS-original, every sample is a multiple of 8 — 100% of them
+ * clear at one, two and three bits — while bit 3 varies in about half. The same
+ * test on EPS-16 PLUS files gives 50%, 25%, 12.5%, which is what ordinary
+ * sixteen bit audio looks like. Thirteen significant bits, exactly.
  *
- * Which one the Classic actually does is what probe C in epsProbe.js measures.
- * `analyse()` here is the other half of that: given samples read back from a
- * synth, it reports which bit positions ever carry a one, so the effective
+ * That leaves a choice about *how* they are dropped. Truncation is a shift;
+ * rounding is a shift plus a decision at the halfway point; dither trades a
+ * little noise for the removal of the correlated distortion that plain
+ * quantisation adds to quiet material.
+ *
+ * THE UPLOAD PATH TRUNCATES. Neither specification covers the conversion,
+ * because getting from sixteen bits to thirteen is the sender's business and
+ * not part of the instrument format — so this is a decision rather than a
+ * finding. Truncating matches what the machine does to whatever we send it,
+ * which makes the data we send equal to the data that comes back and turns a
+ * round trip into an exact comparison. See EPS16.quantiseForModel, which calls
+ * quantise() with ROUND_TRUNCATE and no dither.
+ *
+ * to13() below keeps the nicer defaults — nearest with TPDF dither — for
+ * anyone who would rather have the fidelity than the exact round trip. It is
+ * one argument away.
+ *
+ * `analyse()` is the other half of the probe work: given samples read back from
+ * a synth, it reports which bit positions ever carry a one, so the effective
  * word length can be read off a real capture rather than assumed.
- *
- * NOTHING IN THIS FILE IS WIRED INTO THE UPLOAD PATH YET, deliberately. Until
- * the probe says whether the Classic rounds or truncates there is no way to
- * know which of these matches it, and a mismatch is worse than leaving the
- * machine to do its own thing. The functions exist so the probe can use them
- * and so the answer, when it comes, is a one line change.
  */
 class EPSBitDepth {
 

@@ -7,22 +7,35 @@ the synth while you wait.
 ## Why we are asking
 
 EPSWave talks to the EPS-16 PLUS. We would like it to talk to the original EPS
-as well, and we are stuck on four questions that no document can answer.
+as well.
 
 Ensoniq wrote a manual describing how to control the EPS-16 PLUS over MIDI, and
-it says on its first page that it does **not** apply to the original EPS. The
-only description of the original we have is a library a programmer wrote in
-1992 — which is genuinely good, because he owned a Classic and not a 16 PLUS,
-so the parts of his code that deal with your machine are the parts he actually
-tested. Between the two sources we can account for nearly everything.
+it says on its first page that it does **not** apply to the original EPS. For a
+long time all we had for your machine was a library a programmer wrote in 1992 —
+genuinely good, because he owned a Classic and not a 16 PLUS, so the parts of
+his code that deal with your machine are the parts he actually tested — and four
+questions neither source could settle.
 
-Nearly. Four things are left over, and all four need a real machine:
+**Ensoniq's own manual for your synth has since turned up**, dated June 1989.
+It answered three of the four outright, so this session is shorter and more
+certain than it would have been. What it did not answer, and what we are asking
+you to help with:
 
-1. What your synth's parameter numbers are. The 16 PLUS renumbered them all.
-2. Exactly how long its instrument and layer data blocks are.
-3. Which settings the 16 PLUS added into space the Classic left empty.
-4. How many bits of each sample your machine really keeps, and what it does
-   with the rest.
+1. **Where your synth keeps a wavesample's pan setting, and what the number
+   means.** We know which half of the word it is in. We do not know whether the
+   value is what we think, and if we get it wrong then instruments converted
+   from your machine to a 16 PLUS come out with their stereo image scrambled.
+2. **Whether your synth accepts any sample rate, or only the ten on its front
+   panel.** This one could break ordinary uploads: EPSWave sends the rate your
+   audio file was recorded at, and if your machine snaps that to the nearest of
+   its ten then everything plays back at the wrong speed.
+3. **Whether the manual is telling the truth.** A great deal now rests on one
+   thirty-six-year-old document being accurate. Several steps below simply
+   confirm things it already says, which is worth five minutes each.
+4. **Whether your synth quietly ignores some settings.** The 16 PLUS manual
+   marks the settings that cannot be changed one at a time. Your manual has no
+   such marks — Ensoniq never wrote them down — so the only way to find out is
+   to try.
 
 Your session answers all four. Everything is recorded to a file, which is the
 only thing we need back from you.
@@ -267,9 +280,10 @@ reading. Then, for each control in turn, a dialog appears telling you:
 - **which instrument, layer and wavesample to change it on** — this matters, and
   the dialog names the exact one the app is reading, because a change made to a
   different wavesample simply will not show up,
-- **why that control was chosen**, which is worth reading: every one of them
-  settles a specific place where our two reference documents contradict each
-  other.
+- **why that control was chosen**, which is worth reading: some of these settle
+  a real disagreement between our references, and some confirm something
+  Ensoniq's 1989 manual already says. Both are worth doing, and the dialog is
+  honest about which is which.
 
 Change the control on the synth, then press **I changed it — Continue**. The app
 takes a fresh reading, works out which number moved, and shows you. Then the
@@ -285,6 +299,12 @@ Each dialog also offers:
 
 There are six controls. Getting through three is useful; all six is a good
 session. Nothing is lost if you stop early.
+
+**The first one, pan, is the important one — please do that one properly even
+if you skip the rest.** It asks you to go all the way to one end and continue,
+then all the way to the other end and continue. Both halves matter: we are
+checking a specific pair of numbers, and one reading on its own cannot tell a
+setting that moved from a setting that happens to sit where we expected.
 
 **A note on the envelope steps.** Two of them ask for envelope levels. Your
 manual numbers the five levels 1 to 5; the MIDI specification numbers the same
@@ -383,9 +403,52 @@ Round trip: 512 of 4096 samples came back identical. What the synth stores is
 quantised to 8, so it keeps 13 bits, and it masks (error 0 to 7, mean 3.48).
 ```
 
-That is the fourth answer.
-
 Afterwards, reload the instrument from disk and the wavesample is back to normal.
+
+**A note on what we do with this.** We already know from your instrument files
+that your machine keeps thirteen bits — every sample in every original EPS file
+we have is a multiple of 8, which is what thirteen bits looks like. EPSWave now
+truncates to thirteen bits before sending anything to a Classic, so that what it
+sends is exactly what your synth will store. This test confirms that on your
+actual hardware rather than on four files.
+
+---
+
+# Part 8a — Sample rates (about 2 minutes)
+
+Section **6 · Probe D — sample rates**.
+
+**This is the one that could break ordinary uploads, so please do not skip it.**
+
+Your front panel offers ten sample rates, from 52 kHz down to 6.25 kHz. The MIDI
+specification says the setting will take any value at all. EPSWave believes the
+specification: when you load an audio file it works out that file's own rate,
+sends it, and the sample plays back at the pitch it was recorded at.
+
+If your EPS instead rounds to the nearest of its ten, every upload comes out at
+the wrong speed — and it would look like a bug in the app rather than a rule in
+the synth, which is exactly the kind of thing that wastes somebody a weekend.
+
+Press **Test sample rates**. It writes a few rates to one wavesample, reads each
+one back, and **puts the original rate back when it is done**. It changes nothing
+else, and nothing on any disk.
+
+You will get a table. The highlighted rows are rates your front panel does not
+offer — those are the ones that decide it:
+
+```
+Code   Hz       On panel   Write       Reads back      Result
+20     31,250   yes        accepted    20 (31,250 Hz)  held
+21     29,762   no         accepted    21 (29,762 Hz)  held
+```
+
+**Every rate held** means the synth takes what it is given and uploads will play
+at the right pitch. **Changed** on any highlighted row means it snaps to its own
+ten, and we have work to do before uploads are trustworthy.
+
+If you have a moment afterwards, look at the synth's own display and confirm the
+rate reads what it did before you started. The probe says it restored it; seeing
+it is better.
 
 ---
 

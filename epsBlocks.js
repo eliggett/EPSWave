@@ -387,42 +387,206 @@ class EPSBlocks {
     /***
      * Section 7.3 word 105, whose two halves belong to two different machines.
      *
-     * The specification calls it "high byte = unused; low byte = Pan Position".
-     * Appendix B is more forthcoming: `ws_pan` in the high byte, commented "old
-     * m2 pan", and `wsp_pan` in the low byte. The original EPS's pan lives in
-     * the high byte and the EPS-16 PLUS ignores it.
+     * WHICH BYTE IS SETTLED. THE SCALE IS NOT.
      *
-     * So an original EPS block sent unchanged to an EPS-16 PLUS arrives with a
-     * pan of 0. That is centre — section 9 gives the range as -99 to +99 — so
-     * nothing is broken either way, and in these four files the high byte is 3
-     * in all 13 wavesamples, which is centre in anything. The high byte is 3 in
-     * all 62 EPS-16 PLUS wavesamples too, so it is equally possible that it is
-     * simply a constant neither machine writes.
+     * The EPS-16 PLUS specification calls the word "high byte = unused; low
+     * byte = Pan Position". Ensoniq's 1989 EPS specification puts the Classic's
+     * "Pan Position - including separate out assignment" at the same word,
+     * under a section 7.3 heading that reads "all values in hi byte of word"
+     * with no escape clause and no split word anywhere in the table. Appendix B
+     * of the 16 PLUS manual agrees from the other side: `ws_pan` in the high
+     * byte, commented "old m2 pan", and `wsp_pan` in the low byte.
+     *
+     * So the original EPS's pan is the high byte, the EPS-16 PLUS's is the low
+     * byte, and moving it down is moving it to the right place. An unconverted
+     * block arrives at a 16 PLUS reading 0, which is centre on its -99 to +99
+     * scale, so nothing is broken by leaving it either.
+     *
+     * What the two machines do NOT share is what the number means. The Classic
+     * numbers pan 0 to 18 from section 9's Table 5 — 0 is WAVESAMPLE, 1 to 8
+     * are the eight display positions *------- to -------*, 9 to 16 are SOLO
+     * OUT 1 to 8, 17 is RANDOM PAN, 18 is KEYBOARD — with the output assignment
+     * folded into the same field. The 16 PLUS split routing out into word 99's
+     * low byte and made pan a signed -99 to +99. A byte copy therefore carries
+     * a number that means something else at the far end, and a Classic solo out
+     * has nowhere at all to go.
      *
      * Copying it across regardless is what Arensburger does — putws.c sends
      * `(pan_pos << 8) | pan_pos`, the same value in both halves, from someone
-     * who had the hardware to check on. It is right if the scales match, and
-     * off by a rounding error against a centre of 0 if they do not.
+     * who had the hardware to check on. Against Table 5 the scales do not
+     * match, so this is left as it is until hardware says otherwise rather than
+     * being replaced with a mapping derived from two manuals and no synth.
+     *
+     * THE MEASUREMENT THAT WOULD SETTLE IT: on a Classic, pan one wavesample
+     * hard left and another hard right, dump both, read this word's high byte.
+     * Table 5 predicts 1 and 8. Every file to hand reads 3 in all 13 original
+     * EPS wavesamples, which Table 5 calls --*----- rather than centre — and
+     * reads 3 in all 62 EPS-16 PLUS wavesamples too, where the specification
+     * says the byte is unused. So 3 may be a constant neither machine writes as
+     * pan, and one dump would say which.
      */
     static WS_PAN_WORD = 105
+
+    /***
+     * Table 5 of the 1989 specification, which is what the original EPS's pan
+     * byte actually holds. One field carrying three unrelated ideas: a stereo
+     * position, a hard assignment to one of the eight individual outputs, or
+     * "let the keyboard decide", low notes left and high notes right.
+     *
+     * NINETEEN ENTRIES, 0 TO 18, and section 9.9 of the same document says the
+     * range is 0-17. Ensoniq is wrong in one of those two places and the table
+     * is the one to believe: it is the definition, the range line is a summary
+     * of it, and a summary that disagrees with its own table is a typo in the
+     * summary. So nothing here clamps to 17. A file holding 18 was written by a
+     * synth that accepted 18.
+     *
+     * NOTHING HERE VALIDATES AT ALL, in fact, and that is the point. A value
+     * outside 0-18 in a real instrument means the byte is not what we think it
+     * is, and the way to find that out is for it to survive to somewhere a
+     * person can look at it — not to be quietly rounded into range by us on the
+     * way past.
+     */
+    static WS_PAN_CLASSIC = [
+        "wavesample",                                             // 0
+        "*-------", "-*------", "--*-----", "---*----",           // 1-4
+        "----*---", "-----*--", "------*-", "-------*",           // 5-8
+        "solo out 1", "solo out 2", "solo out 3", "solo out 4",   // 9-12
+        "solo out 5", "solo out 6", "solo out 7", "solo out 8",   // 13-16
+        "random pan",                                             // 17
+        "keyboard"                                                // 18
+    ]
+
+    /***
+     * What an original EPS pan byte means, in words. Out of range values are
+     * reported as themselves rather than hidden, for the reason above.
+     */
+    static classicPanName(value){
+        return EPSBlocks.WS_PAN_CLASSIC[value]
+            || `unknown (${value}, outside Table 5's 0-18)`
+    }
+
+    /***
+     * The two machines' pan scales, and how to get between them.
+     *
+     * Table 5 positions 1 to 8 are the eight cells of the display, *------- at
+     * hard left through -------* at hard right. The EPS-16 PLUS covers the same
+     * stereo field with a signed number. So the Classic is the coarse version
+     * of the same idea and the conversion is a straight rescale, eight steps
+     * against the full width.
+     *
+     * FULL SCALE IN A BLOCK IS 127, NOT THE 99 SECTION 9.9 GIVES. Section 9.9
+     * is about PUT PARAMETER, where the range is -99 to +99, and that is what
+     * the front panel shows. The number in word 105 is a different matter, and
+     * the files say so: across 73 wavesamples in 44 EPS-16 PLUS instruments the
+     * low byte holds 0 forty-eight times, +127 eleven times, -127 eleven times,
+     * and one symmetric pair at +/-48. Eleven and eleven at exactly +/-127 is
+     * hard panned stereo pairs, written by a 16 PLUS into its own file, so 127
+     * is what that machine calls hard over. Those same pairs are also what
+     * establishes the byte is two's complement rather than sign and magnitude.
+     *
+     * Centre is the one value the two cannot agree on: with eight positions the
+     * middle falls between 4 and 5, so a 16 PLUS pan of 0 has no exact Classic
+     * equivalent. It goes to 5. Neither neighbour is more correct and rounding
+     * half up needs no special case to explain.
+     *
+     * Both directions round trip exactly for all eight positions.
+     */
+    static PAN_16_PLUS_FULL = 127
+    static PAN_CLASSIC_LEFT = 1
+    static PAN_CLASSIC_RIGHT = 8
+
+    /*** Table 5 position 1-8 to the EPS-16 PLUS's signed pan. */
+    static panPositionTo16Plus(position){
+        const steps = EPSBlocks.PAN_CLASSIC_RIGHT - EPSBlocks.PAN_CLASSIC_LEFT
+        const full = EPSBlocks.PAN_16_PLUS_FULL
+        const clamped = Math.max(EPSBlocks.PAN_CLASSIC_LEFT,
+            Math.min(EPSBlocks.PAN_CLASSIC_RIGHT, position))
+        return Math.round(-full + (clamped - EPSBlocks.PAN_CLASSIC_LEFT) * (2 * full) / steps)
+    }
+
+    /*** The EPS-16 PLUS's signed pan to a Table 5 position 1-8. */
+    static panPositionFromEps16Plus(pan){
+        const steps = EPSBlocks.PAN_CLASSIC_RIGHT - EPSBlocks.PAN_CLASSIC_LEFT
+        const full = EPSBlocks.PAN_16_PLUS_FULL
+        const clamped = Math.max(-full, Math.min(full, pan))
+        return EPSBlocks.PAN_CLASSIC_LEFT
+            + Math.round((clamped + full) * steps / (2 * full))
+    }
+
+    /*** A signed byte, for the EPS-16 PLUS's half of word 105. */
+    static signedByte(value){
+        const raw = value & 0xFF
+        return raw > 127 ? raw - 256 : raw
+    }
 
     /***
      * Rewrites one original EPS wavesample block as an EPS-16 PLUS one, in
      * place. Returns what it changed, or null if there was nothing to do.
      *
+     * ONLY CALL THIS WHEN THE FAR END IS A 16 PLUS. An original EPS block going
+     * to an original EPS needs no adaptation whatsoever — the byte is already
+     * in the half that machine reads, holding a number that machine understands
+     * — and running this on that path would write a byte the Classic ignores
+     * into a byte the Classic does not use, for no reason. See uploadInstrument
+     * in eps.js, which is the only caller and now tests both ends.
+     *
      * The high byte is left where it is rather than cleared. The EPS-16 PLUS
      * does not read it, and leaving it means the block still says what the
      * original EPS meant.
+     *
+     * THE VALUE IS RESCALED, NOT COPIED. Table 5 positions 1 to 8 are the eight
+     * cells of the Classic's display and the 16 PLUS covers the same field with
+     * a signed number, so this is a coarse scale going to a fine one — see
+     * panPositionTo16Plus. Everything else in Table 5 is something the 16 PLUS
+     * has no pan value for: the eight individual outputs are routing rather
+     * than position, and the 16 PLUS routes through word 99's low byte with
+     * four destinations rather than eight; random pan and keyboard pan are
+     * modulation, which the 16 PLUS keeps in a separate source-and-amount pair.
+     * Those land at centre, and `lost` says which of them it was so the caller
+     * can tell somebody rather than silently dropping it.
      */
     static adaptWavesampleToEps16Plus(block){
         const at = EPSBlocks.WS_PAN_WORD
         const original = (block[at] >> 8) & 0xFF
         // Only fills a gap. A low byte that already holds something was not
         // written by an original EPS, whatever word 25 says, and guessing over
-        // the top of it would be worse than leaving it alone.
+        // the top of it would be worse than leaving it alone. Table 5 value 0
+        // is "wavesample", which is not a position either.
         if(original == 0 || (block[at] & 0xFF) != 0) return null
-        block[at] = (block[at] & 0xFF00) | original
-        return { word: at, pan: original }
+
+        const positional = original >= EPSBlocks.PAN_CLASSIC_LEFT
+            && original <= EPSBlocks.PAN_CLASSIC_RIGHT
+        const pan = positional ? EPSBlocks.panPositionTo16Plus(original) : 0
+        block[at] = (block[at] & 0xFF00) | (pan & 0xFF)
+        return { word: at, from: original, pan,
+            meant: EPSBlocks.classicPanName(original),
+            lost: positional ? null : EPSBlocks.classicPanName(original) }
+    }
+
+    /***
+     * The other direction: an EPS-16 PLUS wavesample block on its way to an
+     * original EPS.
+     *
+     * ONLY CALL THIS WHEN THE FAR END IS A CLASSIC. Until now this path did
+     * nothing at all — a 16 PLUS instrument sent to an original EPS arrived
+     * with whatever happened to be in the high byte, which in all 73 EPS-16
+     * PLUS wavesamples to hand is 3, so every wavesample of every converted
+     * instrument would have landed on the same position regardless of where the
+     * 16 PLUS had put it.
+     *
+     * The 16 PLUS's own pan is left in the low byte rather than cleared, the
+     * same way round as the other direction: the Classic does not read it, and
+     * leaving it means the block still says what the 16 PLUS meant.
+     */
+    static adaptWavesampleToClassic(block){
+        const at = EPSBlocks.WS_PAN_WORD
+        const pan = EPSBlocks.signedByte(block[at])
+        const position = EPSBlocks.panPositionFromEps16Plus(pan)
+        const was = (block[at] >> 8) & 0xFF
+        if(was == position) return null
+        block[at] = (position << 8) | (block[at] & 0x00FF)
+        return { word: at, from: pan, position, was,
+            meant: EPSBlocks.classicPanName(position) }
     }
 
     /***

@@ -6,33 +6,61 @@
  * Everything the project knows about the EPS-16 PLUS comes from Ensoniq's
  * External Command Specification, which states on its first page that it
  * "applies specifically to the EPS-16 PLUS only (not the Original EPS)".
- * Everything it knows about the original EPS comes from Andrew Arensburger's
- * 1992 sysex library in reference/code/eps2.0/ — which is genuinely useful,
- * because its author owned a Classic and not a 16 PLUS, so its Classic paths
- * are the tested ones and its 16 PLUS paths are the guesses. The two sources
- * cover each other almost exactly.
+ * These probes were written when the original EPS had no manual to hand, and
+ * everything the project knew about it came from Andrew Arensburger's 1992
+ * sysex library in reference/code/eps2.0/ — genuinely useful, because its
+ * author owned a Classic and not a 16 PLUS, so its Classic paths are the tested
+ * ones and its 16 PLUS paths are the guesses.
  *
- * Almost. Four things are not settled by either, and cannot be settled by
- * reading:
+ * Four things were not settled by either source. Ensoniq's own EPS External
+ * Command Specification of June 12 1989 has since turned up, and it answers
+ * three of them outright:
  *
- *   1. The Classic's parameter numbers. The 16 PLUS merged the Classic's
- *      separate System (page $0D) and MIDI (page $0C) pages into one and
- *      renumbered them. eps.h has a reconstruction, but it is incomplete and
- *      has at least two collisions in it (PE1_L1S and PE1_L4H are both $010E).
- *      No amount of dumping instruments reveals any of this, because block
- *      transfers never mention a parameter number.
- *   2. Block lengths. eps.h allocates for an instrument block of 968 bytes
- *      where section 7.1 describes 969, which is 321 words against 323 — a
- *      difference of exactly the effect offset the Classic cannot have.
- *   3. Which fields the 16 PLUS added in the low bytes of existing words.
- *      Section 7.3 and eps.h disagree about word 105 (pan), so "the low bytes
- *      were free on the Classic" cannot be applied as a rule.
- *   4. Whether the Classic truncates or rounds when it discards the low three
- *      bits of every sample.
+ *   1. ANSWERED. The Classic's parameter numbers. The 16 PLUS merged the
+ *      Classic's separate System (page $0D) and MIDI (page $0C) pages into one
+ *      and renumbered them. eps.h has a reconstruction, but it is incomplete
+ *      and has collisions in it (PE1_L1S and PE1_L4H are both $010E). Section 9
+ *      of the 1989 specification gives the full map and cross-checks exactly
+ *      against eps.h wherever the two overlap; it settles that collision as
+ *      Level 4 Hard $010E, Level 1 Soft $010F. No amount of dumping instruments
+ *      reveals any of this, because block transfers never mention a parameter
+ *      number.
+ *   2. ANSWERED. Block lengths. eps.h allocates for an instrument block of 968
+ *      bytes where section 7.1 describes 969, which is 321 words against 323 —
+ *      a difference of exactly the effect offset the Classic cannot have. The
+ *      1989 sections 7.1 to 7.4 give 323 / 107 / 139 / 107, the same as the 16
+ *      PLUS, making the eps.h figure an allocation quirk.
+ *   3. ANSWERED. Which fields the 16 PLUS added in the low bytes of existing
+ *      words. All of them: every one of the 1989 document's four block tables
+ *      is headed "all values in hi byte of word", with no escape clause and no
+ *      split-word entry anywhere in it. That includes word 105, where the
+ *      Classic keeps wavesample pan and the 16 PLUS does not.
+ *   4. STILL OPEN. Whether the Classic truncates or rounds when it discards the
+ *      low three bits of every sample. The specification does not mention it.
  *
  * So: three probes, one per question that hardware can answer, plus a capture
  * format built on the assumption that there is exactly one session with a
- * borrowed machine and no second chance to ask a follow up question.
+ * borrowed machine and no second chance to ask a follow up question. Two of
+ * those probes now confirm a documented answer rather than discovering an
+ * unknown one, which makes them cheaper to interpret and no less worth running
+ * — a specification is a statement of intent, and this one is thirty six years
+ * old.
+ *
+ * What is still genuinely unknown, and worth watching for in a capture:
+ *
+ *   - Word 105's pan SCALE. The byte is settled; the value is not. The Classic
+ *     numbers pan 0-18 by Table 5, where 9-16 are Solo Out 1-8; the 16 PLUS
+ *     uses -99 to +99 and routes elsewhere. See EPSBlocks.WS_PAN_WORD.
+ *   - Whether any parameter silently refuses a single PUT. The 16 PLUS marks
+ *     these "*" and "**". The 1989 specification has no such marker system —
+ *     its only stated restriction is "Read Only" on three items — so this was
+ *     never written down for the Classic rather than lost in transmission.
+ *   - Whether modulation source really tops out at 15. Table 2 lists 0-15;
+ *     sections 9.5 and 9.7 to 9.10 say 0-17 and 0-18.
+ *
+ * reference/eps-classic-vs-16plus.md has the whole comparison, both machines'
+ * value ranges, and the notation trap that makes a Classic page number a
+ * quarter of the byte that goes on the wire.
  *
  * THE RULES THAT SHAPED THIS FILE
  *
@@ -1210,6 +1238,115 @@ class EPSProbe {
      * whether those work on a Classic is its own unknown; this probe is about
      * the data path and nothing else.
      */
+    /***
+     * The ten rates an original EPS offers on its front panel, in kHz, from
+     * reference material rather than from either specification: 52.0, 39.0,
+     * 31.2, 26.0, 19.5, 15.6, 13.0, 9.75, 7.8 and 6.25. Section 7.3 gives the
+     * period as rate * 1.6 microseconds on both machines, so these are the
+     * codes those rates correspond to.
+     */
+    static CLASSIC_RATE_CODES = [12, 16, 20, 24, 32, 40, 48, 64, 80, 100]
+
+    /***
+     * Does the Classic honour a sample rate code it has no front panel name for?
+     *
+     * THIS IS THE ONE QUESTION ON THE LIST THAT COULD BREAK AN ORDINARY UPLOAD.
+     * Section 9.5 gives Sample Rate as an item with range 0-127 on both
+     * machines, and the app relies on that: it works the code out from whatever
+     * the loaded wav file was recorded at, sends it, and the sample plays back
+     * at the pitch it was sampled at. On a 16 PLUS this is established. But the
+     * Classic's panel offers ten fixed rates, and if the machine snaps an
+     * arbitrary code to the nearest of them then every upload comes out at the
+     * wrong speed — audibly wrong, and wrong in a way that looks like a bug in
+     * the pitch detection rather than a rounding rule in the synth.
+     *
+     * So: write a code, read it back, see what stuck. Codes that sit between
+     * two panel rates are the interesting ones; two panel rates are included as
+     * a control, because a machine that refuses everything and a machine that
+     * accepts everything look identical if you only try the awkward values.
+     *
+     * Read back with GET PARAMETER rather than from the parameter block. The
+     * block would work too, but it is 139 words per attempt against three
+     * bytes, and section 9.5 marks Sample Rate "receive only" on the 16 PLUS,
+     * which per NOTE 1 means it answers a GET perfectly well.
+     *
+     * Restores whatever the wavesample had when it started, on the way out and
+     * also if it throws. This writes to the operator's instrument, and it is
+     * the only probe that changes a setting they might care about.
+     */
+    async probeSampleRate(options = {}){
+        const instrumentNumber = options.instrument == null ? 0 : options.instrument
+        const codes = options.codes || [20, 21, 26, 33, 40, 100]
+        const gap = options.gapMs == null ? 150 : options.gapMs
+
+        return this.run("sample-rate", { instrument: instrumentNumber, codes }, async () => {
+            const target = options.target
+                || await this.findWavedataTarget(instrumentNumber, options)
+            this.eps.setInstrumentNumber(target.instrument)
+            this.eps.setLayerNumber(target.layer)
+            this.eps.setWavesampleNumber(target.wavesample)
+
+            const before = await this.eps.getParameter(0x20, EPS16.SAMPLE_RATE_PARAM)
+            const original = before.answered ? before.value : null
+            this.log(`Sample rate probe on instrument ${target.instrument + 1}, `
+                + `layer ${target.layer + 1}, wavesample ${target.wavesample} `
+                + `"${target.name}". It is currently code `
+                + `${original == null ? "unreadable" : original}`
+                + `${original == null ? "" : ` (${WaveGen.rateFromCode(original)} Hz)`}.`)
+            this.capture.event("finding", { probe: "sample-rate", what: "starting value",
+                code: original, target })
+
+            const attempts = []
+            try{
+                for(let i = 0; i < codes.length; i++){
+                    if(this.aborted) break
+                    const code = codes[i]
+                    this.progress(i / codes.length)
+                    this.status(`Trying sample rate code ${code}`)
+                    const accepted = await this.eps.setParameter(0x20,
+                        EPS16.SAMPLE_RATE_PARAM, code)
+                    await this.eps.sleep(gap)
+                    const back = await this.eps.getParameter(0x20, EPS16.SAMPLE_RATE_PARAM)
+                    const got = back.answered ? back.value : null
+                    const panel = EPSProbe.CLASSIC_RATE_CODES.includes(code)
+                    const attempt = { code, accepted, readBack: got, onPanel: panel,
+                        held: got === code,
+                        hz: WaveGen.rateFromCode(code),
+                        readBackHz: got == null ? null : WaveGen.rateFromCode(got) }
+                    attempts.push(attempt)
+                    this.capture.event("finding", { probe: "sample-rate",
+                        what: "attempt", ...attempt })
+                    this.log(`  code ${code} (${attempt.hz} Hz`
+                        + `${panel ? ", a front panel rate" : ", between panel rates"}`
+                        + `): ${accepted ? "accepted" : "refused"}, reads back as `
+                        + `${got == null ? "nothing" : got}`
+                        + `${attempt.held ? " — held" : " — CHANGED"}`)
+                    await this.eps.sleep(gap)
+                }
+            }finally{
+                if(original != null){
+                    await this.eps.setParameter(0x20, EPS16.SAMPLE_RATE_PARAM, original)
+                    this.log(`Put the sample rate back to code ${original}`)
+                }
+            }
+
+            const offPanel = attempts.filter(a => !a.onPanel)
+            const offPanelHeld = offPanel.filter(a => a.held)
+            const arbitrary = offPanel.length > 0 && offPanelHeld.length == offPanel.length
+            this.log(offPanel.length == 0
+                ? `No off-panel codes were tried, so this says nothing about snapping.`
+                : arbitrary
+                    ? `The synth kept every code it was given, including `
+                      + `${offPanel.length} that are not front panel rates. Uploads at `
+                      + `the wav file's own rate will play at the right pitch.`
+                    : `The synth did NOT keep ${offPanel.length - offPanelHeld.length} of `
+                      + `${offPanel.length} off-panel codes. Uploads may need their rate `
+                      + `snapped to one of the ten panel rates and resampled to match.`)
+
+            return { target, original, attempts, arbitraryRatesHeld: arbitrary }
+        })
+    }
+
     async probeWavedata(options = {}){
         const write = options.write == true
         const requested = options.length || 4096

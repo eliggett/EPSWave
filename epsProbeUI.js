@@ -175,15 +175,20 @@ window.EPSProbeUI = {
             title: "Wavesample pan",
             button: "6 &middot; Amp",
             block: "wavesample",
-            what: "Change <b>Pan</b> by a good distance &mdash; from centre to hard "
-                + "left, say, or from 0 to -50.",
-            why: "This is the disagreement that matters most. Section 7.3 of the "
-                + "EPS-16 PLUS manual puts pan in the low half of the wavesample's "
-                + "105th word and says the high half is unused. The 1992 library, "
-                + "written against a Classic, reads it from the high half. Both "
-                + "cannot be right, and if we guess wrong then every instrument "
-                + "this app restores to your synth comes back with its stereo "
-                + "image scrambled."
+            what: "Set <b>Pan</b> to <b>hard left</b> &mdash; all the way, so the display "
+                + "reads <code>*-------</code>. Continue, then come back and set it "
+                + "<b>hard right</b>, <code>-------*</code>, and continue again.",
+            why: "This is the one that matters most, and it is now a question about "
+                + "the number rather than about where it lives. Ensoniq's 1989 EPS "
+                + "specification puts pan in the high half of the wavesample's 105th "
+                + "word; the EPS-16 PLUS moved it to the low half and made it a "
+                + "signed &minus;99 to +99. Your machine numbers the same setting 0 to "
+                + "18 from Table 5 &mdash; 1 to 8 are the eight display positions, 9 to "
+                + "16 are the eight solo outputs. So hard left should read 1 and hard "
+                + "right should read 8. If they do, we can convert your instruments "
+                + "to a 16 PLUS correctly. If instead this word does not move at all, "
+                + "then the 3 we see in every EPS file we have is a constant nobody "
+                + "writes as pan, and we should stop trying to convert it."
         },
         {
             id: "env-l2s",
@@ -197,8 +202,11 @@ window.EPSProbeUI = {
                 + "MIDI specification counts the same five 0 to 4. So the level your "
                 + "panel calls 2 is the one the specification calls 1 &mdash; and that "
                 + "is the one where the 1992 library contradicts itself, giving Level "
-                + "1 Soft and Level 4 Hard the same number. This step and the next "
-                + "one together say which of them actually owns it."
+                + "1 Soft and Level 4 Hard the same number. Ensoniq's own 1989 "
+                + "specification says the library has a typo: Level 4 Hard is item 14 "
+                + "and Level 1 Soft is item 15. This step and the next one confirm "
+                + "that on real hardware, which is worth doing because a great deal "
+                + "now rests on that one document being accurate."
         },
         {
             id: "env-l5h",
@@ -646,6 +654,16 @@ window.EPSProbeUI = {
             if(result) this.showWavedata(result)
         })
 
+        // ---- Probe D ----------------------------------------------------
+        $("#probeRates").click(async () => {
+            if(!this.ready()) return
+            const result = await this.guarded("Sample rate probe", () =>
+                this.probe.probeSampleRate({
+                    instrument: this.num("rateInstrument", 1) - 1
+                }))
+            if(result) this.showRates(result)
+        })
+
         // ---- Manual -----------------------------------------------------
         $("#manualGet").click(async () => {
             if(!this.ready()) return
@@ -852,6 +870,47 @@ window.EPSProbeUI = {
      * separated on purpose — see the note in EPSBitDepth.compareRoundTrip about
      * why the bit table alone cannot be read as the answer.
      */
+    /***
+     * The sample rate answer, phrased so it can be read without the manual.
+     *
+     * "Held" is the whole question: a code that reads back as itself was
+     * accepted as given, and a code that reads back as something else was
+     * snapped to a rate the machine preferred. The off-panel rows are the ones
+     * that decide it, so they are marked.
+     */
+    showRates(result){
+        const t = result.target
+        const rows = result.attempts.map(a =>
+            `<tr class="${a.onPanel ? "" : "table-warning"}">`
+            + `<td>${a.code}</td><td>${a.hz.toLocaleString()}</td>`
+            + `<td>${a.onPanel ? "yes" : "<b>no</b>"}</td>`
+            + `<td>${a.accepted ? "accepted" : "<b>refused</b>"}</td>`
+            + `<td>${a.readBack == null ? "&mdash;" : a.readBack}`
+            + `${a.readBackHz == null ? "" : ` (${a.readBackHz.toLocaleString()} Hz)`}</td>`
+            + `<td>${a.held ? "held" : "<b>changed</b>"}</td></tr>`).join("")
+
+        const html = `<h6 class="mb-2">Sample rates</h6>`
+            + `<p class="mb-2"><small>Tested on instrument ${t.instrument + 1}, `
+            + `layer ${t.layer + 1}, wavesample ${t.wavesample}`
+            + `${t.name ? ` &mdash; &ldquo;${EPSProbeUI.escape(t.name)}&rdquo;` : ""}. `
+            + `Put back to code ${result.original == null ? "(unreadable)" : result.original} `
+            + `afterwards.</small></p>`
+            + `<table class="table table-sm table-bordered mb-2"><thead><tr>`
+            + `<th>Code</th><th>Hz</th><th>On panel</th><th>Write</th>`
+            + `<th>Reads back</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table>`
+            + (result.arbitraryRatesHeld
+                ? `<p class="mb-0"><b>Every rate held.</b> The synth takes any code it is `
+                    + `given, so uploads at your wav file's own rate will play at the pitch `
+                    + `they were recorded at. Nothing needs changing.</p>`
+                : `<p class="mb-0"><b>At least one rate did not hold.</b> The highlighted `
+                    + `rows are rates the front panel does not offer. If those are the ones `
+                    + `that changed, this synth snaps to its own ten rates and uploads will `
+                    + `need resampling to match &mdash; which is worth knowing before anyone `
+                    + `spends twenty minutes on a transfer that comes out at the wrong `
+                    + `speed.</p>`)
+        $("#probeOutput").html(html).show()
+    },
+
     showWavedata(result){
         const before = result.before
         const t = result.target
@@ -1233,7 +1292,36 @@ window.EPSProbeUI = {
                     </div>
                 </div>
 
-                <h6 class="text-uppercase"><small>6 &middot; Manual</small></h6>
+                <h6 class="text-uppercase"><small>6 &middot; Probe D &mdash; sample rates</small></h6>
+                <p class="mb-2"><small>Your machine's front panel offers ten sample rates,
+                from 52&nbsp;kHz down to 6.25&nbsp;kHz. The MIDI specification says the
+                setting takes any value from 0 to 127. <b>This app relies on the second
+                thing being true</b> &mdash; it works the rate out from whatever your wav
+                file was recorded at and sends that, so the sample plays back at the pitch
+                it was sampled at.</small></p>
+                <p class="mb-2"><small>If instead your EPS snaps to the nearest of its ten,
+                every upload comes out at the wrong speed. This writes a few rates, reads
+                each back, and says which stuck. <b>It puts the original rate back
+                afterwards</b>, and touches nothing else.</small></p>
+                <div class="form-row align-items-center mb-3">
+                    <div class="col-auto mb-2">
+                        <button id="probeRates" class="btn btn-primary btn-sm eps-transfer">
+                            <i class="fa-solid fa-gauge-high"></i> Test sample rates
+                        </button>
+                    </div>
+                    <div class="col-auto mb-2">
+                        <div class="input-group input-group-sm">
+                            <div class="input-group-prepend">
+                                <label class="input-group-text" for="rateInstrument">Instrument</label>
+                            </div>
+                            <input type="number" class="form-control" id="rateInstrument"
+                                value="1" min="1" max="8" style="max-width:5rem"
+                                title="Which instrument slot to look inside. Change this only if slot 1 is empty or holds nothing sampled.">
+                        </div>
+                    </div>
+                </div>
+
+                <h6 class="text-uppercase"><small>7 &middot; Manual</small></h6>
                 <p class="mb-2"><small>For the question nobody thought of in advance,
                 which on a one-session-only machine is the question that matters. Reading
                 a parameter is safe; writing one is not, and sending a raw command is

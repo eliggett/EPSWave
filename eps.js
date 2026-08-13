@@ -835,8 +835,33 @@ class EPS16 {
          * What is lost is what the original EPS never had: no effect, and no
          * value for any of the EPS-16 PLUS-only parameters. Both are also true
          * of loading the instrument on the synth from a disk.
+         *
+         * AND WHERE IT IS GOING MATTERS AS MUCH AS WHERE IT CAME FROM. This
+         * used to test the file alone, so a Classic instrument sent back to a
+         * Classic had its pan byte copied into the half of the word that only a
+         * 16 PLUS reads — a conversion between two machines, applied when there
+         * was only ever one machine involved. Harmless in practice, because the
+         * Classic reads the half the value was already in and ignores the other,
+         * but it wrote a byte nobody asked for into somebody's instrument, and
+         * on the one path where the right answer is to change nothing at all.
+         *
+         * Classic to Classic now passes the block through untouched, pan and
+         * everything else, which is what the file already says and what the
+         * machine already understands.
          */
         const original = !inventory.instrument.isEps16Plus
+        const toSixteenPlus = original && !this.isClassic()
+        const toClassic = !original && this.isClassic()
+        if(original && !toSixteenPlus){
+            this.debug("Original EPS instrument going to an original EPS: sending the "
+                + "parameter blocks exactly as they are, pan included.")
+        }
+        if(toClassic){
+            this.debug("EPS-16 PLUS instrument going to an original EPS: pan is being "
+                + "converted from the 16 PLUS's signed number to the Classic's eight "
+                + "display positions. Everything else the 16 PLUS added lives in low "
+                + "bytes the Classic does not read, so it is left alone.")
+        }
         if(original){
             this.successCallback("Success: This is an original EPS instrument. Its layers "
                 + "and wavesamples transfer as they are — the two machines use the same "
@@ -1096,12 +1121,25 @@ class EPS16 {
             if(ws.isCopy){
                 block[12] = (remap(ws.copyNumber) << 8) | (block[12] & 0x00FF)
             }
-            if(original){
+            if(toSixteenPlus){
                 const moved = EPSBlocks.adaptWavesampleToEps16Plus(block)
                 if(moved){
-                    this.debug(`wavesample ${ws.number}: carried the original EPS pan `
-                        + `${moved.pan} into the low byte of word ${moved.word}, which is `
-                        + `where the EPS-16 PLUS keeps it`)
+                    this.debug(`wavesample ${ws.number}: original EPS pan ${moved.from} `
+                        + `("${moved.meant}") became EPS-16 PLUS pan ${moved.pan} in the `
+                        + `low byte of word ${moved.word}`
+                        + (moved.lost
+                            ? `. "${moved.lost}" is not a stereo position and the 16 PLUS `
+                              + `has no pan value for it, so this one is centred and the `
+                              + `assignment is lost.`
+                            : `.`))
+                }
+            }else if(toClassic){
+                const moved = EPSBlocks.adaptWavesampleToClassic(block)
+                if(moved){
+                    this.debug(`wavesample ${ws.number}: EPS-16 PLUS pan ${moved.from} `
+                        + `became original EPS position ${moved.position} `
+                        + `("${moved.meant}") in the high byte of word ${moved.word}, `
+                        + `over the ${moved.was} that was there`)
                 }
             }
             this.setLayerNumber(ws.layer == null ? layers[0].number : ws.layer)
@@ -1194,6 +1232,20 @@ class EPS16 {
 
     async readEffect(){
         const none = { readable: false, variation: null, parameters: [] }
+        // An original EPS has no effects, and page $30 is not empty on it — it
+        // is the MIDI settings page. Section 9.2 of the 1989 specification puts
+        // base channel, transmit mode, MIDI in mode, controllers, SysEx enable,
+        // program change, song position and XCTRL at items 0 to 8, where the 16
+        // PLUS put effect parameters. So reading this page on a Classic does
+        // not fail informatively; it succeeds and returns the machine's MIDI
+        // configuration labelled as an effect, with item 9 the only one that
+        // errors. That is worse than not asking.
+        if(this.isClassic()){
+            this.debug("Skipping the effect page: on an original EPS wire high byte $30 is "
+                + "the MIDI settings page (section 9.2), not effects, and the machine has "
+                + "no effects processor to report on.")
+            return { ...none, notOnThisModel: true }
+        }
         // The effect is a bonus on top of an inventory that is already complete
         // and has already cost real time to fetch. Nothing that happens on this
         // page is worth losing that over, so a failure here is reported and
@@ -2433,9 +2485,39 @@ class EPS16 {
         }
         return -1
     }
+    /***
+     * Thirteen bits for an original EPS, sixteen for a 16 PLUS.
+     *
+     * The Classic's converter is 13 bit and the low three bits of every stored
+     * sample are zero. That is not a claim from a manual — neither
+     * specification mentions it, because how you get from sixteen bits to
+     * thirteen is the sender's business and not part of the instrument format.
+     * It is measured: across four original EPS instrument files every sample is
+     * a multiple of 8, 100% at three bits, while bit 3 varies in about half of
+     * them. The same test on EPS-16 PLUS files gives 50%, 25%, 12.5% — the
+     * halving of ordinary sixteen bit audio.
+     *
+     * Truncation, deliberately, and not the dithered rounding EPSBitDepth
+     * defaults to. Dropping the low bits is what the machine does to anything
+     * we send it, so doing it here changes no sample the synth would have kept:
+     * it makes what we send equal to what comes back, which is what turns a
+     * round trip into an exact comparison instead of an approximate one.
+     * EPSBitDepth.to13 with the default rounding and dither is the better
+     * sounding option and is one argument away if it is ever wanted.
+     */
+    quantiseForModel(audio){
+        if(!this.isClassic()) return audio
+        return EPSBitDepth.quantise(audio, EPS16.CLASSIC_SAMPLE_BITS,
+            { round: EPSBitDepth.ROUND_TRUNCATE, dither: false })
+    }
+    static CLASSIC_SAMPLE_BITS = 13
+
     async putWavesampleData(audio, start=0){
         this.debug("OFFSETS", start, audio.length, audio.length + start)
-        let midiData = this.convertTo16BitMidi(audio)
+        // Only the audio. The same packer carries parameter blocks in
+        // sendBlock, where every word is a setting rather than a sample and
+        // clearing the low bits would corrupt the block.
+        let midiData = this.convertTo16BitMidi(this.quantiseForModel(audio))
         let startOffset = this.convertTo12BitMidi([start], 4)
         let endOffset = this.convertTo12BitMidi([audio.length + start], 4)
         let sampleOffsets = startOffset.concat(endOffset)
@@ -3348,22 +3430,52 @@ class EPS16 {
     /***
      * Which machine is believed to be on the other end.
      *
-     * NOTHING BRANCHES ON THIS, and nothing should until there is a measured
-     * difference to branch on. The sysex frame, the 12 and 16 bit packing, the
-     * command numbers and the response codes are identical across the EPS
-     * Classic and the EPS-16 PLUS — the reference library in
-     * reference/code/eps2.0/ drives both with one code path, and its author
-     * owned a Classic — so a model test today would be a test with nothing on
-     * either side of it.
+     * The transport does not care. The sysex frame, the 12 and 16 bit packing,
+     * the command numbers and the response codes are identical on both machines
+     * — section 2 of Ensoniq's 1989 EPS specification and section 2 of the
+     * EPS-16 PLUS specification are the same document — so nothing about
+     * getting bytes there and back branches on this, and nothing should.
      *
-     * It is recorded because the probe captures need it: a capture that does
-     * not say which machine produced it is worth much less than one that does,
-     * and asking the operator to remember is asking for the one field that will
-     * be missing from the one file that mattered.
+     * FOUR THINGS DO BRANCH ON IT, all of them established from Ensoniq's own
+     * two specifications rather than guessed:
+     *
+     *   1. Sample resolution. The Classic keeps thirteen bits. See
+     *      putWavesampleData.
+     *   2. Parameters the Classic does not have. Its volume page has no item
+     *      05, its LFO page no item 08, and its Loop Mod Type stops at 3 where
+     *      the 16 PLUS has 7 for transwaves. See the morph and transwave paths.
+     *   3. The effects page. Wire high byte $30 is effects on a 16 PLUS and the
+     *      MIDI settings page on a Classic, so reading it on the wrong machine
+     *      returns base channel and SysEx-enable dressed up as an effect. See
+     *      readEffect.
+     *   4. Value ranges, which the Classic gives as 0-127 and the 16 PLUS as
+     *      0-99 for most levels and amounts. Nothing this app writes today
+     *      falls outside the Classic's wider range, so there is no conversion
+     *      here — but see reference/eps-classic-vs-16plus.md before adding one.
+     *
+     * It is recorded for the probe captures too: a capture that does not say
+     * which machine produced it is worth much less than one that does, and
+     * asking the operator to remember is asking for the one field that will be
+     * missing from the one file that mattered.
      */
+    static MODEL_16_PLUS = "eps16plus"
+    static MODEL_CLASSIC = "epsclassic"
+
     setModel(model){
         this.model = model
         return this.model
+    }
+
+    /***
+     * True only when the operator has said the far end is an original EPS.
+     *
+     * Unset means the 16 PLUS, which is what this app has always assumed and
+     * what every code path was written and tested against. An unanswered
+     * question about the model must never silently change behaviour for the
+     * people already using it.
+     */
+    isClassic(){
+        return this.model == EPS16.MODEL_CLASSIC
     }
     setLayerNumber(num){
         this.layerNum = num
@@ -3551,6 +3663,22 @@ class EPS16 {
      * Macros
      */
     async uploadAsTranswave(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[], options={}){
+        // The original EPS has no transwaves. Its Loop Mod Type, section 9.5 of
+        // the 1989 specification, runs 0 to 3 — Off, Loop, Start, Both — where
+        // the 16 PLUS extended the same parameter to 0 to 7 and put TRANSWAV at
+        // 7. Sending 7 to a Classic is an invalid parameter value, so the
+        // machine would refuse one write in the middle of a long upload and
+        // leave a plain wavesample holding transwave audio: a wavetable's worth
+        // of single cycles played as one sample, which sounds like nothing
+        // anybody wanted. Refusing up front costs the operator a minute instead
+        // of twenty.
+        if(this.isClassic()){
+            const message = "The original EPS does not have transwaves — its Loop Mod Type "
+                + "stops at 3, and the 16 PLUS put transwaves at 7. Use a normal upload "
+                + "instead, or switch the connected model if this is really a 16 PLUS."
+            this.errorCallback(`Error: ${message}`)
+            return { ok: false, unsupported: true, message, instrument: this.instNum }
+        }
         this.setLayerNumber(0)
         this.setWavesampleNumber(1)
         const claimed = await this.acquireInstrument(options)
@@ -3701,7 +3829,24 @@ class EPS16 {
             // PUT PARAMETER reaches it; this is the front panel's
             // Pitch / LFO AMOUNT set to zero, per layer.
             await this.setParameter(EPS16.PITCH_PAGE, EPS16.PITCH_LFO_AMOUNT_PARAM, 0)
-            await this.setParameter(0x18,0x05, EPS16.MORPH_FADECURVE) // fade curve: CROSSFADE, not LINEAR
+            // Two of the settings below do not exist on an original EPS, and
+            // both are refinements rather than load-bearing. Section 9.9 of the
+            // 1989 specification gives the volume page eight items — 1 to 4, 7,
+            // and 10 to 12 — with no item 05, because the crossfade fadecurve
+            // is a 16 PLUS addition. Section 9.10 gives the LFO page six, with
+            // no item 08, because a second LFO modulation source is a 16 PLUS
+            // addition too. Sending either to a Classic earns an invalid
+            // parameter number and an error in the log for something the
+            // machine was never going to do.
+            //
+            // The crossfade still works without them. The fadecurve falls back
+            // to whatever the front panel last chose, and the LFO keeps the one
+            // modulation source it has.
+            const sixteenPlusOnly = !this.isClassic()
+            if(sixteenPlusOnly){
+                // fade curve: CROSSFADE, not LINEAR
+                await this.setParameter(0x18,0x05, EPS16.MORPH_FADECURVE)
+            }
             await this.setParameter(0x18,0x03, bp.pointA)
             await this.setParameter(0x18,0x0B, bp.pointB)
             await this.setParameter(0x18,0x04, bp.pointC)
@@ -3712,8 +3857,10 @@ class EPS16 {
             await this.setParameter(0x1C,0x03, 127) // LFO depth
             await this.setParameter(0x1C,0x04, 0) // LFO Delay
             await this.setParameter(0x1C,0x05, 1) // LFO Reset
-            await this.setParameter(0x1C,0x08, 0x0F) // LFO Modulation source
-            await this.setParameter(0x1C,0x07, 0x0F) // LFO Modulation source
+            if(sixteenPlusOnly){
+                await this.setParameter(0x1C,0x08, 0x0F) // LFO rate modulation source
+            }
+            await this.setParameter(0x1C,0x07, 0x0F) // LFO modulation source
 
             this.setWavesampleNumber(1)
             EPS16.step(options, `${of}: waiting for the synth`)
