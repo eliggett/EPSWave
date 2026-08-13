@@ -4,9 +4,9 @@ __pycache__/
 */**.wav
 *.pem
 
-# Claude Code tooling config: local to each machine, and settings.local.json
-# can hold paths and grants that mean nothing anywhere else. Deliberately not
-# .claude/ wholesale, so that anything shared later (agents, skills) still shows
-# up in git status rather than being silently ignored.
-.claude/settings.json
-.claude/settings.local.json
+# Claude Code tooling config. Local to the machine and of no use to anyone
+# else: permission grants naming absolute scratchpad paths with a session id
+# in them, which match nothing on another machine and nothing in a later
+# session on this one. The whole directory, so nothing in it turns up in a
+# commit by accident later.
+.claude/
