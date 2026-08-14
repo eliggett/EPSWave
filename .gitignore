@@ -10,3 +10,6 @@ __pycache__/
 # session on this one. The whole directory, so nothing in it turns up in a
 # commit by accident later.
 .claude/
+
+# Local working notes. Not for the repo.
+notes/

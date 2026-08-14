@@ -827,6 +827,9 @@
                 chart.mountGenerator(`wave${id}Gen`)
                 chart.mountNameInput(`wave${id}Name`)
                 chart.mountTransfer(`wave${id}Transfer`)
+                const source = waveTabs.find(tab => $(`#waveTab${tab.id}`).hasClass("active"))
+                    || waveTabs[waveTabs.length - 1]
+                if (source) chart.adoptTarget(source.chart)
 
                 const tab = { id, chart, position: 0 }
                 waveTabs.push(tab)
