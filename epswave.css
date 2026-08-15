@@ -63,7 +63,7 @@ body.dark a { color: #6fb8ff; }
    changing the url and the family name here and nothing else. */
 @font-face {
     font-family: 'EnsoniqVFD';
-    src: url('./fonts/EnsoniqVFD.otf') format('opentype');
+    src: url('./fonts/EnsoniqVFD-Extra.otf') format('opentype');
     font-display: swap;
 }
 .eps-name {
@@ -74,9 +74,25 @@ body.dark a { color: #6fb8ff; }
 }
 /* Qualified with .form-control so it outranks Bootstrap's
    .form-control-sm, which the fields under the Create buttons carry and
-   which would otherwise set the size back to 0.875rem. The field height
-   is an em calculation in Bootstrap, so the box grows to suit. */
-.eps-name.form-control { font-size: 1.25rem; }
+   which would otherwise set the size back to 0.875rem.
+
+   Bootstrap sizes inputs as 1.5em plus padding. This face does not fill
+   its em square, so that formula leaves a band of empty glass above and
+   below the segments. Line-height 1 and a short pad hug the electrodes;
+   height:auto stops the sm group from stretching the box back open. */
+.eps-name.form-control,
+.form-control-sm.eps-name,
+.input-group-sm > .form-control.eps-name {
+    font-size: 1.15rem;
+    line-height: 1;
+    height: auto;
+    padding: 0.15rem 0.4rem;
+}
+.input-group-sm:has(> .eps-name) > .input-group-prepend > .input-group-text {
+    height: auto;
+    padding-top: 0.15rem;
+    padding-bottom: 0.15rem;
+}
 /* Light mode: a passive LCD, dark segments on a grey green panel. */
 .eps-name.form-control {
     background-color: #cfd8b9;
@@ -202,11 +218,11 @@ body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: non
     color: #1e2416;
 }
 .eps-lcd-line {
-    font-size: 1.05rem;
+    font-size: 1.2rem;
     /* Reserved, so an empty status does not shorten the panel and move the
        tabs under the pointer. */
-    min-height: 1.4rem;
-    line-height: 1.4rem;
+    min-height: 1.6rem;
+    line-height: 1.6rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
