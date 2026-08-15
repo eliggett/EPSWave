@@ -58,17 +58,16 @@ body.dark a { color: #6fb8ff; }
    The EPS shows upper case only, so the field is upper cased here as
    well as in the JS that feeds it: the CSS keeps what is on screen
    honest even for a keystroke the input handler has not seen yet.
-   Letter spacing and tabular figures keep the twelve character cells
-   roughly even, since the font is not strictly monospaced. Swapping the
-   face out later means changing the url and the family name here and
-   nothing else. */
+   Letter spacing keeps a little air between the twelve character cells,
+   the way the FIP 22AM5R glass does. Swapping the face out later means
+   changing the url and the family name here and nothing else. */
 @font-face {
-    font-family: 'LCD14';
-    src: url('./fonts/lcd-font/otf/LCD14.otf') format('opentype');
+    font-family: 'EnsoniqVFD';
+    src: url('./fonts/EnsoniqVFD.otf') format('opentype');
     font-display: swap;
 }
 .eps-name {
-    font-family: 'LCD14', monospace;
+    font-family: 'EnsoniqVFD', monospace;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -193,7 +192,7 @@ body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: non
    minutes and the tab that started it is often not the one on screen by
    the time it ends. */
 .eps-lcd {
-    font-family: 'LCD14', monospace;
+    font-family: 'EnsoniqVFD', monospace;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     padding: 0.5rem 0.75rem;

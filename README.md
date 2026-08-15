@@ -53,7 +53,8 @@ the synth's memory — reloading from disk undoes it.
 - Original Project "EnsoniqEPS16Plus":
     - ['summitt' on Github](https://github.com/summitt/EnsoniqEPS16Plus/)
     - ['null0perat0r' on Patron](https://patreon.com/null0perat0r)
-- LCD Font: ['ctrlcctrlv' on Github](https://github.com/ctrlcctrlv/lcd-font)
+- Ensoniq VFD font (FIP 22AM5R 14-segment), SIL OFL 1.1 — see [fonts/EnsoniqVFD-OFL.txt](fonts/EnsoniqVFD-OFL.txt)
+- LCD Font (compare / previous face): ['ctrlcctrlv' on Github](https://github.com/ctrlcctrlv/lcd-font)
 - Ensoniq's MIDI Implementation Manual, available [here](reference/)
 - Anthropic's Claude Opus 5, which was instrumental in digesting the original code and the complete midi implementation. Claude made it possible to add tremendous functionality over the course of just one afternoon. 
 

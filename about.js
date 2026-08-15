@@ -43,12 +43,13 @@ window.ABOUT_HTML = `
             <a href="https://patreon.com/null0perat0r" target="_blank" rel="noopener">'null0perat0r' on Patreon</a>
         </li>
         <li>
-            LCD font by
-            <a href="https://github.com/ctrlcctrlv/lcd-font" target="_blank" rel="noopener">'ctrlcctrlv' on Github</a>.
-            Copyright &copy; 2015 Fredrick Brennan, used under the
-            <a href="https://github.com/eliggett/EPSWave/blob/main/fonts/lcd-font/LICENSE.ttx"
-                target="_blank" rel="noopener">SIL Open Font License 1.1</a>,
-            a copy of which is included with the font.
+            Ensoniq VFD font (Futaba FIP 22AM5R 14-segment),
+            used under the
+            <a href="https://github.com/eliggett/EPSWave/blob/main/fonts/EnsoniqVFD-OFL.txt"
+                target="_blank" rel="noopener">SIL Open Font License 1.1</a>.
+            LCD14 by
+            <a href="https://github.com/ctrlcctrlv/lcd-font" target="_blank" rel="noopener">'ctrlcctrlv' on Github</a>
+            remains in the tree for comparison.
         </li>
         <li>
             Ensoniq's EPS-16 PLUS MIDI implementation manual,
