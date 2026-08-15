@@ -43,7 +43,7 @@ window.ABOUT_HTML = `
             <a href="https://patreon.com/null0perat0r" target="_blank" rel="noopener">'null0perat0r' on Patreon</a>
         </li>
         <li>
-            Ensoniq VFD Extra font (Futaba FIP 22AM5R 14-segment),
+            Ensoniq VFD Organic font (Futaba FIP 22AM5R 14-segment),
             used under the
             <a href="https://github.com/eliggett/EPSWave/blob/main/fonts/EnsoniqVFD-OFL.txt"
                 target="_blank" rel="noopener">SIL Open Font License 1.1</a>.

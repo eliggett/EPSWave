@@ -63,7 +63,7 @@ body.dark a { color: #6fb8ff; }
    changing the url and the family name here and nothing else. */
 @font-face {
     font-family: 'EnsoniqVFD';
-    src: url('./fonts/EnsoniqVFD-Extra.otf') format('opentype');
+    src: url('./fonts/EnsoniqVFD-Organic.otf') format('opentype');
     font-display: swap;
 }
 .eps-name {
