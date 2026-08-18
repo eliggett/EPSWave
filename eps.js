@@ -1139,8 +1139,24 @@ class EPS16 {
                     this.debug(`wavesample ${ws.number}: EPS-16 PLUS pan ${moved.from} `
                         + `became original EPS position ${moved.position} `
                         + `("${moved.meant}") in the high byte of word ${moved.word}, `
-                        + `over the ${moved.was} that was there`)
+                        + `over the ${moved.was} that was there`
+                        + (moved.centred
+                            ? `. That one was dead centre, which eight cells cannot `
+                              + `express, so it took one of the two either side at `
+                              + `random rather than leaning the whole instrument one way.`
+                            : ``))
                 }
+            }
+            // Reported, never corrected, and reported on every path rather than
+            // only when converting: a modulation source outside Table 2 means
+            // either that the Classic has sources its own table omits or that
+            // this word is not a modulation source at all, and both are worth
+            // hearing about. The block goes to the synth exactly as it arrived.
+            for(const odd of EPSBlocks.checkModulationSources(block)){
+                this.debug(`wavesample ${ws.number}: ${odd.what} source is `
+                    + `${odd.value} in the high byte of word ${odd.word}, and Table 2 `
+                    + `only runs 0 to 15. Sending it unchanged — this is a note, not a `
+                    + `problem, but it is the first time we have seen one.`)
             }
             this.setLayerNumber(ws.layer == null ? layers[0].number : ws.layer)
             this.setWavesampleNumber(remap(ws.number))

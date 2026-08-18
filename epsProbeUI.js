@@ -175,20 +175,19 @@ window.EPSProbeUI = {
             title: "Wavesample pan",
             button: "6 &middot; Amp",
             block: "wavesample",
-            what: "Set <b>Pan</b> to <b>hard left</b> &mdash; all the way, so the display "
-                + "reads <code>*-------</code>. Continue, then come back and set it "
-                + "<b>hard right</b>, <code>-------*</code>, and continue again.",
-            why: "This is the one that matters most, and it is now a question about "
-                + "the number rather than about where it lives. Ensoniq's 1989 EPS "
-                + "specification puts pan in the high half of the wavesample's 105th "
-                + "word; the EPS-16 PLUS moved it to the low half and made it a "
-                + "signed &minus;99 to +99. Your machine numbers the same setting 0 to "
-                + "18 from Table 5 &mdash; 1 to 8 are the eight display positions, 9 to "
-                + "16 are the eight solo outputs. So hard left should read 1 and hard "
-                + "right should read 8. If they do, we can convert your instruments "
-                + "to a 16 PLUS correctly. If instead this word does not move at all, "
-                + "then the 3 we see in every EPS file we have is a constant nobody "
-                + "writes as pan, and we should stop trying to convert it."
+            what: "Set <b>Pan</b> to <b>hard right</b> &mdash; all the way, so the "
+                + "display reads <code>-------*</code>.",
+            why: "Answered once already, and worth confirming from the other end. An "
+                + "EPS-M set to hard left wrote <b>0</b> into the high half of the "
+                + "wavesample's 105th word, which settles both halves of the old "
+                + "question: that byte really is pan, and its eight display positions "
+                + "are numbered 0 to 7 rather than the 1 to 8 our copy of Table 5 "
+                + "prints. That copy lists nineteen entries for a range section 9.9 "
+                + "gives as 0 to 17, so one of them was wrong and the synth said which. "
+                + "Hard right should therefore read <b>7</b>. If it reads 8 instead, "
+                + "the table was right after all and every converted instrument is "
+                + "one cell off &mdash; so this is a cheap check on something a lot "
+                + "now rests on."
         },
         {
             id: "env-l2s",
@@ -568,6 +567,77 @@ window.EPSProbeUI = {
                     + (done.length ? `, ${done.filter(d => d.moved > 0).length} of which `
                         + `moved something.` : "."))
                 return full
+            })
+        })
+
+        /***
+         * The transpose question, on its own.
+         *
+         * Separate from the guided sequence above because it is a different
+         * shape of test: four stops on one control rather than one edit each on
+         * six, and a second half where the app writes the parameter itself with
+         * nobody touching the synth. See probeTranspose for what it is trying
+         * to tell apart and why the block matters as much as the parameter.
+         */
+        $("#probeTranspose").click(async () => {
+            if(!this.ready()) return
+            await this.guarded("Transpose test", async () => {
+                const where = this.probe.addressing()
+                const target = `instrument ${where.instrument + 1}`
+
+                const result = await this.probe.probeTranspose({
+                    instrument: where.instrument,
+                    gapMs: this.num("sweepGap", 150),
+                    onStep: async (step) => {
+                        this.showStatus(
+                            `Transpose test: waiting for you — ${step.title}`, null)
+                        const choice = await EPSWaveUI.choose(
+                            EPSProbeUI.escape(step.title),
+                            `<p class="mb-2"><b>On the synth, press `
+                                + `<span class="text-info">Instrument</span>`
+                                + `</b> and find the transpose page.</p>`
+                            + `<p class="mb-3">${step.what}</p>`
+                            + `<div class="alert alert-secondary py-2 mb-3"><small>`
+                                + `<b>Make sure you are editing `
+                                + `${EPSProbeUI.escape(target)}</b> &mdash; that is the `
+                                + `instrument this app is reading.</small></div>`
+                            + `<p class="mb-0"><small>When you have set it, press Continue. `
+                                + `The app reads both transpose numbers and the whole `
+                                + `instrument block each time.</small></p>`,
+                            [
+                                { id: "stop", label: "Stop", class: "btn-outline-danger" },
+                                { id: "skip", label: "Skip this one",
+                                    class: "btn-outline-secondary" },
+                                { id: "go", label: "I set it &mdash; Continue",
+                                    class: "btn-primary" }
+                            ])
+                        if(choice == "go") return true
+                        if(choice == "skip") return "skip"
+                        this.capture.note(`Stopped the transpose test at: ${step.title}`,
+                            { step: step.id, outcome: choice || "dismissed" })
+                        return false
+                    }
+                })
+                if(!result) return null
+
+                // The verdict is the point of the whole probe, so it is said in
+                // the panel and not only written to the log.
+                const said = {
+                    "commitment": "The block does carry transpose — it moved when the app "
+                        + "wrote the parameter itself. The front panel edit simply had not "
+                        + "reached it yet. Word 28 is safe to read.",
+                    "block carries it": "Word 28 moved for both the front panel and the "
+                        + "app's own write. Transpose is in the block exactly as on a "
+                        + "16 PLUS.",
+                    "not in the block": "Transpose changed and read back changed, and no "
+                        + "word of the instrument block moved. On this machine transpose "
+                        + "is NOT in the block — conversion loses it, and word 28 must not "
+                        + "be trusted for a Classic.",
+                    "inconclusive": "Inconclusive: the transpose parameter did not move "
+                        + "when the app wrote it, so nothing can be said about storage."
+                }
+                this.say(said[result.verdict] || result.verdict)
+                return result
             })
         })
 
@@ -1135,6 +1205,25 @@ window.EPSProbeUI = {
                         hand, for when you want to chase something specific.</small>
                     </div>
                 </div>
+                <div class="form-row align-items-center mb-2">
+                    <div class="col-auto mb-2">
+                        <button id="probeTranspose" class="btn btn-outline-success btn-sm eps-transfer">
+                            <i class="fa-solid fa-arrows-up-down"></i> Transpose test
+                        </button>
+                    </div>
+                    <div class="col mb-2">
+                        <small>One open question of its own. On an EPS-M the transpose
+                        parameter moved by exactly the semitones the operator dialled,
+                        while the instrument block did not change at all &mdash; so either
+                        the Classic keeps transpose outside the block, or a front panel
+                        edit does not reach the block until something commits it. This
+                        walks four known settings, then writes the parameter itself with
+                        nobody touching the synth, which tells the two apart. It changes
+                        the transpose amount and <b>puts it back</b> when it
+                        finishes.</small>
+                    </div>
+                </div>
+
                 <div class="form-row align-items-center mb-3">
                     <div class="col-auto mb-2">
                         <button id="probeParams" class="btn btn-outline-primary btn-sm eps-transfer">

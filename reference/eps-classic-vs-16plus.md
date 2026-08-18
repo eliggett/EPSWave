@@ -300,10 +300,10 @@ three sources now agree on where it lives:
 So **the byte position is settled**: Classic pan is the high byte, 16 PLUS pan is
 the low byte.
 
-The value is not a byte copy. The Classic's high byte is a Table 5 enum where 1–8
-are stereo positions and 9–16 are Solo Out 1–8; the 16 PLUS's low byte is signed,
+The value is not a byte copy. The Classic's high byte is a Table 5 enum where 0–7
+are stereo positions and 8–15 are Solo Out 1–8; the 16 PLUS's low byte is signed,
 with routing held elsewhere. The eight positions are a coarser rendering of the
-same continuum, so the two now convert by **scaling**, in both directions —
+same continuum, so the two convert by **scaling**, in both directions —
 `adaptWavesampleToEps16Plus()` and `adaptWavesampleToClassic()`.
 
 Full scale is **±127, not the ±99 of §9.9**. That range governs `PUT PARAMETER`
@@ -312,41 +312,75 @@ here, eleven sit at exactly +127 and eleven at exactly −127 — hard-panned pa
 written by a 16 PLUS into its own file — with a ±48 pair besides. The symmetry
 also settles the encoding as two's complement.
 
+### The positions start at 0, and hardware said so
+
+**Measured on an EPS-M** (rack Classic, RAM 2.49 / ROM 2.21, 18 August 2026).
+Asked to set one wavesample's pan hard left, the machine moved word 105's high
+byte from 3 to 0, and page 6 item 2 from 3 to 0 with it. So the byte is pan, and
+hard left is **0**.
+
+That contradicts Table 5 as our OCR produced it, which lists nineteen entries
+beginning `0 = WAVESAMPLE`. §9.9 of the same document gives the range as **0–17**
+— eighteen values. Nineteen entries cannot be a range of eighteen, and the
+hardware says which side was wrong. Dropping the spurious first line gives:
+
+| Value | Meaning |
+|---|---|
+| 0–7 | the eight display positions |
+| 8–15 | Solo Out 1–8 |
+| 16 | Random Pan |
+| 17 | Keyboard |
+
+Exactly the 0–17 §9.9 claims. `reference/README.md` warns that docling's tables
+come out off by one; this was one of them.
+
+This also explains the 3 that every file shows — all 13 original EPS wavesamples
+*and* all 73 EPS-16 PLUS ones. Under the corrected table 3 is `---*----`, the
+cell immediately left of a centre eight cells cannot express: the value an
+untouched wavesample is born with, not a constant nobody writes.
+
+### The mapping
+
 | Classic | | 16 PLUS |
 |---|---|---|
-| 1 `*-------` | ↔ | −127 |
-| 2 `-*------` | ↔ | −91 |
-| 3 `--*-----` | ↔ | −54 |
-| 4 `---*----` | ↔ | −18 |
-| 5 `----*---` | ↔ | +18 |
-| 6 `-----*--` | ↔ | +54 |
-| 7 `------*-` | ↔ | +91 |
-| 8 `-------*` | ↔ | +127 |
+| 0 `*-------` | ↔ | −127 |
+| 1 `-*------` | ↔ | −91 |
+| 2 `--*-----` | ↔ | −54 |
+| 3 `---*----` | ↔ | −18 |
+| 4 `----*---` | ↔ | +18 |
+| 5 `-----*--` | ↔ | +54 |
+| 6 `------*-` | ↔ | +91 |
+| 7 `-------*` | ↔ | +127 |
 
 All eight round-trip exactly, so converting a library twice does not degrade it.
 The other way is lossy by definition — 255 values into 8 — but stable: a second
-pass never moves it again. There is no true centre in eight positions, so 0 goes
-to 5. Table 5's non-positional values (Solo Out 1–8, Random Pan, Keyboard) have no
+pass never moves it again.
+
+**Dead centre picks 3 or 4 at random**, per wavesample. Eight cells have no
+middle and pan 0 falls exactly between them, so there is no correct answer, only
+a choice. Rounding the same way every time would push every centred wavesample in
+an instrument the same half-cell off centre — a drum kit with sixteen centred
+wavesamples would come out audibly hanging to one side. Scattering them leaves
+the instrument centred on average. Nothing else is randomised; every other pan
+value has an exact nearest cell.
+
+Table 5's non-positional values (Solo Out 1–8, Random Pan, Keyboard) have no
 16 PLUS pan at all; those centre, and the log names what was lost rather than
 dropping it silently.
 
 Arensburger's `putws.c` sends `(pan_pos << 8) | pan_pos`, the same value in both
 halves, which would be right only if the scales matched — they do not.
 
-**One empirical doubt remains.** In every file examined here the high byte is 3:
-all 13 original EPS wavesamples *and* all 73 EPS-16 PLUS ones, where the 16 PLUS
-documents that byte as unused. Table 5 value 3 is `--*-----`, so either these
-instruments really are panned left of centre, or 3 is a constant neither machine
-writes as pan. Under the old byte copy that 3 became 16 PLUS pan 3, near enough
-centre to be harmless by accident; under the scale it becomes −54, about 43% left.
-If the high-byte reading is wrong, this is an audible regression rather than a
-silent one.
+**What the correction was worth.** Under the old 1–8 reading, the ubiquitous 3
+converted to −54, about 43% left, and hard left — value 0 — was mistaken for
+Table 5's "wavesample", skipped entirely, and silently centred. Going the other
+way was worse: a hard-right 16 PLUS wavesample became Classic 8, which under the
+corrected table is Solo Out 1, routing it out of the stereo pair altogether.
 
-**The measurement that settles it**: on a Classic, set one wavesample's pan hard
-left and another hard right, dump both, and read word 105's high byte. Table 5
-predicts 1 and 8. That is the `ws-pan` guided step, and it should be run before
-anyone converts a library. If word 105 does not move, revert to the byte copy —
-it is one line at the call site in [../eps.js](../eps.js).
+**Still unconfirmed:** hard *right* was never measured — the operator continued
+after the first half of the step. 7 follows from the range arithmetic and from
+hard left reading 0, but the `ws-pan` guided step now asks for hard right so the
+next tester closes it.
 
 ---
 
@@ -360,13 +394,22 @@ the official specification opened and closed.
 | 1 | The Classic's parameter numbers | **Closed.** Full page and item map, official, cross-checking exactly against `eps.h` where they overlap. It settles the `$010E` collision in `eps.h`: Level 4 Hard is item 14, Level 1 Soft is item 15. |
 | 2 | Block lengths | **Closed.** 323 / 107 / 139 / 107 words, the same as the 16 PLUS. The 968-vs-969-byte discrepancy in `eps.h` is an allocation quirk. |
 | 3 | Which fields the 16 PLUS added in low bytes | **Closed.** All of them (§3.5). Every Classic block value is in the high byte, stated in all four table headings. |
-| 4 | Truncate or round when the Classic discards the low three bits of every sample | **Open.** The specification does not mention it. Needs hardware. |
+| 4 | Truncate or round when the Classic discards the low three bits of every sample | **Closed by hardware.** It *masks*. An EPS-M round trip of 16-bit data came back with quantum 8, error 0 to 7 and never negative, bits 0–2 lost and never gained. `quantiseForModel()` already truncates without dither, which is exactly this. |
 
 Genuinely open, in rough order of how much they matter:
 
-1. **Word 105's value mapping**, §4. The byte is settled, the scale is not.
-   Needs one Classic dump with a known non-centre pan.
-2. **Sample truncation versus rounding**, question 4. Needs hardware.
+1. **Where the Classic keeps instrument transpose.** On the EPS-M, page 10 item
+   13 moved by exactly the three semitones the operator dialled — but the
+   instrument block read immediately before and immediately after was identical
+   in all 323 words, with word 28 (the 16 PLUS's Transposition) at 0 throughout.
+   Neither value appears anywhere in the block. Item 12, the octave, reads a
+   constant 144 against a documented 0–5 here and −4…+4 on the 16 PLUS, and fits
+   neither. Either the Classic keeps transpose outside the block — in which case
+   conversion loses it — or a front-panel edit does not reach the block until
+   something commits it. The **Transpose test** button settles it by writing the
+   parameter itself, with nobody touching the synth.
+2. **Hard right pan.** 7 follows from the arithmetic and from hard left reading
+   0, but was never measured; §4.
 3. **Which parameters refuse a single PUT PARAMETER.** The 16 PLUS marks these
    `*` and `**` and lists three notes about them. **The 1989 specification has no
    such marker system at all** — the only restriction it records anywhere is
@@ -381,9 +424,37 @@ Genuinely open, in rough order of how much they matter:
    nothing either way. This is why the app selects instruments with
    `VIRTUAL BUTTON PRESS`, which §4.3 and §6 document identically for both
    machines.
-5. **Ensoniq's own internal inconsistencies**, §6.2. Chiefly whether modulation
-   source really tops out at 15, as Table 2 says, or at 17 or 18, as four
-   parameter tables say.
+
+### Closed by the EPS-M captures, 18 August 2026
+
+- **Block lengths**, measured: 323 / 107 / 139, the 16 PLUS's numbers exactly.
+- **The parameter census.** All 139 documented items answered and **not one
+  silence** where the manual promised an answer — 132 confirmed across ten pages,
+  with envelope, pitch, filter, amp and LFO matching their tables item for item.
+- **Seven items the Classic answers that its own manual omits**, all of them
+  documented by the 16 PLUS: `$20` items 1–5, `$24` item 5 (layer name, returned
+  `U`), `$28` item 8 (instrument name, returned `M` for `MOTOR DRUMS1`). The
+  Classic's manual is incomplete rather than the Classic being smaller. Note that
+  `$20` items 1–5 return **absolute** offsets on the Classic, identical to items
+  21–25, where the 16 PLUS documents them as percentages.
+- **The `eps.h` envelope collision.** The panel's Level 2 Soft moved item 15 and
+  the panel's Level 5 Hard moved item 14, landing on different words (62 and 72).
+  Ensoniq's 1989 numbering is right; the 1992 library has the typo.
+- **Seven parameter-to-word mappings measured**, every one landing where 16 PLUS
+  §7.3 puts it: wavesample words 62, 71, 72, 80, 100 and 105, and layer word 15.
+  Layer word 15 also confirms the packing — the Classic's fields in the high
+  bytes, the 16 PLUS's additions in the low bytes of words 12–13, nothing
+  colliding.
+- **Arbitrary sample rates are honoured.** Codes 20, 21, 26, 33, 40 and 100 were
+  all accepted, read back unchanged and still there afterwards — including three
+  the front panel does not offer.
+- **Modulation source is 0–15.** Both manuals' Table 2 lists sixteen entries
+  ending `15 = OFF`, and the Classic's scan prints it twice, both copies ending
+  there. The five `0-18` annotations and one `0-17` in the Classic manual match
+  neither its own table nor each other, and are wrong — the same species of error
+  as Table 5, on the other side of the page. The EPS-M only ever showed 13 and
+  15, which is consistent without proving it, so `EPSBlocks.checkModulationSources()`
+  reports anything above 15 to the debug log and changes nothing.
 
 ---
 
@@ -415,16 +486,28 @@ Reproduced faithfully by the transcription, so do not "fix" them:
 1. **Modulation source ranges do not match Table 2.** Table 2 lists sixteen
    entries, 0–15, ending in OFF. But §9.5 Loop Mod Source says 0–17, and §9.7,
    §9.8, §9.9 and §9.10 all say 0–18. The 16 PLUS says 0–15 everywhere and
-   `eps.h` agrees, so 0–15 is the safe assumption, but the Classic may have two
-   or three more sources that Table 2 omits.
+   `eps.h` agrees. **Resolved in favour of the table**: the Classic's own scan
+   prints Table 2 twice — a two-column layout read once as a table and once as
+   loose lines — and both copies end at `15 = OFF`, while the six range
+   annotations match neither the table nor each other. The EPS-M only ever showed
+   13 and 15, consistent without proving it, so nothing is clamped:
+   `EPSBlocks.checkModulationSources()` writes an out-of-range source through
+   unchanged and notes it in the debug log, because a value above 15 is evidence
+   either way and is only evidence if it survives.
 2. **§9.9 gives Pan as 0–17 while Table 5 lists 0–18**, ending in KEYBOARD.
-   **Resolved in favour of the table**, and the app now follows it: the table is
-   the definition and the range line is a summary of it, so a summary that
-   disagrees with its own table is a typo in the summary. Nothing in the app
-   clamps pan to 17, or clamps it at all — a value outside 0–18 in a real
-   instrument is evidence that the byte is not what we think, and it is only
-   evidence if it survives to somewhere a person can see it. See
-   `EPSBlocks.WS_PAN_CLASSIC`.
+   **Resolved in favour of the range line, by hardware** — which is a reversal:
+   the app used to follow the table on the argument that a definition beats a
+   summary. An EPS-M set to hard left wrote 0, so the positions start at 0, and
+   dropping Table 5's spurious leading `0 = WAVESAMPLE` yields exactly the
+   eighteen values §9.9 states. Nothing in the app clamps pan — a value outside
+   0–17 in a real instrument is evidence that the byte is not what we think, and
+   it is only evidence if it survives to somewhere a person can see it. See
+   `EPSBlocks.WS_PAN_CLASSIC` and §4.
+
+   The general lesson, since this cut both ways within one document: believe
+   whichever side is internally coherent and corroborated, not whichever kind of
+   thing it is. Table 5 lost because nineteen entries cannot be a range of
+   eighteen; Table 2 won because it is printed twice and agrees with the 16 PLUS.
 3. **§4.3 says VIRTUAL BUTTON PRESS takes button numbers `[00..35]`** while §6
    lists valid buttons up to 57. Instrument 1–8 are 0–7, so this does not affect
    us.

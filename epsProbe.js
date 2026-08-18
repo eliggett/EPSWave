@@ -1347,6 +1347,293 @@ class EPSProbe {
         })
     }
 
+    /***
+     * PROBE F — instrument transpose, and whether the block carries it.
+     *
+     * THE OBSERVATION THIS EXISTS TO EXPLAIN. On an EPS-M running RAM 2.49, an
+     * operator changed instrument transpose by three semitones. Page 10 item 13
+     * ($28 $0D) moved 244 to 247, which is exactly the three semitones he
+     * dialled, so the parameter is real and GET PARAMETER reports it. But the
+     * instrument block was read immediately before and immediately after that
+     * edit and the two are identical in all 323 words — word 28, where the
+     * EPS-16 PLUS keeps Transposition, held 0 both times, and neither 244 nor
+     * 247 appears anywhere in either block.
+     *
+     * Two explanations fit, and they call for opposite code:
+     *
+     *   1. The Classic does not keep transpose in the instrument block, and the
+     *      block layouts diverge here. Reading word 28 on a Classic would then
+     *      be meaningless and conversion silently loses transpose.
+     *   2. The block does carry it, but a front panel edit is not committed to
+     *      the block that GET INSTRUMENT returns until something else makes it
+     *      so. The reading would then be a timing artefact and word 28 fine.
+     *
+     * SO THIS PROBE TAKES THE OPERATOR OUT OF THE LOOP. The second half writes
+     * transpose with PUT PARAMETER — the app's own edit, at a moment the app
+     * chooses — and re-reads the block. If the block moves for our write but
+     * not for the operator's, explanation 2 is right and the difference is
+     * commitment, not layout. If the block never moves for anything while GET
+     * PARAMETER happily reports the new value, explanation 1 is right.
+     *
+     * The first half is still worth running, because the operator's panel is
+     * the case that actually matters and because the octave item is unexplained
+     * either way: it reads a constant 144 against a documented range of 0-5 on
+     * the Classic and -4 to +4 on the 16 PLUS, and 144 fits neither.
+     *
+     * EVERYTHING IS PUT BACK. The instrument belongs to somebody else and this
+     * writes to it, so the original values of both items are read first and
+     * restored in a finally, the same way probeSampleRate does.
+     */
+    static TRANSPOSE_PAGE = 0x28
+    static TRANSPOSE_OCTAVE = 0x0C
+    static TRANSPOSE_SEMITONE = 0x0D
+
+    /***
+     * The operator's half, as four stops rather than one.
+     *
+     * One edit gave a difference and no absolute reading worth anything: 244 to
+     * 247 is +3 semitones from an unknown starting point, in an encoding that
+     * fits neither manual. Four known settings turn that into arithmetic — if
+     * 0, +1, -1 and +1 octave produce four values, the encoding is readable
+     * from the four of them however strange it looks.
+     *
+     * Zero first, deliberately. It is the one setting whose number we can
+     * predict under every encoding we have considered, so if the item does not
+     * read 0 there we have learned something before the other three are even
+     * asked for.
+     */
+    static TRANSPOSE_STEPS = [
+        {
+            id: "transpose-zero",
+            title: "Transpose to zero",
+            what: "Set <b>both</b> transpose amounts to <b>0</b> &mdash; octave "
+                + "and semitone. The instrument should play at concert pitch."
+        },
+        {
+            id: "transpose-up-1",
+            title: "Up one semitone",
+            what: "Now set the <b>semitone</b> transpose to <b>+1</b>, leaving "
+                + "the octave at 0."
+        },
+        {
+            id: "transpose-down-1",
+            title: "Down one semitone",
+            what: "Now set the <b>semitone</b> transpose to <b>&minus;1</b>. This "
+                + "is the one that says which half of the byte the sign lives in."
+        },
+        {
+            id: "transpose-octave",
+            title: "Up one octave",
+            what: "Put the <b>semitone</b> back to <b>0</b> and set the "
+                + "<b>octave</b> transpose to <b>+1</b>. This is the only step "
+                + "that moves the octave item, which has so far only ever been "
+                + "seen holding 144."
+        }
+    ]
+
+    /***
+     * Reads both transpose items and the instrument block, as one observation.
+     *
+     * The block comes last so that if the operator is still touching the synth
+     * the parameters and the block are as close together as they can be.
+     */
+    async readTranspose(label){
+        const octave = await this.eps.getParameter(
+            EPSProbe.TRANSPOSE_PAGE, EPSProbe.TRANSPOSE_OCTAVE)
+        const semitone = await this.eps.getParameter(
+            EPSProbe.TRANSPOSE_PAGE, EPSProbe.TRANSPOSE_SEMITONE)
+        const block = await this.block(EPS16.BLOCK_INSTRUMENT, `transpose: ${label}`)
+        const words = block.answered ? block.words : null
+        return {
+            label,
+            octave: octave.answered ? octave.value : null,
+            semitone: semitone.answered ? semitone.value : null,
+            // Word 28 is where the 16 PLUS keeps it. Both halves are recorded
+            // because which half a signed value lives in is exactly the sort of
+            // thing the two machines disagree about.
+            word28: words ? words[28] : null,
+            word28High: words ? (words[28] >> 8) & 0xFF : null,
+            word28Low: words ? words[28] & 0xFF : null,
+            words
+        }
+    }
+
+    /***
+     * Which words differ between two of those observations.
+     *
+     * Reported rather than assumed: if transpose is in the block at all but not
+     * at word 28, this is what finds it, and that is a better outcome than
+     * either of the two explanations above.
+     */
+    static transposeBlockDiff(before, after){
+        if(!before || !after || !before.words || !after.words) return null
+        const changes = []
+        const length = Math.min(before.words.length, after.words.length)
+        for(let word = 0; word < length; word++){
+            if(before.words[word] == after.words[word]) continue
+            changes.push({ word,
+                from: before.words[word], to: after.words[word],
+                fromHi: (before.words[word] >> 8) & 0xFF,
+                toHi: (after.words[word] >> 8) & 0xFF,
+                fromLo: before.words[word] & 0xFF,
+                toLo: after.words[word] & 0xFF })
+        }
+        return changes
+    }
+
+    /***
+     * `stops` are the values PUT PARAMETER will try for the semitone item in
+     * the automatic half. `onStep` is awaited before each operator stop and is
+     * given the step, so the UI can put a dialog up; returning "skip" skips the
+     * stop and anything else falsy stops the guided half early.
+     */
+    async probeTranspose(options = {}){
+        const instrumentNumber = options.instrument == null
+            ? this.eps.instNum : options.instrument
+        const stops = options.stops || [0, 1, 12, -1]
+        const gap = options.gapMs == null ? 150 : options.gapMs
+        const onStep = options.onStep || null
+        const steps = options.steps || EPSProbe.TRANSPOSE_STEPS
+
+        return this.run("transpose", { instrument: instrumentNumber, stops }, async () => {
+            this.eps.setInstrumentNumber(instrumentNumber)
+
+            const start = await this.readTranspose("start")
+            this.log(`Transpose probe on instrument ${instrumentNumber + 1}. `
+                + `Octave item reads ${start.octave}, semitone item reads `
+                + `${start.semitone}, and instrument block word 28 holds `
+                + `${start.word28} (high ${start.word28High}, low ${start.word28Low}).`)
+            this.capture.event("finding", { probe: "transpose", what: "starting value",
+                octave: start.octave, semitone: start.semitone,
+                word28: start.word28, word28High: start.word28High,
+                word28Low: start.word28Low })
+
+            const panel = []
+            let previous = start
+
+            // ---- half one: the operator's front panel ----------------------
+            for(const step of steps){
+                if(this.aborted) break
+                if(!onStep) break
+                const choice = await onStep(step)
+                if(choice == "skip"){
+                    this.capture.note(`Skipped: ${step.title}`,
+                        { step: step.id, outcome: "skip" })
+                    continue
+                }
+                if(!choice) break
+
+                const now = await this.readTranspose(step.id)
+                const blockChanges = EPSProbe.transposeBlockDiff(previous, now)
+                const observation = {
+                    step: step.id,
+                    octave: now.octave, semitone: now.semitone,
+                    octaveMoved: now.octave !== previous.octave,
+                    semitoneMoved: now.semitone !== previous.semitone,
+                    word28: now.word28,
+                    word28Moved: now.word28 !== previous.word28,
+                    blockChanges
+                }
+                panel.push(observation)
+                this.capture.event("finding", { probe: "transpose",
+                    what: "panel edit", ...observation })
+                this.log(`  ${step.title}: octave ${previous.octave} -> ${now.octave}, `
+                    + `semitone ${previous.semitone} -> ${now.semitone}, `
+                    + `block word 28 ${previous.word28} -> ${now.word28}`
+                    + (blockChanges && blockChanges.length
+                        ? `. ${blockChanges.length} block word(s) moved: `
+                          + blockChanges.map(c => c.word).join(", ")
+                        : `. The instrument block did not move at all.`))
+                previous = now
+                await this.breathe(gap)
+            }
+
+            // ---- half two: our own PUT PARAMETER ---------------------------
+            // This is the half that separates the two explanations, because
+            // nobody is touching the synth while it runs.
+            const written = []
+            const original = start.semitone
+            try{
+                for(const value of stops){
+                    if(this.aborted) break
+                    this.status(`Writing transpose semitone ${value}`)
+                    const accepted = await this.eps.setParameter(
+                        EPSProbe.TRANSPOSE_PAGE, EPSProbe.TRANSPOSE_SEMITONE, value)
+                    await this.eps.sleep(gap)
+                    const now = await this.readTranspose(`put ${value}`)
+                    const attempt = {
+                        wrote: value, accepted,
+                        was: previous.semitone,
+                        readBack: now.semitone,
+                        held: now.semitone === value,
+                        // `held` alone is not evidence the write did anything:
+                        // writing a value the parameter already held reads back
+                        // as a success on a synth that ignored the message
+                        // entirely. Only a value that both arrived AND differs
+                        // from what was there a moment ago proves the write
+                        // landed, and that is what the verdict must rest on.
+                        changed: now.semitone === value && previous.semitone !== value,
+                        word28: now.word28,
+                        word28Moved: now.word28 !== previous.word28,
+                        blockChanges: EPSProbe.transposeBlockDiff(previous, now)
+                    }
+                    written.push(attempt)
+                    this.capture.event("finding", { probe: "transpose",
+                        what: "put parameter", ...attempt })
+                    this.log(`  PUT semitone ${value}: `
+                        + `${accepted ? "accepted" : "refused"}, reads back `
+                        + `${attempt.readBack}${attempt.held ? " — held" : " — CHANGED"}, `
+                        + `block word 28 ${previous.word28} -> ${now.word28}`
+                        + (attempt.word28Moved ? " — MOVED" : " — unmoved"))
+                    previous = now
+                    await this.breathe(gap)
+                }
+            }finally{
+                if(original != null){
+                    await this.eps.setParameter(EPSProbe.TRANSPOSE_PAGE,
+                        EPSProbe.TRANSPOSE_SEMITONE, original)
+                    this.log(`Put the semitone transpose back to ${original}`)
+                }
+            }
+
+            // ---- the conclusion, spelled out -------------------------------
+            const panelMovedBlock = panel.some(p => p.word28Moved)
+            const putMovedBlock = written.some(w => w.word28Moved)
+            const putMovedParameter = written.some(w => w.changed)
+            let verdict
+            if(putMovedBlock && !panelMovedBlock){
+                verdict = "commitment"
+                this.log(`VERDICT: the block carries transpose — our own PUT PARAMETER `
+                    + `moved word 28 — but the operator's front panel edit did not reach `
+                    + `it. That is the "not committed yet" explanation, and word 28 is `
+                    + `the right place to read after all.`)
+            }else if(putMovedBlock && panelMovedBlock){
+                verdict = "block carries it"
+                this.log(`VERDICT: word 28 moved for both the panel and PUT PARAMETER. `
+                    + `The block carries transpose exactly as the 16 PLUS does, and the `
+                    + `EPS-M reading was something else — compare the block words listed `
+                    + `above.`)
+            }else if(putMovedParameter && !putMovedBlock){
+                verdict = "not in the block"
+                this.log(`VERDICT: PUT PARAMETER changed the transpose and it read back `
+                    + `changed, yet no word of the instrument block moved. On this machine `
+                    + `transpose is not in the block, so a block-level conversion loses `
+                    + `it and word 28 must not be trusted for a Classic.`)
+            }else{
+                verdict = "inconclusive"
+                this.log(`VERDICT: inconclusive — the transpose parameter did not move `
+                    + `when written, so nothing can be said about where it is stored.`)
+            }
+
+            this.capture.event("finding", { probe: "transpose", what: "verdict",
+                verdict, panelMovedBlock, putMovedBlock, putMovedParameter,
+                octaveConstant: panel.every(p => !p.octaveMoved) })
+
+            return { start, panel, written, verdict,
+                panelMovedBlock, putMovedBlock, putMovedParameter }
+        })
+    }
+
     async probeWavedata(options = {}){
         const write = options.write == true
         const requested = options.length || 4096

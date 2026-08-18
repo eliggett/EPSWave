@@ -300,11 +300,12 @@ Each dialog also offers:
 There are six controls. Getting through three is useful; all six is a good
 session. Nothing is lost if you stop early.
 
-**The first one, pan, is the important one — please do that one properly even
-if you skip the rest.** It asks you to go all the way to one end and continue,
-then all the way to the other end and continue. Both halves matter: we are
-checking a specific pair of numbers, and one reading on its own cannot tell a
-setting that moved from a setting that happens to sit where we expected.
+**The first one, pan, used to be the important one, and it has been answered.**
+An EPS-M set to hard left wrote 0, which told us both that the byte we were
+guessing about really is pan and that its eight positions are numbered 0 to 7
+rather than 1 to 8. The step now asks for hard *right* instead, which should
+read 7 — a cheap confirmation of something a lot now rests on, but no longer
+the thing to do at the expense of everything else.
 
 **A note on the envelope steps.** Two of them ask for envelope levels. Your
 manual numbers the five levels 1 to 5; the MIDI specification numbers the same
@@ -326,6 +327,43 @@ the sort of thing we are trying to find out. Carry on to the next step.
 >
 > ⚠️ **Do not go to the Effects pages.** Nothing there is being tested, and it
 > is where the machine has crashed.
+
+## The transpose test
+
+Underneath the guided button there is a smaller one, **Transpose test**. It is
+worth running if you have a few more minutes, and it is the one open question
+left on the instrument side.
+
+Here is the puzzle. On an EPS-M, somebody changed the instrument's transpose by
+three semitones. The parameter number moved by exactly three, so the synth
+clearly heard him and clearly changed. But the instrument's *data block* — read
+immediately before and immediately after — did not change by so much as one
+byte, and the word where the EPS-16 PLUS keeps transposition sat at zero
+throughout.
+
+Two things could explain that, and they need opposite fixes:
+
+- the original EPS keeps transpose somewhere other than the instrument block, in
+  which case converting an instrument quietly loses it; or
+- it does keep it there, but a front-panel edit does not reach the block until
+  something else commits it — in which case nothing is wrong at all.
+
+The test runs in two halves. First it asks you to set transpose to four known
+values — zero, up one semitone, down one semitone, up one octave — reading both
+transpose numbers and the whole instrument block at each stop. Four known
+settings turn an odd-looking number into arithmetic; one reading on its own
+told us only a difference.
+
+Then it does the second half by itself, **writing** the transpose over MIDI with
+nobody touching the synth. That is what separates the two explanations: if the
+block moves when the app writes but not when you do, the answer is commitment
+rather than layout.
+
+**It changes a setting on your instrument and puts it back when it finishes.**
+It reads the original value first and restores it at the end, including if you
+stop it partway. As with everything else here, nothing touches your disks.
+
+At the end it says which of the two explanations it found, in plain words.
 
 ## Doing it by hand instead
 
