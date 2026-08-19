@@ -429,3 +429,97 @@ def derive_map(captures):
                     unmatched.append(entry)
 
     return matches, unmatched, ambiguous
+
+
+# --------------------------------------------------------------------------
+# What the synth says without being asked.
+#
+# The EPS transmits a PUT PARAMETER whenever a parameter is edited on its front
+# panel. Those messages are addressed to wavesample 0 where a reply to our own
+# GET carries the wavesample we asked about, which is what tells the two apart.
+#
+# This turns out to be worth more than the sweeps. An operator holding an arrow
+# key produces the whole ramp, one message per step, and a ramp that stops
+# moving while the key is still going has found a limit. Two ranges we had only
+# believed were measured this way without anyone setting out to measure them.
+# --------------------------------------------------------------------------
+
+PUT_PARAMETER = 0x11
+
+
+def _value6(payload):
+    """Four 6-bit bytes, most significant first."""
+    value = 0
+    for byte in payload:
+        value = (value << 6) | byte
+    return value
+
+
+def announcements(captures):
+    """
+    Every parameter the synth reported without being asked, in order.
+
+    Returns [{file, seq, high, low, value, signed}]. The signed reading is
+    offered alongside the raw one because several of these fields are plainly
+    signed bytes -- an EPS-M showed 144 here as "OCT=-112" on its own display.
+    """
+    out = []
+    for capture in captures:
+        for event in capture.of_kind("midi"):
+            if event.get("dir") != "<-":
+                continue
+            raw = bytes.fromhex(event.get("hex", ""))
+            # 4-byte header, command, then instrument/layer/wavesample pairs,
+            # the parameter's two bytes, and four bytes of value.
+            if len(raw) < 18 or raw[4] != PUT_PARAMETER:
+                continue
+            if raw[10] != 0:
+                continue    # addressed to a wavesample: a reply, not an edit
+            value = _value6(raw[13:17])
+            out.append({
+                "file": capture.label,
+                "seq": event.get("seq"),
+                "high": raw[11],
+                "low": raw[12],
+                "value": value,
+                "signed": value - 256 if value > 127 else value,
+            })
+    return out
+
+
+def limits(captures, repeats=2):
+    """
+    Parameters that stopped moving while the operator kept pressing.
+
+    A run of the same value in consecutive announcements means the key was
+    still going and the number was not: the parameter is against a stop. That
+    is a measured limit, and it costs nothing -- it falls out of edits somebody
+    made for another reason entirely.
+
+    `repeats` is how many identical values in a row count as a stop. Two is
+    enough to distinguish a limit from a pause, because the synth only speaks
+    when the value is set, not when it changes.
+    """
+    seen = defaultdict(lambda: {"low": None, "high": None, "stuck": set(),
+                                "values": set()})
+    runs = defaultdict(int)
+    previous = {}
+
+    for entry in announcements(captures):
+        key = (entry["high"], entry["low"])
+        record = seen[key]
+        record["values"].add(entry["value"])
+        if record["low"] is None or entry["value"] < record["low"]:
+            record["low"] = entry["value"]
+        if record["high"] is None or entry["value"] > record["high"]:
+            record["high"] = entry["value"]
+
+        if previous.get(key) == entry["value"]:
+            runs[key] += 1
+            if runs[key] >= repeats - 1:
+                record["stuck"].add(entry["value"])
+        else:
+            runs[key] = 0
+        previous[key] = entry["value"]
+
+    return {key: value for key, value in sorted(seen.items())}

@@ -377,10 +377,16 @@ Table 5's "wavesample", skipped entirely, and silently centred. Going the other
 way was worse: a hard-right 16 PLUS wavesample became Classic 8, which under the
 corrected table is Solo Out 1, routing it out of the stereo pair altogether.
 
-**Still unconfirmed:** hard *right* was never measured — the operator continued
-after the first half of the step. 7 follows from the range arithmetic and from
-hard left reading 0, but the `ws-pan` guided step now asks for hard right so the
-next tester closes it.
+**Hard left confirmed a second way.** The synth announces front-panel edits, and
+the 18 August captures contain the operator walking pan down with the arrow key:
+`13, 12, 11 … 2, 1, 0, 0, 0, 0 …`. It **stopped at 0 while the key was still
+going**, twice in one session and twice again in the other. 0 is the floor of the
+scale, not a value we happened to observe.
+
+**This question is closed.** Hard right has never been wound to and does not need
+to be: the scale has a measured floor at 0, eighteen documented values and eight
+positions, so 7 follows. The guided step that used to ask about pan has been
+removed rather than left asking testers for a confirmation nothing depends on.
 
 ---
 
@@ -398,32 +404,107 @@ the official specification opened and closed.
 
 Genuinely open, in rough order of how much they matter:
 
-1. **Where the Classic keeps instrument transpose.** On the EPS-M, page 10 item
-   13 moved by exactly the three semitones the operator dialled — but the
-   instrument block read immediately before and immediately after was identical
-   in all 323 words, with word 28 (the 16 PLUS's Transposition) at 0 throughout.
-   Neither value appears anywhere in the block. Item 12, the octave, reads a
-   constant 144 against a documented 0–5 here and −4…+4 on the 16 PLUS, and fits
-   neither. Either the Classic keeps transpose outside the block — in which case
-   conversion loses it — or a front-panel edit does not reach the block until
-   something commits it. The **Transpose test** button settles it by writing the
-   parameter itself, with nobody touching the synth.
-2. **Hard right pan.** 7 follows from the arithmetic and from hard left reading
-   0, but was never measured; §4.
-3. **Which parameters refuse a single PUT PARAMETER.** The 16 PLUS marks these
-   `*` and `**` and lists three notes about them. **The 1989 specification has no
-   such marker system at all** — the only restriction it records anywhere is
-   "Read Only" on Free System Blocks, Free Disk Blocks and Instrument Size. So
-   this is not something the transcription lost; Ensoniq never wrote it down for
-   the Classic. Whether the machine has silent refusals anyway is unknown, and a
-   silent refusal is the worst failure mode there is.
-4. **Whether `$0E00` Edit Instrument accepts a PUT.** The 16 PLUS marks it
-   "receive only", which per its NOTE 1 means only that it does not transmit on a
-   front-panel edit. The Classic's §9.11 lists it with a plain range and no
-   marker — but since that document has no marker system, the absence proves
-   nothing either way. This is why the app selects instruments with
-   `VIRTUAL BUTTON PRESS`, which §4.3 and §6 document identically for both
-   machines.
+1. **Where the Classic keeps instrument transpose.** Three sessions in, the
+   answer for a *rack* is "nowhere useful", and the keyboard is still untested.
+
+   The 18 August capture showed page 10 item 13 moving by exactly the amount the
+   operator dialled while the instrument block, read either side of the edit,
+   stayed identical in all 323 words — word 28 at 0 throughout.
+
+   **The 19 August transpose test explains why, and the explanation is a rack
+   firmware defect rather than a format difference.** TRNS OCT/SEMI is the
+   keyboard EPS's *Transpose Instrument* page, reached by pressing *Set Keyboard
+   Range* twice. The EPS-M has no such button and no menu path to the page at
+   all; it appears only when this app reads one of the two transpose parameters,
+   and the Right Arrow leaves the page rather than moving between its fields. On
+   that page the EPS-M showed:
+
+   - `TRANS OCT=-112 SEMI=2` on one run — item 12 read 144, which is exactly
+     −112 as a signed byte, so the display and the parameter agree and the field
+     really is signed.
+   - **A different starting value on the next run, with nobody having changed
+     anything.** Item 12 read 144 on 18 August and 16 on 19 August.
+   - Values far outside any documented range in both fields: −112 and −12 against
+     a documented 0–5 and 0–12 here, −4…+4 and −11…+11 on the 16 PLUS.
+   - **Item 13 returning NAK (`$17`) to every single read** on 19 August, having
+     answered every read on 18 August.
+   - Nothing whatsoever reaching instrument block word 28 — not the operator's
+     edits, and not the app's own `PUT PARAMETER`.
+
+   A page with no button path, uninitialised-looking values that differ between
+   runs, an item that answers one day and refuses the next, and no connection to
+   the instrument: **on an EPS-M this page is vestigial and is not instrument
+   transpose in any usable sense.** Ensoniq removed the button — a rack has no
+   keyboard to transpose — and left the page code behind it.
+
+   **What EPSWave should do:** nothing, for now. Word 28 is the only sane source,
+   it reads 0, and 0 is almost certainly correct for these instruments. Do not
+   read or write `$28 $0C`/`$0D` on a Classic. The remaining question is whether
+   a *keyboard* EPS, where the page is properly reachable, writes to word 28 —
+   and since the 16 PLUS does and the block layouts have matched everywhere else
+   measured, that is now a low-stakes loose end rather than a conversion risk.
+
+2. **Whether a *keyboard* EPS keeps transpose in word 28.** A rack cannot answer
+   it — its transpose page is vestigial, see above. Low stakes: the 16 PLUS does,
+   the block layouts have matched everywhere else measured, and word 28 reads 0
+   on every Classic instrument seen, which is almost certainly right for them.
+   The `inst-transpose` guided step stays in place for whoever turns up with a
+   keyboard.
+
+**Closed, and not worth asking about again:**
+
+- **Pan.** §4. Floor measured twice, mapping settled, guided step retired.
+- **Whether the Classic silently refuses a single `PUT PARAMETER`.** The 16 PLUS
+  marks such parameters `*` and `**`; the 1989 specification has no marker system
+  at all, so Ensoniq never wrote it down for the Classic. It looked worth chasing
+  because the upload path really does use `PUT PARAMETER` — sample start and end,
+  loop start, end and position, loop mode, root key, fine tune, sample rate. But
+  the 18 August session exercised exactly those: the wavedata round trip wrote
+  4096 samples and read them back matching, and six sample-rate codes were
+  written and verified held. The parameters that carry real work demonstrably
+  work on a Classic, and anything still unexercised is a parameter nothing uses.
+- **Whether `$0E00` Edit Instrument accepts a PUT.** The app selects instruments
+  with `VIRTUAL BUTTON PRESS`, which §4.3 and §6 document identically for both
+  machines and which has worked in every session. Nothing depends on the answer.
+
+### Undocumented: the synth talks back
+
+Two behaviours neither manual describes, both found by testing, and both worth
+more than the questions they turned up in.
+
+**Reading a parameter appears to move the synth's display.** Reading `$28 $0C`/
+`$0D` puts an EPS-M on the TRNS OCT/SEMI page — a page that machine has no button
+path to whatsoever. Recorded because it explains how a rack reached that page at
+all, and because it means the display is not a reliable guide to where an
+operator thinks they are during a sweep. Nobody has set out to confirm the
+mechanism and nothing depends on it.
+
+**The synth announces every front-panel edit, unasked.** Change a parameter on
+the panel and the EPS transmits a `PUT PARAMETER` for it. These are addressed to
+**wavesample 0**, where a reply to our own `GET` carries the wavesample we asked
+about, so the two are trivial to tell apart. The 16 PLUS manual implies this in
+passing — its NOTE 1 says parameters marked "receive only" *do not* transmit when
+edited from the front panel — but neither manual states the general behaviour or
+the addressing.
+
+This is a better witness than any sweep:
+
+- It **names the parameter the operator touched**, with no diffing, no baseline
+  and no ambiguity — including on a machine where the operator cannot see or
+  reach what they are editing.
+- Holding an arrow key sends **the whole ramp**, one message per step, so a
+  parameter that stops moving while the key is still going has **measured its own
+  limit**. Modulation source's 0–15 and pan's floor at 0 were both established
+  this way, out of edits made for entirely unrelated reasons.
+- It costs nothing and needs no cooperation: the messages are already in every
+  capture ever taken. `report.py --only=edits` reads them.
+
+**The guided steps should listen rather than sweep.** Every step currently costs
+a 139-parameter sweep to work out what moved, takes a minute or two, and produces
+an ambiguity whenever more than one thing changed. Listening would identify the
+parameter instantly, survive an operator who wanders, and hand back the range for
+free. This has not been built yet, and it is the single biggest improvement
+available to the probe.
 
 ### Closed by the EPS-M captures, 18 August 2026
 
@@ -448,13 +529,19 @@ Genuinely open, in rough order of how much they matter:
 - **Arbitrary sample rates are honoured.** Codes 20, 21, 26, 33, 40 and 100 were
   all accepted, read back unchanged and still there afterwards — including three
   the front panel does not offer.
-- **Modulation source is 0–15.** Both manuals' Table 2 lists sixteen entries
-  ending `15 = OFF`, and the Classic's scan prints it twice, both copies ending
-  there. The five `0-18` annotations and one `0-17` in the Classic manual match
-  neither its own table nor each other, and are wrong — the same species of error
-  as Table 5, on the other side of the page. The EPS-M only ever showed 13 and
-  15, which is consistent without proving it, so `EPSBlocks.checkModulationSources()`
-  reports anything above 15 to the debug log and changes nothing.
+- **Modulation source is 0–15, measured.** Both manuals' Table 2 lists sixteen
+  entries ending `15 = OFF`, and the Classic's scan prints it twice, both copies
+  ending there. The five `0-18` annotations and one `0-17` in the Classic manual
+  match neither its own table nor each other, and are wrong.
+
+  **Confirmed on hardware, by accident.** While hunting for a control during the
+  18 August session the operator wound `$18 $07` all the way up and all the way
+  down. The synth announced every step, and the ramp **stopped dead at 15 going
+  up and at 0 going down** while the key was still being pressed. Both stops
+  measured; the annotations claiming 18 are simply wrong.
+  `EPSBlocks.checkModulationSources()` still reports anything above 15 to the
+  debug log and changes nothing, because a surprise here would now be very
+  interesting indeed.
 
 ---
 

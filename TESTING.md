@@ -297,15 +297,8 @@ Each dialog also offers:
 - **Stop guided testing** — ends the sequence and keeps everything gathered so
   far.
 
-There are six controls. Getting through three is useful; all six is a good
+There are five controls. Getting through three is useful; all five is a good
 session. Nothing is lost if you stop early.
-
-**The first one, pan, used to be the important one, and it has been answered.**
-An EPS-M set to hard left wrote 0, which told us both that the byte we were
-guessing about really is pan and that its eight positions are numbered 0 to 7
-rather than 1 to 8. The step now asks for hard *right* instead, which should
-read 7 — a cheap confirmation of something a lot now rests on, but no longer
-the thing to do at the expense of everything else.
 
 **A note on the envelope steps.** Two of them ask for envelope levels. Your
 manual numbers the five levels 1 to 5; the MIDI specification numbers the same
@@ -334,8 +327,8 @@ Underneath the guided button there is a smaller one, **Transpose test**. It is
 worth running if you have a few more minutes, and it is the one open question
 left on the instrument side.
 
-Here is the puzzle. On an EPS-M, somebody changed the instrument's transpose by
-three semitones. The parameter number moved by exactly three, so the synth
+Here is the puzzle. On an EPS-M, somebody changed the instrument's transpose.
+The parameter number moved by exactly the amount he dialled, so the synth
 clearly heard him and clearly changed. But the instrument's *data block* — read
 immediately before and immediately after — did not change by so much as one
 byte, and the word where the EPS-16 PLUS keeps transposition sat at zero
@@ -348,20 +341,31 @@ Two things could explain that, and they need opposite fixes:
 - it does keep it there, but a front-panel edit does not reach the block until
   something else commits it — in which case nothing is wrong at all.
 
-The test runs in two halves. First it asks you to set transpose to four known
-values — zero, up one semitone, down one semitone, up one octave — reading both
-transpose numbers and the whole instrument block at each stop. Four known
-settings turn an odd-looking number into arithmetic; one reading on its own
-told us only a difference.
+The test runs in two halves, and **the first half needs nothing from you**. The
+app writes the transpose over MIDI itself, with nobody touching the synth, and
+re-reads the block each time. That is what separates the two explanations: if
+the block moves when the app writes but not when you do, the answer is
+commitment rather than layout. It puts the value back when it finishes.
 
-Then it does the second half by itself, **writing** the transpose over MIDI with
-nobody touching the synth. That is what separates the two explanations: if the
-block moves when the app writes but not when you do, the answer is commitment
-rather than layout.
+The second half asks you to look at the synth and move the value by one, and it
+is a bonus rather than the point — skip it freely.
 
-**It changes a setting on your instrument and puts it back when it finishes.**
-It reads the original value first and restores it at the end, including if you
-stop it partway. As with everything else here, nothing touches your disks.
+> ⚠️ **On a rack (EPS-M), do not press the Right Arrow on this page.**
+>
+> The TRNS OCT/SEMI page is the keyboard EPS's *Transpose Instrument* page,
+> normally reached by pressing **Set Keyboard Range** twice. **A rack has no such
+> button and no menu path to the page at all** — it appears only because the app
+> just read the parameter.
+>
+> Once it is up, Up and Down edit the value normally, but the **Right Arrow
+> leaves the page** instead of moving the cursor to the other field, and there is
+> no way back without running the test again. Thanks to David Katona for finding
+> this the hard way.
+
+**It changes a setting on your instrument and puts back what it wrote itself.**
+It will not second-guess an edit *you* made on the front panel, though — if you
+move the transpose and stop partway, it tells you so at the end and leaves it to
+you to set back.
 
 At the end it says which of the two explanations it found, in plain words.
 

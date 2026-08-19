@@ -171,25 +171,6 @@ window.EPSProbeUI = {
      */
     GUIDED_STEPS: [
         {
-            id: "ws-pan",
-            title: "Wavesample pan",
-            button: "6 &middot; Amp",
-            block: "wavesample",
-            what: "Set <b>Pan</b> to <b>hard right</b> &mdash; all the way, so the "
-                + "display reads <code>-------*</code>.",
-            why: "Answered once already, and worth confirming from the other end. An "
-                + "EPS-M set to hard left wrote <b>0</b> into the high half of the "
-                + "wavesample's 105th word, which settles both halves of the old "
-                + "question: that byte really is pan, and its eight display positions "
-                + "are numbered 0 to 7 rather than the 1 to 8 our copy of Table 5 "
-                + "prints. That copy lists nineteen entries for a range section 9.9 "
-                + "gives as 0 to 17, so one of them was wrong and the synth said which. "
-                + "Hard right should therefore read <b>7</b>. If it reads 8 instead, "
-                + "the table was right after all and every converted instrument is "
-                + "one cell off &mdash; so this is a cheap check on something a lot "
-                + "now rests on."
-        },
-        {
             id: "env-l2s",
             title: "Envelope 1, Level 2 Soft",
             button: "1 &middot; Env 1",
@@ -593,22 +574,35 @@ window.EPSProbeUI = {
                             `Transpose test: waiting for you — ${step.title}`, null)
                         const choice = await EPSWaveUI.choose(
                             EPSProbeUI.escape(step.title),
-                            `<p class="mb-2"><b>On the synth, press `
-                                + `<span class="text-info">Instrument</span>`
-                                + `</b> and find the transpose page.</p>`
+                            // No "press this button" line, unlike every other
+                            // guided step. There is no button: on a rack this
+                            // page has no menu path at all and is only on the
+                            // display because the app just read the parameter.
+                            `<p class="mb-2"><b>The synth should already be showing `
+                                + `<span class="text-info">TRNS OCT/SEMI</span>.</b> `
+                                + `The app brought it up by reading the parameter &mdash; `
+                                + `on a rack there is no front panel route to it.</p>`
                             + `<p class="mb-3">${step.what}</p>`
+                            + `<div class="alert alert-warning py-2 mb-3"><small>`
+                                + `<b>Do not press the Right Arrow.</b> On an EPS-M it `
+                                + `leaves this page instead of moving to the other field, `
+                                + `and there is no way back without starting the test `
+                                + `again. Up and Down are safe.</small></div>`
                             + `<div class="alert alert-secondary py-2 mb-3"><small>`
-                                + `<b>Make sure you are editing `
-                                + `${EPSProbeUI.escape(target)}</b> &mdash; that is the `
-                                + `instrument this app is reading.</small></div>`
-                            + `<p class="mb-0"><small>When you have set it, press Continue. `
+                                + `This is ${EPSProbeUI.escape(target)}, which is the `
+                                + `instrument the app is reading.</small></div>`
+                            + `<p class="mb-0"><small>Press Continue when you are done. `
                                 + `The app reads both transpose numbers and the whole `
-                                + `instrument block each time.</small></p>`,
+                                + `instrument block each time. <b>If you cannot do what `
+                                + `the step asks, skip it</b> &mdash; the important half `
+                                + `of this test has already run.</small></p>`,
                             [
                                 { id: "stop", label: "Stop", class: "btn-outline-danger" },
                                 { id: "skip", label: "Skip this one",
                                     class: "btn-outline-secondary" },
-                                { id: "go", label: "I set it &mdash; Continue",
+                                { id: "go", label: step.ask
+                                    ? "Noted &mdash; Continue"
+                                    : "I set it &mdash; Continue",
                                     class: "btn-primary" }
                             ])
                         if(choice == "go") return true
@@ -636,7 +630,12 @@ window.EPSProbeUI = {
                     "inconclusive": "Inconclusive: the transpose parameter did not move "
                         + "when the app wrote it, so nothing can be said about storage."
                 }
-                this.say(said[result.verdict] || result.verdict)
+                this.say((said[result.verdict] || result.verdict)
+                    + (result.leftChanged
+                        ? " — and note that transpose is not where you found it: the "
+                          + "app puts back what it wrote itself, but it will not "
+                          + "second-guess a front panel edit. Set it back by hand."
+                        : ""))
                 return result
             })
         })

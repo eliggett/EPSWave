@@ -1389,45 +1389,56 @@ class EPSProbe {
     static TRANSPOSE_SEMITONE = 0x0D
 
     /***
-     * The operator's half, as four stops rather than one.
+     * The operator's half, written for a machine that may not cooperate.
      *
-     * One edit gave a difference and no absolute reading worth anything: 244 to
-     * 247 is +3 semitones from an unknown starting point, in an encoding that
-     * fits neither manual. Four known settings turn that into arithmetic — if
-     * 0, +1, -1 and +1 octave produce four values, the encoding is readable
-     * from the four of them however strange it looks.
+     * THE FIRST VERSION OF THIS ASKED FOR THINGS A RACK CANNOT DO. It wanted
+     * four stops — zero, +1 semitone, -1 semitone, +1 octave — on the
+     * assumption that the operator could move between the OCT and SEMI fields
+     * at will. David Katona's EPS-M cannot. On the keyboard EPS the TRNS
+     * OCT/SEMI page is the "Transpose Instrument" page, reached by pressing Set
+     * Keyboard Range a second time; the rack has no such button and no menu
+     * path to the page at all. It appears only when this app touches one of the
+     * two transpose parameters, and once it is up the Right Arrow does not move
+     * the cursor from OCT to SEMI as the keyboard manual describes — it leaves
+     * the page, after which there is no way back except to run the probe again.
      *
-     * Zero first, deliberately. It is the one setting whose number we can
-     * predict under every encoding we have considered, so if the item does not
-     * read 0 there we have learned something before the other three are even
-     * asked for.
+     * So the steps here ask for one field, one value at a time, in as few stops
+     * as will still say something, and every one of them can be abandoned
+     * without spoiling the rest. The arithmetic that four stops would have given
+     * is now the automatic half's job, where the app moves the value itself and
+     * nothing depends on a cursor.
+     *
+     * The last step asks about the page rather than the value. What the cursor
+     * lands on, and what the Right Arrow does, is the difference between a
+     * setting that cannot be committed and a setting the operator never reached
+     * — and neither manual describes a rack here at all.
      */
     static TRANSPOSE_STEPS = [
         {
-            id: "transpose-zero",
-            title: "Transpose to zero",
-            what: "Set <b>both</b> transpose amounts to <b>0</b> &mdash; octave "
-                + "and semitone. The instrument should play at concert pitch."
+            id: "transpose-note-page",
+            title: "What came up on the display",
+            ask: true,
+            what: "Look at the synth's display. Reading a transpose parameter "
+                + "brings the <b>TRNS OCT/SEMI</b> page up by itself, even on a "
+                + "rack that has no button for it. <b>Tell us what you see</b> in "
+                + "the note box &mdash; which field the cursor is on, and whether "
+                + "the Right Arrow moves it to the other field or leaves the page. "
+                + "Then press Continue without changing anything."
         },
         {
-            id: "transpose-up-1",
-            title: "Up one semitone",
-            what: "Now set the <b>semitone</b> transpose to <b>+1</b>, leaving "
-                + "the octave at 0."
+            id: "transpose-move-one",
+            title: "Move it by one, whichever field you can reach",
+            what: "Press <b>Up</b> once, to move whichever value the cursor is "
+                + "sitting on by one. <b>Do not press Right Arrow</b> &mdash; on a "
+                + "rack that leaves the page and you will not get back without "
+                + "starting over. One press of Up is the whole step."
         },
         {
-            id: "transpose-down-1",
-            title: "Down one semitone",
-            what: "Now set the <b>semitone</b> transpose to <b>&minus;1</b>. This "
-                + "is the one that says which half of the byte the sign lives in."
-        },
-        {
-            id: "transpose-octave",
-            title: "Up one octave",
-            what: "Put the <b>semitone</b> back to <b>0</b> and set the "
-                + "<b>octave</b> transpose to <b>+1</b>. This is the only step "
-                + "that moves the octave item, which has so far only ever been "
-                + "seen holding 144."
+            id: "transpose-move-back",
+            title: "And back again",
+            what: "Press <b>Down</b> once, putting it back where it was. If the "
+                + "number returns to what it started at, the page is committing "
+                + "edits and we can trust it."
         }
     ]
 
@@ -1440,14 +1451,24 @@ class EPSProbe {
     async readTranspose(label){
         const octave = await this.eps.getParameter(
             EPSProbe.TRANSPOSE_PAGE, EPSProbe.TRANSPOSE_OCTAVE)
+        const octaveStatus = this.eps.lastStatusCode
         const semitone = await this.eps.getParameter(
             EPSProbe.TRANSPOSE_PAGE, EPSProbe.TRANSPOSE_SEMITONE)
+        const semitoneStatus = this.eps.lastStatusCode
         const block = await this.block(EPS16.BLOCK_INSTRUMENT, `transpose: ${label}`)
         const words = block.answered ? block.words : null
         return {
             label,
             octave: octave.answered ? octave.value : null,
             semitone: semitone.answered ? semitone.value : null,
+            // Kept because "the machine refused" and "the machine said nothing"
+            // are different results and null cannot tell them apart. An EPS-M
+            // answered every read of the octave item and returned NAK ($17) to
+            // every read of the semitone item, in the same session, which is
+            // worth being able to see in the capture.
+            octaveStatus, semitoneStatus,
+            octaveText: this.eps.statusText(octaveStatus),
+            semitoneText: this.eps.statusText(semitoneStatus),
             // Word 28 is where the 16 PLUS keeps it. Both halves are recorded
             // because which half a signed value lives in is exactly the sort of
             // thing the two machines disagree about.
@@ -1499,19 +1520,112 @@ class EPSProbe {
             this.eps.setInstrumentNumber(instrumentNumber)
 
             const start = await this.readTranspose("start")
+            const said = (value, text) =>
+                value == null ? `no answer (${text})` : `${value}`
             this.log(`Transpose probe on instrument ${instrumentNumber + 1}. `
-                + `Octave item reads ${start.octave}, semitone item reads `
-                + `${start.semitone}, and instrument block word 28 holds `
-                + `${start.word28} (high ${start.word28High}, low ${start.word28Low}).`)
+                + `Octave item: ${said(start.octave, start.octaveText)}. `
+                + `Semitone item: ${said(start.semitone, start.semitoneText)}. `
+                + `Instrument block word 28 holds ${start.word28} `
+                + `(high ${start.word28High}, low ${start.word28Low}).`)
+            if(start.octave == null || start.semitone == null){
+                this.log(`One of the two transpose items will not answer at all. `
+                    + `That is itself a result — on an EPS-M the octave item answers `
+                    + `and the semitone item returns NAK — and it means the written `
+                    + `half below cannot prove anything about the item that is silent.`)
+            }
             this.capture.event("finding", { probe: "transpose", what: "starting value",
                 octave: start.octave, semitone: start.semitone,
+                octaveStatus: start.octaveStatus, octaveText: start.octaveText,
+                semitoneStatus: start.semitoneStatus,
+                semitoneText: start.semitoneText,
                 word28: start.word28, word28High: start.word28High,
                 word28Low: start.word28Low })
 
             const panel = []
             let previous = start
 
-            // ---- half one: the operator's front panel ----------------------
+            // ---- half one: our own PUT PARAMETER ---------------------------
+            // First, because it is the half that settles the question and the
+            // only half that cannot be defeated by a front panel. Nobody is
+            // touching the synth while it runs, and it puts the value back
+            // afterwards, so the operator's half still starts from where the
+            // instrument began.
+            const written = []
+            const original = start.semitone
+            try{
+                for(const value of stops){
+                    if(this.aborted) break
+                    this.status(`Writing transpose semitone ${value}`)
+                    const accepted = await this.eps.setParameter(
+                        EPSProbe.TRANSPOSE_PAGE, EPSProbe.TRANSPOSE_SEMITONE, value)
+                    await this.eps.sleep(gap)
+                    const now = await this.readTranspose(`put ${value}`)
+                    const attempt = {
+                        wrote: value, accepted,
+                        was: previous.semitone,
+                        readBack: now.semitone,
+                        held: now.semitone === value,
+                        // `held` alone is not evidence the write did anything:
+                        // writing a value the parameter already held reads back
+                        // as a success on a synth that ignored the message
+                        // entirely. Only a value that both arrived AND differs
+                        // from what was there a moment ago proves the write
+                        // landed, and that is what the verdict must rest on.
+                        changed: now.semitone === value && previous.semitone !== value,
+                        word28: now.word28,
+                        word28Moved: now.word28 !== previous.word28,
+                        blockChanges: EPSProbe.transposeBlockDiff(previous, now)
+                    }
+                    written.push(attempt)
+                    this.capture.event("finding", { probe: "transpose",
+                        what: "put parameter", ...attempt })
+                    this.log(`  PUT semitone ${value}: `
+                        + `${accepted ? "accepted" : "refused"}, `
+                        + (attempt.readBack == null
+                            ? `and the read back was refused (${now.semitoneText})`
+                            : `reads back ${attempt.readBack}`
+                              + `${attempt.held ? " — held" : " — CHANGED"}`)
+                        + `, block word 28 ${previous.word28} -> ${now.word28}`
+                        + (attempt.word28Moved ? " — MOVED" : " — unmoved"))
+                    previous = now
+                    await this.breathe(gap)
+                }
+            }finally{
+                if(original != null){
+                    await this.eps.setParameter(EPSProbe.TRANSPOSE_PAGE,
+                        EPSProbe.TRANSPOSE_SEMITONE, original)
+                    this.log(`Put the semitone transpose back to ${original}`)
+                }
+            }
+
+            // Read once more after the restore, and make that the baseline the
+            // operator's half compares against. Without this, `previous` still
+            // describes the last value written, and the first panel observation
+            // would report the restore itself as something the operator did.
+            // The reading is worth having on its own account too: it is the
+            // proof that putting the instrument back actually worked.
+            if(original != null && !this.aborted){
+                const restored = await this.readTranspose("restored")
+                this.capture.event("finding", { probe: "transpose",
+                    what: "restored", semitone: restored.semitone,
+                    matchesStart: restored.semitone === start.semitone,
+                    word28: restored.word28 })
+                if(restored.semitone !== start.semitone){
+                    this.log(`WARNING: the semitone transpose reads `
+                        + `${restored.semitone} after being put back to `
+                        + `${start.semitone}. The instrument is not as it was found.`)
+                }
+                previous = restored
+            }
+
+            // ---- half two: the operator's front panel ---------------------
+            // Second because it is the half that may be impossible. On a rack
+            // the transpose page has no button path and its Right Arrow leaves
+            // the page rather than moving between fields, so an operator can
+            // easily be unable to finish this. Running it after the automatic
+            // half means the answer is already in the capture when that
+            // happens, and the panel observations are a bonus rather than the
+            // thing the session depended on.
             for(const step of steps){
                 if(this.aborted) break
                 if(!onStep) break
@@ -1548,52 +1662,28 @@ class EPSProbe {
                 await this.breathe(gap)
             }
 
-            // ---- half two: our own PUT PARAMETER ---------------------------
-            // This is the half that separates the two explanations, because
-            // nobody is touching the synth while it runs.
-            const written = []
-            const original = start.semitone
-            try{
-                for(const value of stops){
-                    if(this.aborted) break
-                    this.status(`Writing transpose semitone ${value}`)
-                    const accepted = await this.eps.setParameter(
-                        EPSProbe.TRANSPOSE_PAGE, EPSProbe.TRANSPOSE_SEMITONE, value)
-                    await this.eps.sleep(gap)
-                    const now = await this.readTranspose(`put ${value}`)
-                    const attempt = {
-                        wrote: value, accepted,
-                        was: previous.semitone,
-                        readBack: now.semitone,
-                        held: now.semitone === value,
-                        // `held` alone is not evidence the write did anything:
-                        // writing a value the parameter already held reads back
-                        // as a success on a synth that ignored the message
-                        // entirely. Only a value that both arrived AND differs
-                        // from what was there a moment ago proves the write
-                        // landed, and that is what the verdict must rest on.
-                        changed: now.semitone === value && previous.semitone !== value,
-                        word28: now.word28,
-                        word28Moved: now.word28 !== previous.word28,
-                        blockChanges: EPSProbe.transposeBlockDiff(previous, now)
-                    }
-                    written.push(attempt)
-                    this.capture.event("finding", { probe: "transpose",
-                        what: "put parameter", ...attempt })
-                    this.log(`  PUT semitone ${value}: `
-                        + `${accepted ? "accepted" : "refused"}, reads back `
-                        + `${attempt.readBack}${attempt.held ? " — held" : " — CHANGED"}, `
-                        + `block word 28 ${previous.word28} -> ${now.word28}`
-                        + (attempt.word28Moved ? " — MOVED" : " — unmoved"))
-                    previous = now
-                    await this.breathe(gap)
-                }
-            }finally{
-                if(original != null){
-                    await this.eps.setParameter(EPSProbe.TRANSPOSE_PAGE,
-                        EPSProbe.TRANSPOSE_SEMITONE, original)
-                    this.log(`Put the semitone transpose back to ${original}`)
-                }
+            // The operator's half comes after the restore, so nothing here puts
+            // their edits back — and it deliberately does not try. Writing the
+            // parameter to "fix" it would be guessing with the one command whose
+            // reliability is the very thing under test, and it cannot touch the
+            // octave they may have moved instead. So this reports rather than
+            // acts, and the last guided step asks them to undo it themselves.
+            let leftChanged = null
+            if(panel.length && !this.aborted){
+                const ending = await this.readTranspose("ending")
+                leftChanged = ending.semitone !== start.semitone
+                    || ending.octave !== start.octave
+                this.capture.event("finding", { probe: "transpose", what: "ending",
+                    octave: ending.octave, semitone: ending.semitone,
+                    startedOctave: start.octave, startedSemitone: start.semitone,
+                    leftChanged })
+                this.log(leftChanged
+                    ? `NOTE: transpose now reads octave ${ending.octave}, semitone `
+                      + `${ending.semitone}, where it started at ${start.octave} and `
+                      + `${start.semitone}. The front panel edits were not undone — `
+                      + `set it back by hand if you want the instrument as it was.`
+                    : `Transpose is back where it started: octave ${start.octave}, `
+                      + `semitone ${start.semitone}.`)
             }
 
             // ---- the conclusion, spelled out -------------------------------
@@ -1629,7 +1719,7 @@ class EPSProbe {
                 verdict, panelMovedBlock, putMovedBlock, putMovedParameter,
                 octaveConstant: panel.every(p => !p.octaveMoved) })
 
-            return { start, panel, written, verdict,
+            return { start, panel, written, verdict, leftChanged,
                 panelMovedBlock, putMovedBlock, putMovedParameter }
         })
     }

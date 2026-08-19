@@ -1,6 +1,13 @@
 # What David's EPS-M captures settle, and what to change
 
-Two captures, 18 August 2026, from an **EPS-M** — the rack Classic — running
+> **Status, 19 August 2026.** Everything proposed here has been implemented, and
+> a third capture has since arrived. Two items below were revised by it — the
+> modulation source range is now *measured* rather than believed, and the
+> transpose puzzle has an answer. Both are marked in place. The canonical record
+> is [`reference/eps-classic-vs-16plus.md`](../../reference/eps-classic-vs-16plus.md);
+> this file is kept as the working analysis it was written as.
+
+Three captures, 18–19 August 2026, from an **EPS-M** — the rack Classic — running
 RAM 2.49 / ROM 2.21. Instrument `MOTOR DRUMS1`, wavesample 1 of layer 1, and
 every sweep addressed to that same wavesample throughout.
 
@@ -13,7 +20,8 @@ Reproduce with:
 
 ```
 python3 report.py ~/Downloads/EPS-testing/Test1/*.jsonl \
-                  ~/Downloads/EPS-testing/Test2/*.jsonl
+                  ~/Downloads/EPS-testing/Test2/*.jsonl \
+                  ~/Downloads/EPS-testing/Test3/*.jsonl
 ```
 
 ---
@@ -197,33 +205,48 @@ round-trips. Worth choosing on purpose rather than inheriting from
 
 ### Instrument transpose does not appear in the instrument block
 
-The operator changed transpose by a few semitones. Page 10 item 13 moved
-**244 → 247**, which is +3 and matches what he did.
+**Answered by the 19 August capture: on a rack, the page is vestigial.**
 
-But the instrument block was read immediately before and immediately after
-that edit and **the two are byte-for-byte identical**. Word 28 — where the
-16 PLUS keeps Transposition — held 0 both times, and neither 244 nor 247
-appears anywhere in the block's 323 words.
+The original observation stands — page 10 item 13 moved by exactly the amount
+dialled while the instrument block, read either side of the edit, stayed
+identical in all 323 words with word 28 at 0. What the third capture added:
 
-The companion item 12 (transpose octave) reads a constant **144**, against a
-documented range of 0–5 on the Classic and −4 to +4 on the 16 PLUS. 144 does
-not fit either under any signed or unsigned reading we tried.
+- The display read `TRANS OCT=-112` while item 12 read **144** — exactly −112 as
+  a signed byte, so display and parameter agree and the field is signed.
+- Item 12 read **144** on 18 August and **16** on 19 August, **with nobody having
+  changed anything in between**.
+- Item 13 returned **NAK (`$17`) to every read** on 19 August, having answered
+  every read the day before.
+- Nothing reached word 28 — not the operator's edits, and not the app's own
+  `PUT PARAMETER`.
 
-What this means in practice: `decodeWavesample`'s sibling for instruments will
-report `transpose: 0` for a Classic instrument whatever the panel says, and
-transpose will not survive a block-level conversion.
+TRNS OCT/SEMI is the keyboard EPS's *Transpose Instrument* page, reached by
+pressing *Set Keyboard Range* twice. A rack has no such button and no menu path
+to it; it appears only because reading the parameter navigates the display
+there, and its Right Arrow leaves the page instead of moving between fields.
 
-**Do not change anything here yet.** The reading is odd enough that it could
-be an artefact of when the block was read. The probe that settles it: set
-transpose to 0, then +1 semitone, then −1 semitone, then +1 octave, reading
-items 12 and 13 *and* the instrument block at each stop. Four readings turn
-this into arithmetic.
+A page with no button path, values that differ between runs on their own, an item
+that answers one day and refuses the next, and no connection to the instrument:
+**on an EPS-M this is not instrument transpose in any usable sense.** Ensoniq
+removed the button — a rack has no keyboard to transpose — and left the page
+code behind it.
+
+**So: change nothing.** Word 28 is the only sane source, it reads 0, and 0 is
+almost certainly correct for these instruments. Whether a *keyboard* EPS writes
+word 28 is still open, but with the 16 PLUS doing so and the block layouts
+matching everywhere else measured, that is a loose end rather than a risk.
 
 ### Modulation source range
 
-Only 13 and 15 were ever observed. The Classic manual says 0–18 for the amp
-page's mod source, the 16 PLUS says 0–15 for the loop mod source. Neither
-bound was approached, so the question of where it tops out is still open.
+**Answered, and by accident.** While hunting for a control during the 18 August
+session the operator wound `$18 $07` all the way up and all the way down. The
+synth announces every front-panel edit, so the whole ramp is in the capture — and
+it **stopped dead at 15 going up and at 0 going down** while the key was still
+being pressed. Both stops measured.
+
+So modulation source is **0–15**, as both manuals' Table 2 says and as the
+16 PLUS annotates it. The Classic manual's five `0-18` annotations and one
+`0-17` are simply wrong.
 
 ---
 
@@ -240,17 +263,40 @@ does.
 
 ## 5. What to ask David for next
 
-One capture, in this order, would close everything still open:
+Nothing, on these questions. All three original asks are answered — two of them
+by captures taken for other reasons — and the rack cannot settle what is left.
 
-1. **Pan, one click at a time.** From hard left to hard right, pausing at every
-   position. Eight readings enumerate the scale outright and confirm that
-   hard right is 7 rather than 8 — the only part of the pan fix that is still
-   inference rather than measurement.
-2. **Transpose, four stops.** 0, +1 semitone, −1 semitone, +1 octave, reading
-   the instrument block at each.
-3. **Modulation source, wound to its maximum**, to see whether it stops at 15
-   or 18.
+- **Pan** is closed: floor measured at 0 in two separate sessions, mapping
+  settled, guided step retired.
+- **Modulation source** is closed: 0 and 15 both measured as stops.
+- **Transpose** cannot be answered by an EPS-M at all, and the answer would no
+  longer change what the app does.
 
-Worth saying to him: the pan result is the one that mattered, he got it, and
-the two "wrong" parameters that moved during the steps he skipped turned out to
-be a gift — they pinned down two more words for free.
+The one thing still open — whether a *keyboard* EPS keeps transpose in word 28 —
+needs a different machine, not a different test.
+
+---
+
+## 6. The thing worth building next
+
+**The guided steps should listen instead of sweeping.**
+
+The EPS transmits a `PUT PARAMETER` whenever a parameter is changed on its front
+panel, addressed to wavesample 0 where a reply to our own `GET` carries the
+wavesample we asked about. Neither manual states this. It has been sitting in
+every capture ever taken.
+
+It is a better witness than any sweep:
+
+- it **names the parameter the operator touched** — no diffing, no baseline, no
+  ambiguity when two things move;
+- holding an arrow key sends **the whole ramp**, so a parameter that stops moving
+  while the key is still going **measures its own limit** — which is how both
+  results above were obtained, out of edits made for other reasons;
+- it works on a machine where the operator cannot see or reach what they are
+  editing, which is exactly the case that defeated the transpose steps;
+- each guided step currently costs a 139-parameter sweep and a minute or two.
+  Listening costs nothing.
+
+`report.py --only=edits` already extracts this from existing captures. Wiring it
+into the guided flow is the single biggest improvement available to the probe.

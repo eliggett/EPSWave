@@ -365,6 +365,42 @@ def section_census(captures):
           " %d listed but silent" % (confirmed, undocumented, missing))
 
 
+
+def section_edits(captures):
+    rule("EDITS  what the synth reported without being asked")
+    print("  The EPS sends a PUT PARAMETER whenever a parameter is changed on")
+    print("  its front panel. These are addressed to wavesample 0, where a reply")
+    print("  to our own GET carries the wavesample we asked about -- which is")
+    print("  what tells them apart.")
+    print()
+    print("  This is a better witness than the sweeps. It names the parameter")
+    print("  the operator touched with no diffing and no ambiguity, and holding")
+    print("  an arrow key sends the whole ramp, one message per step.")
+    print()
+
+    found = analyse.limits(captures)
+    if not found:
+        print("  Nothing announced in these captures.")
+        return
+
+    for (high, low), record in found.items():
+        where, name = spec.documented(high, low)
+        print("  page $%02X item %2d (Classic page %d item %d)%s"
+              % (high, low, classic_page(high), low,
+                 "  %s" % name if name else ""))
+        print("      range seen  %d .. %d   (%d distinct values)"
+              % (record["low"], record["high"], len(record["values"])))
+        if record["stuck"]:
+            for value in sorted(record["stuck"]):
+                edge = ("a FLOOR" if value == record["low"]
+                        else "a CEILING" if value == record["high"]
+                        else "a repeat")
+                print("      stopped at %-4d -- %s: the key was still going and"
+                      " the number was not" % (value, edge))
+        else:
+            print("      no limit reached")
+
+
 SECTIONS = {
     "identity": section_identity,
     "blocks": section_blocks,
@@ -372,6 +408,7 @@ SECTIONS = {
     "census": section_census,
     "guided": section_guided,
     "map": section_map,
+    "edits": section_edits,
     "pan": section_pan,
     "rates": section_rates,
     "wave": section_wave,

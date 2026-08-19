@@ -32,15 +32,39 @@ To be able to upload a wav file to the EPS16+ you need to:
 
 ### Do you own an original EPS (not a 16 PLUS)?
 
-We would like EPSWave to support the original EPS Classic, and we are four
-questions short of being able to write it — questions no manual answers, because
-Ensoniq's MIDI specification covers the 16 PLUS only. Answering them needs
-someone with a Classic in front of them and about an hour.
+**It is supported.** Set **Connected model** to *EPS Classic* at the top right and
+use it as normal — wavesamples up and down, whole instruments backed up and
+restored, and instruments converted between the two machines in either direction.
 
-If that is you, **[TESTING.md](TESTING.md)** walks through the whole thing from
-the beginning. It is written for a musician rather than a programmer, it says
-plainly which steps read and which one writes, and the write step affects only
-the synth's memory — reloading from disk undoes it.
+Ensoniq's MIDI specification covers the 16 PLUS only, so this was written against
+their separate 1989 specification for the Classic and then checked on real
+hardware — an EPS-M kindly run through the probe suite by David Katona over three
+sessions in August 2026. What that settled:
+
+- The two machines lay their parameter blocks out **identically** — 323, 107 and
+  139 words — and seven settings were pinned to the exact word and half-word they
+  occupy, all matching.
+- Every parameter its manual documents **answers**, plus seven the manual leaves
+  out. The Classic's documentation is incomplete; the Classic is not smaller.
+- Its converter is **13 bit and truncates**, which is what the app already sent.
+- It accepts **any sample rate**, not just the ten on its front panel, so uploads
+  play back at the right pitch.
+- Its **pan** is one field carrying eight stereo positions, eight solo outputs,
+  random and keyboard panning, and it converts to and from the 16 PLUS's signed
+  value in both directions. Hard left reads 0, which is one off what our copy of
+  Ensoniq's table said, and finding that out is why the hardware session existed.
+
+What is not settled is **instrument transpose**, and only on a rack: the EPS-M's
+transpose page has no front panel route to it, shows different values from one
+run to the next, and is not connected to the instrument at all. The app carries
+the value straight across from the file rather than reading that page, which is
+correct whatever the answer turns out to be. If you have an EPS Classic
+**keyboard** and an hour, that is the one remaining question — see
+**[TESTING.md](TESTING.md)**, which walks through the whole probe suite from the
+beginning and is written for a musician rather than a programmer.
+
+The full comparison of the two machines is in
+**[reference/eps-classic-vs-16plus.md](reference/eps-classic-vs-16plus.md)**.
 
 ### Current Limitations and Bugs
 1. You need a good midi interface, [some cheap interfaces do not work well with MIDI System Exclusive (sysex) content](https://llamamusic.com/fb01/index.html#cheapmidi). 

@@ -29,6 +29,7 @@ a result.
 | `rates` | which sample-rate codes the machine took and kept |
 | `wave` | bit depth, measured on the way in and through a round trip |
 | `agreement` | whether two sweeps read the same machine the same way |
+| `edits` | what the synth reported without being asked, and the limits that fall out |
 
 ## Why `map` does not use the capture's own diffs
 
@@ -51,12 +52,29 @@ last changed when the parameter did. One such half is a measurement, several
 is an ambiguity worth reporting as one, and none means the value is not in any
 block that was read.
 
+## audit.py — checking the app against the hardware
+
+```
+python3 audit.py ~/Downloads/EPS-testing/Test*/*.jsonl
+```
+
+The sweeps are a census: on this hardware an item that does not answer does not
+exist. That makes them something to check the *app* against. `audit.py` pulls
+every `getParameter`/`setParameter` call out of `eps.js`, resolves the constants,
+and reports any that a Classic would ignore.
+
+This matters because a `PUT PARAMETER` that lands nowhere returns no error. A
+call on a page the Classic does not have works perfectly on the developer's
+16 PLUS and silently does nothing on a Classic. Run it after changing anything
+that sets a parameter; it exits non-zero on a finding.
+
 ## Files
 
 - `capture.py` — loads the JSON Lines, groups by kind, knows nothing about meaning.
 - `spec.py` — both manuals' parameter tables as data, plus the corrected Table 5.
 - `analyse.py` — one function per question, each returning data rather than text.
 - `report.py` — printing, and only printing.
+- `audit.py` — the one that checks `eps.js` rather than the capture.
 
 The split is so that the next capture can be checked without rewriting
 anything. When a conclusion here turns out to be wrong, the evidence is still

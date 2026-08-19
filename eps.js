@@ -1203,6 +1203,35 @@ class EPS16 {
             merged[word] = inventory.instrument.words
                 ? inventory.instrument.words[word] : merged[word]
         }
+        // TRANSPOSE (word 28) IS CARRIED ACROSS UNTOUCHED, DELIBERATELY.
+        //
+        // The Classic has two transpose parameters, $28 $0C octave and $28 $0D
+        // semitone, and this app reads and writes neither. An EPS-M was asked
+        // about them over three sessions and gave: 144 one day and 16 the next
+        // for the same instrument reloaded from the same disk with nobody
+        // touching it; values far outside either manual's range, displayed as
+        // "OCT=-112"; one item answering every read on one day and returning NAK
+        // to every read on the next; and no connection whatsoever to this word,
+        // which stayed 0 through front panel edits and through the app's own
+        // PUT PARAMETER.
+        //
+        // On a rack that page is vestigial. TRNS OCT/SEMI is the keyboard EPS's
+        // Transpose Instrument page, reached by pressing Set Keyboard Range
+        // twice; the EPS-M has no such button, no menu path to the page, and its
+        // Right Arrow leaves the page instead of moving between the fields.
+        // Ensoniq removed the button — a rack has no keyboard to transpose — and
+        // the page code stayed behind it, reading somewhere nothing else writes.
+        //
+        // So the block word is the only honest source, and copying it is the
+        // only honest thing to do with it: whatever the file says, the synth
+        // gets, the same as the 16 PLUS path. Reading the parameters instead
+        // would import junk, and writing them would export it.
+        //
+        // WHAT WOULD REOPEN THIS: a keyboard EPS, where the page is properly
+        // reachable. If word 28 moves when its Transpose Instrument page is
+        // edited, everything here is already correct and this comment can be
+        // shortened to say so. The `inst-transpose` guided step is kept for
+        // exactly that machine.
         if(!await this.putParamBlock(EPS16.BLOCK_INSTRUMENT, merged)){
             return await fail("The EPS refused the instrument parameter block.")
         }
