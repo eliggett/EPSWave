@@ -3384,6 +3384,8 @@ class EPS16 {
      * BUT_INST_1 through BUT_INST_8.
      */
     static BUTTON_INSTRUMENT_1 = 0x00
+    /*** Section 6, Edit Mode. Same number as Arensburger's `BUT_EDIT`. */
+    static BUTTON_EDIT = 0x13
     /*** Section 9.11, the machine's own idea of what is selected. */
     static EDIT_CONTEXT_PAGE = 0x38
     static EDIT_CONTEXT_INSTRUMENT_ITEM = 0x00
@@ -3471,6 +3473,31 @@ class EPS16 {
               + `synth says ${reported == null ? "nothing" : reported + 1}).`)
 
         return { ok, requested: number, reported, name, status, packet }
+    }
+    /***
+     * Puts the front panel in Edit mode.
+     *
+     * CREATE LAYER, CREATE WAVESAMPLE and PUT PARAMETER while the synth is in
+     * Command mode come back `14 DISK ACCESS IN PROGRESS` and have to be
+     * retried: Command is where the OS keeps the disk and overlay machinery,
+     * and those commands wait for it. Pressing Edit is what a person would do
+     * before editing an instrument. Section 6 gives the button as `$13`.
+     *
+     * Already being in Edit is harmless. A second press only toggles between a
+     * parameter page and the instrument/layer/wavesample display, which is
+     * still Edit, not Command.
+     */
+    async enterEditMode(){
+        const status = await this.pushButton(EPS16.BUTTON_EDIT, "enter Edit mode")
+        if(status != 0x00){
+            this.debug(`Edit mode: ${this.statusText(status)}`)
+            return false
+        }
+        // Section 6: "a brief delay (approximately 2-300 msecs) between each
+        // packet is recommended." Leaving Command can also pull an overlay;
+        // give that a moment before the next create command.
+        await this.sleep(300)
+        return true
     }
     /***
      * Which machine is believed to be on the other end.
@@ -3828,6 +3855,8 @@ class EPS16 {
     }
     async createMorphingWaveTable(arrayOfWaveTables, progressCallback, sampleRates=[], rootKeys=[], fineTunes=[], names=[], options={}){
         //enable all patche
+        EPS16.step(options, "switching to Edit mode")
+        await this.enterEditMode()
         const claimed = await this.acquireInstrument(options)
         if(!claimed.ok){
             if(!claimed.cancelled){
