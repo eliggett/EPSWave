@@ -113,6 +113,13 @@ class EPSChart {
      */
     static LIVE_DELAY_MS = 150
 
+    /***
+     * Instrument structure last read off the EPS, keyed by instrument number.
+     * Shared by every waveform tab so adding a tab does not throw away the
+     * layer names, wavesample lists and wavesample names already paid for.
+     */
+    static instrumentStructures = new Map()
+
     constructor(elementId, label, color, hasFileUpload, eps){
         this.wavesample = []
         this.eps = eps
@@ -140,10 +147,16 @@ class EPSChart {
         this.liveTimer = null
         // Where this slot reads from and writes to on the synth. Card local: it
         // reaches the EPS16 object only through applyTarget, immediately before
-        // a transfer.
+        // a transfer. Structure queries pass numbers in and restore, so they
+        // do not break that rule.
         this.instrument = 0
         this.layer = 0
         this.wavesampleNumber = 1
+        // What the connected instrument actually contains, or null until a
+        // dropdown has asked. `complete` means GET INSTRUMENT walked every
+        // layer; a layer-only query stores just the layer that was asked for.
+        this.structure = null
+        this.structureToken = 0
         this.preview = new WavePreview()
 
         const canvas = document.getElementById(elementId + "_chart")
@@ -934,12 +947,29 @@ class EPSChart {
         layerEl.value = this.layer
         waveEl.value = this.wavesampleNumber
 
-        // Card local state only. Nothing here reaches the EPS16 object; see
-        // applyTarget for why that matters now that every tab has a set of
-        // these.
-        instEl.addEventListener('change', () => { this.instrument = parseInt(instEl.value) })
-        layerEl.addEventListener('change', () => { this.layer = parseInt(layerEl.value) })
-        waveEl.addEventListener('change', () => { this.wavesampleNumber = parseInt(waveEl.value) })
+        // The numbers stay card-local. Asking the EPS happens here because a
+        // wavesample number is not unique across layers: eight layers with one
+        // wavesample each are usually wavesamples 1 through 8, and picking
+        // layer 3 with wavesample 1 addresses nothing. Instrument change asks
+        // for the whole map; layer change asks only if that map is not already
+        // in hand.
+        instEl.addEventListener('change', () => {
+            this.instrument = parseInt(instEl.value)
+            this.queryInstrumentStructure(say)
+        })
+        layerEl.addEventListener('change', () => {
+            const value = parseInt(layerEl.value)
+            if(!Number.isFinite(value)){
+                this.layer = null
+                return
+            }
+            this.layer = value
+            this.onLayerSelected(say)
+        })
+        waveEl.addEventListener('change', () => {
+            const value = parseInt(waveEl.value)
+            this.wavesampleNumber = Number.isFinite(value) ? value : null
+        })
 
         document.getElementById(`${id}_get`).addEventListener('click', () => this.getFromEps(say))
         document.getElementById(`${id}_put`).addEventListener('click', () => this.sendToEps(say))
@@ -967,6 +997,366 @@ class EPSChart {
     }
 
     /***
+     * The three address dropdowns on this card.
+     */
+    targetSelects(){
+        const id = this.elementId
+        return {
+            inst: document.getElementById(`${id}_tgtInst`),
+            layer: document.getElementById(`${id}_tgtLayer`),
+            wave: document.getElementById(`${id}_tgtWave`)
+        }
+    }
+
+    midiReady(){
+        return this.eps.midiOutput && typeof this.eps.midiOutput.send == 'function'
+            && this.eps.midiInput && typeof this.eps.midiInput == 'object'
+    }
+
+    /***
+     * Rebuilds a <select> from an array of values. Keeps the current choice
+     * when it is still in the list, otherwise the first entry. An empty list
+     * gets a placeholder so the control is not a blank box.
+     */
+    fillSelect(el, values, labelFn, current){
+        if(!el) return current
+        if(values.length == 0){
+            el.innerHTML = '<option value="">(none)</option>'
+            return null
+        }
+        el.innerHTML = values.map(v => `<option value="${v}">${labelFn(v)}</option>`).join('')
+        const wanted = current == null || current === '' ? NaN : Number(current)
+        if(Number.isFinite(wanted) && values.includes(wanted)){
+            el.value = String(wanted)
+            return wanted
+        }
+        el.value = String(values[0])
+        return values[0]
+    }
+
+    defaultLayers(){
+        const layers = []
+        for(let i = 0; i < EPSBlocks.LAYER_COUNT; i++) layers.push(i)
+        return layers
+    }
+
+    defaultWavesamples(){
+        const waves = []
+        for(let n = 1; n < EPSBlocks.WAVESAMPLE_COUNT; n++) waves.push(n)
+        return waves
+    }
+
+    /***
+     * Puts the dropdowns back to every layer and every wavesample. Used when
+     * the instrument could not be asked at all (no MIDI, a busy cable), not
+     * when the slot is empty — an empty slot leaves both lists unselectable.
+     */
+    resetTargetSelects(){
+        const els = this.targetSelects()
+        this.layer = this.fillSelect(els.layer, this.defaultLayers(), (n) => n + 1, this.layer)
+        this.wavesampleNumber = this.fillSelect(els.wave, this.defaultWavesamples(),
+            (n) => n, this.wavesampleNumber)
+    }
+
+    instrumentIsEmpty(){
+        return this.structure
+            && this.structure.instrument === this.instrument
+            && this.structure.empty === true
+    }
+
+    /***
+     * Pushes this.structure into the layer and wavesample dropdowns.
+     *
+     * A complete structure (the instrument was asked) shrinks the layer list
+     * to layers that exist. A layer-only answer leaves the layer list alone
+     * and only fills the wavesample list for the layer that was asked. An
+     * empty instrument leaves both lists at "(none)".
+     */
+    syncTargetSelects(){
+        const els = this.targetSelects()
+        if(!this.structure || this.structure.instrument !== this.instrument){
+            this.resetTargetSelects()
+            this.applyTargetSelectState()
+            return
+        }
+        if(this.structure.empty || (this.structure.complete && this.structure.layers.length == 0)){
+            this.layer = this.fillSelect(els.layer, [], (n) => n + 1, null)
+            this.wavesampleNumber = this.fillSelect(els.wave, [], (n) => n, null)
+            this.applyTargetSelectState()
+            return
+        }
+        if(this.structure.complete){
+            const layers = this.structure.layers
+            this.layer = this.fillSelect(els.layer,
+                layers.map(l => l.number),
+                (n) => {
+                    const layer = layers.find(l => l.number == n)
+                    return layer && layer.name ? `${n + 1} ${layer.name}` : String(n + 1)
+                },
+                this.layer)
+        }
+        const record = this.structure.layers.find(l => l.number == this.layer)
+        const waves = record ? record.wavesamples : []
+        this.wavesampleNumber = this.fillSelect(els.wave, waves,
+            (n) => this.wavesampleOptionLabel(record, n), this.wavesampleNumber)
+        if(els.layer) els.layer.value = this.layer == null ? '' : String(this.layer)
+        if(els.wave) els.wave.value = this.wavesampleNumber == null ? '' : String(this.wavesampleNumber)
+        this.applyTargetSelectState()
+    }
+
+    setTargetSelectsEnabled(enabled){
+        const els = this.targetSelects()
+        for(const el of [els.inst, els.layer, els.wave]){
+            if(el) el.disabled = !enabled
+        }
+    }
+
+    /***
+     * Instrument stays usable; layer and wavesample do not, on an empty slot.
+     * There is nothing there to address, and offering 1–8 / 1–127 would only
+     * look as if there were.
+     */
+    applyTargetSelectState(){
+        const els = this.targetSelects()
+        if(els.inst) els.inst.disabled = false
+        const locked = this.instrumentIsEmpty()
+        if(els.layer) els.layer.disabled = locked
+        if(els.wave) els.wave.disabled = locked
+    }
+
+    storeStructure(structure){
+        this.structure = structure
+        if(structure && typeof structure.instrument == 'number'){
+            EPSChart.instrumentStructures.set(structure.instrument, structure)
+        }
+    }
+
+    loadStructureForInstrument(instrument){
+        const stored = EPSChart.instrumentStructures.get(instrument)
+        this.structure = stored && stored.instrument === instrument ? stored : null
+        return this.structure
+    }
+
+    /***
+     * Copies another tab's instrument address and the cached structure for
+     * that instrument onto this one. Used when a waveform tab is added, so
+     * the new dropdowns open on the same layers and named wavesamples.
+     */
+    adoptTarget(other){
+        if(!other) return
+        this.instrument = other.instrument
+        this.layer = other.layer
+        this.wavesampleNumber = other.wavesampleNumber
+        this.loadStructureForInstrument(this.instrument)
+        if(!this.structure && other.structure
+            && other.structure.instrument === this.instrument){
+            this.storeStructure(other.structure)
+        }
+        const els = this.targetSelects()
+        if(els.inst) els.inst.value = String(this.instrument)
+        this.syncTargetSelects()
+    }
+
+    wavesampleOptionLabel(record, number){
+        const name = record && record.wavesampleNames && record.wavesampleNames[number]
+        return name ? `${number} ${name}` : String(number)
+    }
+
+    /***
+     * "wavesample 3" or "wavesample 3 (PIANO)" when a name is known.
+     */
+    wavesampleReadLabel(number, name){
+        const known = (name && String(name).trim())
+            || this.wavesampleNameFor(number)
+        return known
+            ? `wavesample ${number} (${known})`
+            : `wavesample ${number}`
+    }
+
+    wavesampleNameFor(number){
+        const record = this.structure && this.structure.layers
+            && this.structure.layers.find(l => l.number == this.layer)
+        return (record && record.wavesampleNames && record.wavesampleNames[number]) || ''
+    }
+
+    /***
+     * After a Send that created something, keep the dropdowns honest without
+     * another round trip: the number the EPS assigned is now known to belong
+     * to this layer.
+     */
+    rememberTargetWavesample(layerNumber, wsNumber, wsName = ''){
+        if(!this.structure || this.structure.instrument !== this.instrument) return
+        if(wsNumber == null || wsNumber === '') return
+        let layer = this.structure.layers.find(l => l.number == layerNumber)
+        if(!layer){
+            layer = { number: layerNumber, name: '', wavesamples: [], wavesampleNames: {} }
+            this.structure.layers.push(layer)
+            this.structure.layers.sort((a, b) => a.number - b.number)
+        }
+        if(!layer.wavesampleNames) layer.wavesampleNames = {}
+        if(!layer.wavesamples.includes(wsNumber)){
+            layer.wavesamples = [...layer.wavesamples, wsNumber].sort((a, b) => a - b)
+        }
+        if(wsName) layer.wavesampleNames[wsNumber] = wsName
+        this.storeStructure(this.structure)
+        this.syncTargetSelects()
+    }
+
+    /***
+     * GET INSTRUMENT plus GET LAYER for each occupied layer, then shrink both
+     * dropdowns to what is actually there.
+     */
+    async queryInstrumentStructure(say){
+        if(!this.midiReady()){
+            this.structure = null
+            this.resetTargetSelects()
+            this.applyTargetSelectState()
+            say('No MIDI ports selected, so the instrument cannot be queried. '
+                + 'Layer and wavesample lists are left at every number.')
+            return
+        }
+        const done = EPSWaveUI.startTransfer(
+            `Reading instrument ${this.instrument + 1} structure`)
+        if(!done){
+            this.structure = null
+            this.resetTargetSelects()
+            this.applyTargetSelectState()
+            say(`Busy: ${EPSWaveUI.transferring}. One transfer at a time.`)
+            return
+        }
+        const token = ++this.structureToken
+        this.setTargetSelectsEnabled(false)
+        const slot = this.instrument + 1
+        let outcome = `Read instrument ${slot} structure`
+        try{
+            const result = await this.eps.getInstrumentStructure(this.instrument,
+                (percent, what) => EPSWaveUI.status(
+                    `Reading instrument ${slot}: ${what}`, percent))
+            if(token != this.structureToken) return
+            if(!result || result.layers.length == 0){
+                this.storeStructure({
+                    instrument: this.instrument,
+                    name: result ? result.name : null,
+                    complete: true,
+                    empty: true,
+                    layers: []
+                })
+                this.syncTargetSelects()
+                if(!result){
+                    outcome = `No instrument in slot ${slot}`
+                    say(`${outcome}. Layer and wavesample cannot be selected.`)
+                }else{
+                    outcome = `Instrument ${slot}`
+                        + `${result.name ? ` "${result.name}"` : ''} has no layers`
+                    say(`${outcome}. Layer and wavesample cannot be selected.`)
+                }
+                return
+            }
+            this.storeStructure({
+                instrument: this.instrument,
+                name: result.name,
+                complete: true,
+                empty: false,
+                layers: result.layers
+            })
+            this.syncTargetSelects()
+            const layerBits = result.layers.map(l => {
+                const waves = l.wavesamples.length
+                    ? l.wavesamples.map(n => this.wavesampleOptionLabel(l, n)).join(", ")
+                    : "none"
+                return `layer ${l.number + 1}`
+                    + `${l.name ? ` "${l.name}"` : ''} → ${waves}`
+            })
+            say(`Instrument ${slot}`
+                + `${result.name ? ` "${result.name}"` : ''}: `
+                + `${result.layers.length} layer(s). ${layerBits.join("; ")}.`)
+        }catch(error){
+            if(token != this.structureToken) return
+            this.structure = null
+            this.resetTargetSelects()
+            outcome = `Could not read instrument ${slot}`
+            say(`${outcome}: ${error.message}`)
+        }finally{
+            this.applyTargetSelectState()
+            done(outcome)
+        }
+    }
+
+    /***
+     * Layer dropdown changed. If the instrument was already queried, the
+     * wavesample list is already in hand. Otherwise one GET LAYER fills it.
+     */
+    async onLayerSelected(say){
+        if(!this.structure || this.structure.instrument !== this.instrument){
+            this.loadStructureForInstrument(this.instrument)
+        }
+        const known = this.structure
+            && this.structure.instrument === this.instrument
+            && this.structure.layers.some(l => l.number == this.layer)
+        if(known){
+            this.syncTargetSelects()
+            const record = this.structure.layers.find(l => l.number == this.layer)
+            const waves = record && record.wavesamples.length
+                ? record.wavesamples.join(", ") : "none"
+            say(`Layer ${this.layer + 1} plays wavesample(s) ${waves}.`)
+            return
+        }
+        if(!this.midiReady()){
+            this.resetTargetSelects()
+            say('No MIDI ports selected, so this layer cannot be queried.')
+            return
+        }
+        const done = EPSWaveUI.startTransfer(
+            `Reading layer ${this.layer + 1} of instrument ${this.instrument + 1}`)
+        if(!done){
+            say(`Busy: ${EPSWaveUI.transferring}. One transfer at a time.`)
+            return
+        }
+        const token = ++this.structureToken
+        this.setTargetSelectsEnabled(false)
+        try{
+            const result = await this.eps.getLayerWavesamples(this.instrument, this.layer)
+            if(token != this.structureToken) return
+            if(!result){
+                if(!this.structure || this.structure.instrument !== this.instrument){
+                    this.structure = { instrument: this.instrument, name: null,
+                        complete: false, empty: false, layers: [] }
+                }
+                this.structure.layers = this.structure.layers.filter(l => l.number != this.layer)
+                this.structure.layers.push({ number: this.layer, name: '',
+                    wavesamples: [], wavesampleNames: {} })
+                this.storeStructure(this.structure)
+                this.syncTargetSelects()
+                say(`Layer ${this.layer + 1} of instrument ${this.instrument + 1} `
+                    + 'did not answer. It may not exist.')
+                return
+            }
+            if(!this.structure || this.structure.instrument !== this.instrument){
+                this.structure = { instrument: this.instrument, name: null,
+                    complete: false, empty: false, layers: [] }
+            }
+            this.structure.layers = this.structure.layers.filter(l => l.number != this.layer)
+            this.structure.layers.push({ number: this.layer, name: result.name,
+                wavesamples: result.wavesamples,
+                wavesampleNames: result.wavesampleNames || {} })
+            this.storeStructure(this.structure)
+            this.syncTargetSelects()
+            const waves = result.wavesamples.length
+                ? result.wavesamples.map(n => this.wavesampleOptionLabel(
+                    { wavesampleNames: result.wavesampleNames }, n)).join(", ")
+                : "none"
+            say(`Layer ${this.layer + 1}`
+                + `${result.name ? ` "${result.name}"` : ''} plays wavesample(s) ${waves}.`)
+        }catch(error){
+            if(token != this.structureToken) return
+            say(`Could not read layer ${this.layer + 1}: ${error.message}`)
+        }finally{
+            this.applyTargetSelectState()
+            done(`Read layer ${this.layer + 1}`)
+        }
+    }
+
+    /***
      * Reads this slot's wavesample off the synth, along with the four settings
      * that say how it should sound.
      *
@@ -975,7 +1365,17 @@ class EPSChart {
      * user to guess at, and the generator panel's controls are moved to match.
      */
     async getFromEps(say){
-        const done = EPSWaveUI.startTransfer(`Reading ${this.label} from the EPS`)
+        if(this.instrumentIsEmpty()){
+            say(`Instrument ${this.instrument + 1} is empty on the EPS.`)
+            return
+        }
+        if(this.wavesampleNumber == null || this.wavesampleNumber === ''){
+            say(`Layer ${this.layer + 1} has no wavesamples in its key map.`)
+            return
+        }
+        const wavesample = this.wavesampleNumber
+        let outcome = `Read ${this.wavesampleReadLabel(wavesample)}`
+        const done = EPSWaveUI.startTransfer(`Reading ${this.wavesampleReadLabel(wavesample)} from the EPS`)
         if(!done){
             say(`Busy: ${EPSWaveUI.transferring}. One transfer at a time.`)
             return
@@ -984,7 +1384,7 @@ class EPSChart {
             this.applyTarget()
             const audio = await this.eps.getWavesampleDataChunked(this.eps.chunkSize,
                 (partial, percent) => {
-                    EPSWaveUI.status(`Reading ${this.label} from the EPS`, percent)
+                    EPSWaveUI.status(`Reading ${this.wavesampleReadLabel(wavesample)} from the EPS`, percent)
                     this.setWavesample(partial)
                 })
             if(!audio || audio.length == 0){
@@ -1016,13 +1416,16 @@ class EPSChart {
             }
             if(this.eps.lastWavesampleName && this.eps.lastWavesampleName.length > 0){
                 this.setName(this.eps.lastWavesampleName, true)
+                this.rememberTargetWavesample(this.layer, this.wavesampleNumber,
+                    this.eps.lastWavesampleName)
                 note += `, named "${this.eps.lastWavesampleName}"`
             }
+            outcome = `Read ${this.wavesampleReadLabel(wavesample, this.eps.lastWavesampleName)}`
             say(note)
         }catch(error){
             say(`The read failed: ${error.message}`)
         }finally{
-            done(`Read ${this.label}`)
+            done(outcome)
         }
     }
 
@@ -1041,6 +1444,15 @@ class EPSChart {
             say('Nothing to send: this tab is empty.')
             return
         }
+        if(this.instrumentIsEmpty()){
+            say(`Instrument ${this.instrument + 1} is empty on the EPS. `
+                + 'Create it from EPS Functions first, then select it again.')
+            return
+        }
+        if(this.wavesampleNumber == null || this.wavesampleNumber === ''){
+            say('No wavesample is selected on this layer.')
+            return
+        }
         const done = EPSWaveUI.startTransfer(`Sending ${this.label} to the EPS`)
         if(!done){
             say(`Busy: ${EPSWaveUI.transferring}. One transfer at a time.`)
@@ -1057,9 +1469,8 @@ class EPSChart {
             if(ready.created.length > 0 || ready.renumbered) say(ready.message)
             if(ready.renumbered){
                 this.wavesampleNumber = ready.wavesample
-                const waveEl = document.getElementById(`${this.elementId}_tgtWave`)
-                if(waveEl) waveEl.value = this.wavesampleNumber
             }
+            this.rememberTargetWavesample(this.layer, this.wavesampleNumber, this.name)
             const ok = await this.eps.uploadWavToEPS(this.wavesample, 1, 0,
                 (percent) => EPSWaveUI.status(`Sending ${this.label} to the EPS`, percent),
                 this.sampleRate, this.rootKey, this.fineTune, this.name)
@@ -1155,10 +1566,14 @@ class EPSChart {
     /***
      * Points the EPS at this slot's instrument, layer and wavesample.
      *
-     * Called immediately before every command this card sends and at no other
-     * time. The three numbers on the EPS16 object are the address every sysex
+     * Called immediately before every transfer this card sends. Structure
+     * queries do not use this: they take the numbers as arguments and put
+     * the previous address back, so a dropdown changing on one tab cannot
+     * move the address out from under a transfer on another.
+     *
+     * The three numbers on the EPS16 object are the address every sysex
      * command carries, and they are global to the connection while the controls
-     * that set them are now per card — so the only safe discipline is that
+     * that set them are per card — so the only safe discipline is that
      * nobody sets them on change and everybody sets them on use. A card that
      * relied on them still being what it left them as would work perfectly
      * until the user touched another tab.

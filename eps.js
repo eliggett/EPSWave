@@ -1318,6 +1318,123 @@ class EPS16 {
         }
     }
     /***
+     * Which layers an instrument has, which wavesamples each one plays, and
+     * the name of each of those objects.
+     *
+     * GET INSTRUMENT for the directory, then one pass over the occupied
+     * layers: GET LAYER for the key map and name, and immediately GET
+     * WAVESAMPLE PARAMETERS for each wavesample that map names. Asking for
+     * every layer first and every wavesample second was the same round-trip
+     * count, but it walked the instrument twice; the layer context stays put
+     * this way. A wavesample that appears in more than one map is read only
+     * once.
+     *
+     * A wavesample number lives on the instrument; the layer that can address
+     * it is the one whose map names it. Selecting layer 3 and wavesample 1 on
+     * an eight-layer instrument that gave each layer one wavesample is how
+     * a Get used to miss, and why these two questions have to be asked
+     * together.
+     *
+     * The edit context is saved and restored, same reason as the inventory:
+     * a dropdown changing must not move the address out from under a transfer
+     * on another tab.
+     */
+    async getInstrumentStructure(instrumentNumber, progressCallback = null){
+        const restore = { inst: this.instNum, layer: this.layerNum, ws: this.wsBytes }
+        try{
+            this.setInstrumentNumber(instrumentNumber)
+            const instWords = await this.getParamBlock(EPS16.BLOCK_INSTRUMENT)
+            if(instWords.length == 0) return null
+            const instrument = EPSBlocks.decodeInstrument(instWords)
+            const layerSlots = instrument.layers.filter(l => l.exists)
+            const wsSlots = instrument.wavesamples.filter(w => w.exists)
+            const total = 1 + layerSlots.length + wsSlots.length
+            let done = 1
+            const step = (what) => {
+                if(progressCallback) progressCallback(Math.round((done / total) * 100), what)
+            }
+            step("instrument")
+            this.debug(`Structure: instrument ${instrumentNumber + 1} "${instrument.name}", `
+                + `${layerSlots.length} layer(s)`)
+
+            const layers = []
+            const namesByNumber = {}
+            for(const slot of layerSlots){
+                this.setLayerNumber(slot.number)
+                const words = await this.getParamBlock(EPS16.BLOCK_LAYER)
+                done++
+                step(`layer ${slot.number + 1}`)
+                if(words.length == 0){
+                    this.debug(`Structure: layer ${slot.number + 1} is in the pointer `
+                        + "table but did not answer")
+                    continue
+                }
+                const layer = EPSBlocks.decodeLayer(words)
+                this.debug(`Structure: layer ${slot.number + 1} "${layer.name}" plays `
+                    + `[${layer.wavesamplesUsed.join(", ")}]`)
+                const wavesampleNames = {}
+                for(const number of layer.wavesamplesUsed){
+                    if(number in namesByNumber){
+                        wavesampleNames[number] = namesByNumber[number]
+                        continue
+                    }
+                    this.setWavesampleNumber(number)
+                    const wsWords = await this.getParamBlock(EPS16.BLOCK_WAVESAMPLE)
+                    done++
+                    step(`layer ${slot.number + 1}, wavesample ${number}`)
+                    const name = wsWords.length
+                        ? EPSBlocks.decodeWavesample(wsWords).name : ''
+                    namesByNumber[number] = name
+                    wavesampleNames[number] = name
+                    this.debug(`Structure: wavesample ${number} "${name}"`)
+                }
+                layers.push({ number: slot.number, name: layer.name,
+                    wavesamples: [...layer.wavesamplesUsed], wavesampleNames })
+            }
+            return { name: instrument.name, layers }
+        }finally{
+            this.instNum = restore.inst
+            this.layerNum = restore.layer
+            this.wsBytes = restore.ws
+        }
+    }
+    /***
+     * Which wavesamples the given layer of the given instrument actually plays,
+     * from that layer's key map, with names. Null if the layer does not answer.
+     *
+     * Used when the instrument dropdown was never touched: the user picked a
+     * layer and we still have to know which wavesample numbers belong to it
+     * before the wavesample dropdown can mean anything. GET LAYER, then GET
+     * WAVESAMPLE PARAMETERS for each number in the map. The instrument pointer
+     * table is not asked, so a layer that does not exist simply comes back
+     * empty rather than being inferred from neighbours.
+     */
+    async getLayerWavesamples(instrumentNumber, layerNumber){
+        const restore = { inst: this.instNum, layer: this.layerNum, ws: this.wsBytes }
+        try{
+            this.setInstrumentNumber(instrumentNumber)
+            this.setLayerNumber(layerNumber)
+            const words = await this.getParamBlock(EPS16.BLOCK_LAYER)
+            if(words.length == 0) return null
+            const layer = EPSBlocks.decodeLayer(words)
+            const wavesampleNames = {}
+            for(const number of layer.wavesamplesUsed){
+                this.setWavesampleNumber(number)
+                const wsWords = await this.getParamBlock(EPS16.BLOCK_WAVESAMPLE)
+                wavesampleNames[number] = wsWords.length
+                    ? EPSBlocks.decodeWavesample(wsWords).name : ''
+            }
+            this.debug(`Layer ${layerNumber + 1} of instrument ${instrumentNumber + 1} `
+                + `"${layer.name}" plays [${layer.wavesamplesUsed.join(", ")}]`)
+            return { name: layer.name, wavesamples: [...layer.wavesamplesUsed],
+                wavesampleNames }
+        }finally{
+            this.instNum = restore.inst
+            this.layerNum = restore.layer
+            this.wsBytes = restore.ws
+        }
+    }
+    /***
      * Everything inside the selected instrument: its parameters, every layer,
      * every wavesample, and which wavesamples each layer plays on which keys.
      *
