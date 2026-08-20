@@ -58,26 +58,41 @@ body.dark a { color: #6fb8ff; }
    The EPS shows upper case only, so the field is upper cased here as
    well as in the JS that feeds it: the CSS keeps what is on screen
    honest even for a keystroke the input handler has not seen yet.
-   Letter spacing and tabular figures keep the twelve character cells
-   roughly even, since the font is not strictly monospaced. Swapping the
-   face out later means changing the url and the family name here and
-   nothing else. */
+   Letter spacing keeps a little air between the twelve character cells,
+   the way the FIP 22AM5R glass does. Swapping the face out later means
+   changing the url and the family name here and nothing else. */
 @font-face {
-    font-family: 'LCD14';
-    src: url('./fonts/lcd-font/otf/LCD14.otf') format('opentype');
+    font-family: 'EnsoniqVFD';
+    src: url('./fonts/EnsoniqVFD-Organic.otf') format('opentype');
     font-display: swap;
 }
 .eps-name {
-    font-family: 'LCD14', monospace;
+    font-family: 'EnsoniqVFD', monospace;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.08em;
     text-transform: uppercase;
 }
 /* Qualified with .form-control so it outranks Bootstrap's
    .form-control-sm, which the fields under the Create buttons carry and
-   which would otherwise set the size back to 0.875rem. The field height
-   is an em calculation in Bootstrap, so the box grows to suit. */
-.eps-name.form-control { font-size: 1.25rem; }
+   which would otherwise set the size back to 0.875rem.
+
+   Bootstrap sizes inputs as 1.5em plus padding. This face does not fill
+   its em square, so that formula leaves a band of empty glass above and
+   below the segments. Line-height 1 and a short pad hug the electrodes;
+   height:auto stops the sm group from stretching the box back open. */
+.eps-name.form-control,
+.form-control-sm.eps-name,
+.input-group-sm > .form-control.eps-name {
+    font-size: 1.15rem;
+    line-height: 1;
+    height: auto;
+    padding: 0.15rem 0.4rem;
+}
+.input-group-sm:has(> .eps-name) > .input-group-prepend > .input-group-text {
+    height: auto;
+    padding-top: 0.15rem;
+    padding-bottom: 0.15rem;
+}
 /* Light mode: a passive LCD, dark segments on a grey green panel. */
 .eps-name.form-control {
     background-color: #cfd8b9;
@@ -193,7 +208,7 @@ body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: non
    minutes and the tab that started it is often not the one on screen by
    the time it ends. */
 .eps-lcd {
-    font-family: 'LCD14', monospace;
+    font-family: 'EnsoniqVFD', monospace;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     padding: 0.5rem 0.75rem;
@@ -203,11 +218,11 @@ body.dark .eps-name.form-control::placeholder { color: #17663f; text-shadow: non
     color: #1e2416;
 }
 .eps-lcd-line {
-    font-size: 1.05rem;
+    font-size: 1.2rem;
     /* Reserved, so an empty status does not shorten the panel and move the
        tabs under the pointer. */
-    min-height: 1.4rem;
-    line-height: 1.4rem;
+    min-height: 1.6rem;
+    line-height: 1.6rem;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
