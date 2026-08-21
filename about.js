@@ -60,5 +60,36 @@ window.ABOUT_HTML = `
             Anthropic's Claude Opus 5, which was instrumental in digesting the
             original code and the complete MIDI implementation.
         </li>
+        <li>
+            Icons from
+            <a href="https://fontawesome.com" target="_blank" rel="noopener">Font Awesome Free</a>
+            6.3.0. Copyright &copy; 2023 Fonticons, Inc., used under
+            <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>
+            with the code under the MIT license.
+        </li>
+        <li>
+            <a href="https://getbootstrap.com" target="_blank" rel="noopener">Bootstrap</a>
+            4.2.1, which is everything you see of the layout. Copyright &copy;
+            2011&ndash;2018 The Bootstrap Authors, used under the
+            <a href="https://github.com/twbs/bootstrap/blob/v4.2.1/LICENSE" target="_blank" rel="noopener">MIT license</a>.
+        </li>
+        <li>
+            <a href="https://jquery.com" target="_blank" rel="noopener">jQuery</a>
+            3.3.1 (slim build). Copyright &copy; JS Foundation and other
+            contributors, used under the
+            <a href="https://github.com/jquery/jquery/blob/3.3.1/LICENSE.txt" target="_blank" rel="noopener">MIT license</a>.
+        </li>
+        <li>
+            <a href="https://popper.js.org" target="_blank" rel="noopener">Popper.js</a>
+            1.14.6, which Bootstrap builds on. Copyright &copy; 2016 Federico
+            Zivolo and contributors, used under the
+            <a href="https://github.com/floating-ui/floating-ui/blob/v1.14.6/LICENSE.md" target="_blank" rel="noopener">MIT license</a>.
+        </li>
+        <li>
+            Those four are kept as local copies in
+            <a href="https://github.com/eliggett/EPSWave/tree/main/vendor/" target="_blank" rel="noopener">vendor/</a>
+            rather than loaded from a CDN, so the app works with no internet
+            connection at all.
+        </li>
     </ul>
 `
