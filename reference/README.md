@@ -15,7 +15,7 @@ One markdown file includes an attempt at inlining images, the other does not.
 [eps_16plus_full_midi_implementation.md](eps_16plus_full_midi_implementation.md) : This markdown is generally better -- but not always -- and does not contain any embedded image data. Some tables have been edited for clarity, others still need a little help (some may be off by one or completely mangled). 
 
 
-## What about the original EPS?
+## What about the original EPS ("classic")?
 
 There is a manual for it too: Ensoniq's *Performance Sampler External Command
 Specification*, June 12 1989, MKB2 — 50 pages. It is the authority for the
@@ -42,6 +42,10 @@ and where the transcription departs from the original. Start there. The single
 most important thing in it is that the Classic's parameter pages are numbered a
 quarter of ours — Ensoniq's own rule is "high byte times four followed by the
 low byte".
+
+## And the ASR-10 files? 
+
+This software doesn't officially support the ASR-10 yet, but we are working on it. We have heard that it already works to some extent. The ASR-10 [pdf](Ensoniq%20ASR-10%20External%20Command%20Specification.pdf) and [markdown](Ensoniq%20ASR-10%20External%20Command%20Specification.md) files are here to support those efforts. 
 
 ## What are these "disks"? 
 
